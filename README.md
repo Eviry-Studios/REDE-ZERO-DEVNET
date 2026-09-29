@@ -108,3 +108,7 @@ Aceitas temporariamente e registradas em [`THREAT_MODEL.md §11`](docs/THREAT_MO
 * [CONTRIBUTING.md](CONTRIBUTING.md) — como contribuir
 * [SECURITY.md](SECURITY.md) — como reportar vulnerabilidades
 * [CHANGELOG.md](CHANGELOG.md) — histórico de alterações
+
+## Licença
+
+[MIT](LICENSE). Código e documentação podem ser usados, modificados e redistribuídos livremente, inclusive em forks (`REQ-080`).

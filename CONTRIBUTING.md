@@ -63,6 +63,10 @@ Mudanças que alterem regras de consenso, formato de dados, regras monetárias o
 * declarar compatibilidade (`SPEC §65`);
 * ser registradas em `CHANGELOG.md`.
 
+## Licença
+
+Ao contribuir, você concorda que sua contribuição será distribuída sob a [licença MIT](LICENSE).
+
 ## Conduta
 
 Discorde de ideias, não de pessoas. Críticas técnicas são bem-vindas; ataques pessoais não.

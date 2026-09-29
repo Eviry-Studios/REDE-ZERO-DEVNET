@@ -3,6 +3,7 @@ name = "rz-p2p"
 description = "Mensagens e transporte P2P da Rede Zero (DEVNET, ADR-0007)"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 repository.workspace = true
 
 [dependencies]
