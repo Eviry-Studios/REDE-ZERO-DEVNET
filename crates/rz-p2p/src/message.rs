@@ -26,45 +26,147 @@ pub const MAX_PROPOSALS_PER_MSG: usize = 256;
 pub const MAX_LOCKS_PER_MSG: usize = 1024;
 const MAX_REASON_LEN: usize = 256;
 
-/// Endereço de par: IPv6 (IPv4 mapeado) de 16 bytes + porta.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct PeerAddr(pub SocketAddr);
+/// Comprimento máximo de um nome de host (DNS).
+pub const MAX_HOST_LEN: usize = 253;
+
+/// Endereço de par: IP + porta, ou nome de host + porta.
+///
+/// Nomes de host permitem endereços de serviços onion (`….onion`), que só
+/// são alcançáveis através de um proxy Tor e não revelam o IP do Node
+/// (ADR-0011).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum PeerAddr {
+    Ip(SocketAddr),
+    Host { host: String, port: u16 },
+}
+
+impl PeerAddr {
+    pub fn port(&self) -> u16 {
+        match self {
+            PeerAddr::Ip(a) => a.port(),
+            PeerAddr::Host { port, .. } => *port,
+        }
+    }
+
+    pub fn is_loopback(&self) -> bool {
+        match self {
+            PeerAddr::Ip(a) => a.ip().is_loopback(),
+            PeerAddr::Host { host, .. } => host == "localhost",
+        }
+    }
+
+    pub fn is_onion(&self) -> bool {
+        matches!(self, PeerAddr::Host { host, .. } if host.ends_with(".onion"))
+    }
+
+    fn valid_host(host: &str) -> bool {
+        !host.is_empty()
+            && host.len() <= MAX_HOST_LEN
+            && host
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
+            && !host.starts_with('.')
+    }
+}
+
+impl std::fmt::Display for PeerAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PeerAddr::Ip(a) => write!(f, "{a}"),
+            PeerAddr::Host { host, port } => write!(f, "{host}:{port}"),
+        }
+    }
+}
+
+impl std::str::FromStr for PeerAddr {
+    type Err = &'static str;
+
+    /// Aceita `1.2.3.4:7100`, `[::1]:7100` ou `nome.onion:7100`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(a) = s.parse::<SocketAddr>() {
+            return Ok(PeerAddr::Ip(a));
+        }
+        let (host, port) = s.rsplit_once(':').ok_or("endereço sem porta")?;
+        let port: u16 = port.parse().map_err(|_| "porta inválida")?;
+        let host = host.to_ascii_lowercase();
+        if !Self::valid_host(&host) {
+            return Err("nome de host inválido");
+        }
+        Ok(PeerAddr::Host { host, port })
+    }
+}
+
+impl From<SocketAddr> for PeerAddr {
+    fn from(a: SocketAddr) -> Self {
+        PeerAddr::Ip(a)
+    }
+}
 
 impl Encode for PeerAddr {
     fn encode(&self, e: &mut Encoder) {
-        let ip = match self.0.ip() {
-            IpAddr::V4(v4) => v4.to_ipv6_mapped(),
-            IpAddr::V6(v6) => v6,
-        };
-        e.fixed(&ip.octets()).u16(self.0.port());
+        match self {
+            PeerAddr::Ip(a) => {
+                let ip = match a.ip() {
+                    IpAddr::V4(v4) => v4.to_ipv6_mapped(),
+                    IpAddr::V6(v6) => v6,
+                };
+                e.u8(0).fixed(&ip.octets()).u16(a.port());
+            }
+            PeerAddr::Host { host, port } => {
+                e.u8(1).str(host).u16(*port);
+            }
+        }
     }
 }
 
 impl Decode for PeerAddr {
     fn decode(d: &mut Decoder<'_>) -> Result<Self, DecodeError> {
-        let v6 = Ipv6Addr::from(d.fixed::<16>()?);
-        let port = d.u16()?;
-        let ip = match v6.to_ipv4_mapped() {
-            Some(v4) => IpAddr::V4(v4),
-            None => IpAddr::V6(v6),
-        };
-        Ok(Self(SocketAddr::new(ip, port)))
+        match d.u8()? {
+            0 => {
+                let v6 = Ipv6Addr::from(d.fixed::<16>()?);
+                let port = d.u16()?;
+                let ip = match v6.to_ipv4_mapped() {
+                    Some(v4) => IpAddr::V4(v4),
+                    None => IpAddr::V6(v6),
+                };
+                Ok(PeerAddr::Ip(SocketAddr::new(ip, port)))
+            }
+            1 => {
+                let host = d.str(MAX_HOST_LEN)?;
+                if !PeerAddr::valid_host(&host) {
+                    return Err(DecodeError::InvalidValue("nome de host"));
+                }
+                Ok(PeerAddr::Host {
+                    host,
+                    port: d.u16()?,
+                })
+            }
+            t => Err(DecodeError::InvalidTag(t)),
+        }
     }
 }
 
-/// Primeira mensagem de toda conexão (`SPEC §24`).
+/// Primeira mensagem de toda conexão (`SPEC §24`), já dentro do canal
+/// cifrado (ADR-0011).
 ///
 /// Contém apenas o necessário para verificar compatibilidade: sem versão de
 /// software, sistema operacional, fuso horário ou identificadores
-/// persistentes (THR-PRIV-003).
+/// persistentes (THR-PRIV-003). Uma Wallet envia `listen_port = 0`,
+/// `relay = false` e nenhum endereço.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hello {
     pub p2p_version: u16,
     pub network_id: String,
     pub genesis: Hash32,
     pub height: u64,
-    /// Porta em que o remetente aceita conexões (0 = não aceita, ex.: Wallet).
+    /// Porta em que o remetente aceita conexões (0 = não aceita).
     pub listen_port: u16,
+    /// O remetente quer receber propagação de blocos e transações (Nodes,
+    /// inclusive Nodes privados que não aceitam conexões).
+    pub relay: bool,
+    /// Endereço público anunciado (ex.: serviço onion). Quando presente, é
+    /// usado no lugar do IP observado da conexão.
+    pub advertise: Option<PeerAddr>,
 }
 
 impl Encode for Hello {
@@ -73,7 +175,9 @@ impl Encode for Hello {
             .str(&self.network_id)
             .put(&self.genesis)
             .u64(self.height)
-            .u16(self.listen_port);
+            .u16(self.listen_port)
+            .bool(self.relay)
+            .option(&self.advertise);
     }
 }
 
@@ -85,6 +189,8 @@ impl Decode for Hello {
             genesis: d.get()?,
             height: d.u64()?,
             listen_port: d.u16()?,
+            relay: d.bool()?,
+            advertise: d.option()?,
         })
     }
 }
@@ -413,6 +519,8 @@ mod tests {
             genesis: Hash32([1; 32]),
             height: 5,
             listen_port: 7000,
+            relay: true,
+            advertise: Some("abcdef.onion:7100".parse().unwrap()),
         }
     }
 
@@ -424,8 +532,9 @@ mod tests {
             Message::Pong(2),
             Message::GetPeers,
             Message::Peers(vec![
-                PeerAddr("127.0.0.1:7000".parse().unwrap()),
-                PeerAddr("[::1]:7001".parse().unwrap()),
+                "127.0.0.1:7000".parse().unwrap(),
+                "[::1]:7001".parse().unwrap(),
+                "exemplo2abc.onion:7100".parse().unwrap(),
             ]),
             Message::GetBlocks {
                 from_height: 3,
@@ -498,6 +607,20 @@ mod tests {
             check_hello(&hello(), "rede-zero-devnet-test", &Hash32([2; 32])),
             Err(HelloError::Genesis)
         );
+    }
+
+    #[test]
+    fn peer_addr_parsing() {
+        assert!(matches!(
+            "1.2.3.4:5".parse::<PeerAddr>(),
+            Ok(PeerAddr::Ip(_))
+        ));
+        let onion: PeerAddr = "ABC.onion:7100".parse().unwrap();
+        assert!(onion.is_onion());
+        assert_eq!(onion.to_string(), "abc.onion:7100");
+        assert!("sem-porta".parse::<PeerAddr>().is_err());
+        assert!("inv@lido:1".parse::<PeerAddr>().is_err());
+        assert!(".comeca-com-ponto:1".parse::<PeerAddr>().is_err());
     }
 
     #[test]

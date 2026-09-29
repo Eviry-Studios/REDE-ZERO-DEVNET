@@ -16,7 +16,7 @@ use rz_core::{
 };
 use rz_crypto::{context, Hash32, SecretKey};
 use rz_node::{now_ms, LogLevel, Node, NodeConfig};
-use rz_p2p::{write_frame, Client, ClientError, Message};
+use rz_p2p::{Client, ClientError, Message};
 
 const NET: &str = "rede-zero-devnet-it";
 
@@ -63,7 +63,7 @@ fn data_dir(name: &str) -> PathBuf {
 fn start(g: &Genesis, dir: PathBuf, key: Option<SecretKey>, peers: Vec<SocketAddr>) -> Node {
     let mut cfg = NodeConfig::new(g.clone(), dir, "127.0.0.1:0".parse().unwrap());
     cfg.validator_key = key;
-    cfg.bootstrap = peers;
+    cfg.bootstrap = peers.into_iter().map(Into::into).collect();
     cfg.log = LogLevel::Quiet;
     Node::start(cfg).expect("node deve iniciar")
 }
@@ -239,7 +239,13 @@ fn wrong_genesis_rejected() {
     .err()
     .expect("handshake deveria falhar");
     assert!(
-        matches!(err, ClientError::Rejected(_) | ClientError::Handshake(_)),
+        // Rede diferente: a assinatura do canal cifrado já é vinculada à rede.
+        matches!(
+            err,
+            ClientError::Rejected(_)
+                | ClientError::Handshake(_)
+                | ClientError::Frame(rz_p2p::FrameError::Handshake(_))
+        ),
         "{err}"
     );
 }
@@ -296,7 +302,7 @@ fn flooding_peer_banned() {
     let n = start(&g, data_dir("flood"), None, vec![]);
     let mut c = client(&n);
     for i in 0..2_000u64 {
-        if write_frame(c.stream_mut(), &Message::Ping(i)).is_err() {
+        if c.send(&Message::Ping(i)).is_err() {
             break;
         }
     }
@@ -310,9 +316,7 @@ fn oversized_frame_disconnects() {
     let g = genesis(1);
     let n = start(&g, data_dir("big"), None, vec![]);
     let mut c = client(&n);
-    c.stream_mut()
-        .write_all(&(rz_p2p::MAX_FRAME_SIZE + 1).to_be_bytes())
-        .unwrap();
+    c.stream_mut().write_all(&u32::MAX.to_be_bytes()).unwrap();
     assert!(wait_until(Duration::from_secs(5), || n.status().peers == 0));
 }
 

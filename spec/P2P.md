@@ -1,28 +1,47 @@
 # spec/P2P.md — Protocolo P2P da DEVNET
 
-**Versão:** 0.1.0 (DEVNET), `P2P_VERSION = 1`
-**Relacionamento:** `SPECIFICATIONS.md §23–§30`, ADR-0007, THR-P2P-001..006, THR-PRIV-002..004
+**Versão:** 0.2.0 (DEVNET), `P2P_VERSION = 2`
+**Relacionamento:** `SPECIFICATIONS.md §23–§30`, ADR-0007, ADR-0010, ADR-0011, THR-P2P-001..006, THR-PRIV-002..004
 **Implementação de referência:** `crates/rz-p2p` (mensagens) e `crates/rz-node` (orquestração)
 
 ---
 
 ## 1. Transporte
 
-TCP. Cada mensagem é enviada como:
+TCP, diretamente ou através de um proxy **SOCKS5** (Tor/I2P). Com proxy, nomes de host (inclusive `.onion`) são enviados ao proxy sem resolução local.
+
+### 1.1 Canal cifrado (ADR-0011)
 
 ```text
-u32 comprimento (big-endian) ‖ enc(Message)
+Iniciador → Respondedor:  MAGIC = "RZ" 0x00 0x02 (4) ‖ e_i (32)
+Respondedor → Iniciador:  e_r (32) ‖ N (32) ‖ σ (64)
+    σ = Ed25519(chave_do_node, ctx "rede-zero/p2p-handshake/v1", network_id, e_i ‖ e_r)
+k   = X25519(efêmera, efêmera_remota)            (rejeita resultado não contributivo)
+K→  = H("rede-zero/p2p-key-i2r/v1", k ‖ e_i ‖ e_r ‖ N)
+K←  = H("rede-zero/p2p-key-r2i/v1", k ‖ e_i ‖ e_r ‖ N)
 ```
 
-`comprimento ≤ 4 MiB`. O comprimento é verificado **antes** de ler o corpo; mensagens maiores encerram a conexão (`AT-P2P-004`).
+* `e_i`, `e_r`: chaves X25519 efêmeras, novas a cada conexão.
+* `N`: chave pública da identidade do Node que aceita a conexão (arquivo `node.key`). O iniciador não possui identidade.
+* O iniciador verifica `σ` e, se configurado, compara `NodeId(N)` com a identidade esperada.
 
-O canal **não é cifrado** na DEVNET (THR-P2P-005, aceitação temporária). A integridade dos dados protocolares vem das assinaturas.
+Cada mensagem depois do handshake:
+
+```text
+u32 len(c) (big-endian) ‖ c
+c = ChaCha20-Poly1305(K, nonce = 0x00000000 ‖ u64_be(contador), p)
+p = u32_be(len(m)) ‖ m ‖ zeros até múltiplo de 256 bytes
+m = enc(Message)
+```
+
+* `len(m) ≤ 4 MiB`; `len(c)` é verificado **antes** da leitura (`AT-P2P-004`).
+* Contadores independentes por direção; falha de autenticação ou repetição encerra a conexão.
 
 ## 2. Mensagens
 
 | Tag | Mensagem | Conteúdo |
 | --- | --- | --- |
-| `0x00` | `HELLO` | `u16 p2p_version, string network_id, fixed[32] genesis, u64 height, u16 listen_port` |
+| `0x00` | `HELLO` | `u16 p2p_version, string network_id, fixed[32] genesis, u64 height, u16 listen_port, bool relay, option<PeerAddr> advertise` |
 | `0x01` | `PING` | `u64 nonce` |
 | `0x02` | `PONG` | `u64 nonce` |
 | `0x03` | `GET_PEERS` | — |
@@ -42,14 +61,21 @@ O canal **não é cifrado** na DEVNET (THR-P2P-005, aceitação temporária). A 
 | `0x11` | `GET_KEY_IMAGES` | `u64 from, u32 max` |
 | `0x12` | `KEY_IMAGES` | `u64 start, list<fixed[32]>` (máx. 8192) |
 | `0x13` | `STEM_TRANSACTION` | `Transaction` em fase de haste (seção 4) |
+| `0x14` | `GET_GOVERNANCE` | `option<Address>` (filtra bloqueios) |
+| `0x15` | `GOVERNANCE` | `u64 height, ProtocolParams, list<ProposalSummary> (≤256), list<LockEntry> (≤1024)` |
 
-`PeerAddr = fixed[16] (IPv6; IPv4 mapeado) ‖ u16 porta`.
+`PeerAddr` (tag `u8`):
+
+```text
+0x00 IP   : fixed[16] (IPv6; IPv4 mapeado) ‖ u16 porta
+0x01 Nome : string (≤ 253, [a-z0-9.-]) ‖ u16 porta      // ex.: nome.onion
+```
 
 Tags desconhecidas são mensagens inválidas (`AT-P2P-003`).
 
 ## 3. Handshake
 
-1. Ao conectar, **ambos** os lados enviam `HELLO` como primeira mensagem.
+1. Após o canal cifrado (seção 1.1), **ambos** os lados enviam `HELLO` como primeira mensagem.
 2. Cada lado verifica o `HELLO` recebido:
    * `p2p_version` igual;
    * `network_id` igual;
@@ -58,7 +84,15 @@ Tags desconhecidas são mensagens inválidas (`AT-P2P-003`).
 4. Qualquer mensagem diferente de `HELLO` antes do handshake é violação de protocolo.
 5. O handshake deve completar em até 10 segundos.
 
-O `HELLO` não contém versão de software, sistema operacional, fuso horário, idioma nem identificadores persistentes (THR-PRIV-003). `listen_port = 0` indica um cliente que não aceita conexões (ex.: Wallet).
+O `HELLO` não contém versão de software, sistema operacional, fuso horário, idioma nem identificadores persistentes (THR-PRIV-003).
+
+| Participante | `listen_port` | `relay` | `advertise` |
+| --- | --- | --- | --- |
+| Wallet | 0 | falso | ausente |
+| Node privado (`--no-listen`) | 0 | verdadeiro | ausente |
+| Node público | porta | verdadeiro | ausente ou nome (ex.: `.onion`) |
+
+Propagação (`relay`) vai para quem declarou `relay = verdadeiro` ou foi discado por nós.
 
 ## 4. Propagação
 
@@ -117,7 +151,7 @@ Pontuação local (não é reputação global):
 | Violação de protocolo | 50 |
 | Excesso de taxa | 100 |
 
-Com 100 pontos ou mais o par é desconectado e seu IP fica em quarentena (`SPEC §26`, `AT-P2P-005`).
+Com 100 pontos ou mais o par é desconectado e seu IP fica em quarentena (`SPEC §26`, `AT-P2P-005`). Exceção: um Node que anuncia endereço (serviço onion) não coloca em quarentena o IP de loopback, pelo qual chegam todas as conexões do proxy local; o par é apenas desconectado.
 
 Rejeições que podem ocorrer com pares honestos (transação duplicada, nonce já usado, pai desconhecido) **não** geram penalidade.
 
@@ -125,11 +159,14 @@ Rejeições que podem ocorrer com pares honestos (transação duplicada, nonce j
 
 * Pares iniciais (*bootstrap*) por configuração.
 * Após o handshake, `GET_PEERS`; os endereços recebidos são candidatos a novas conexões de saída.
-* Um endereço anunciado é `ip_observado_da_conexão : listen_port` — o Node não confia em IPs declarados pelo próprio par.
+* O endereço de um par é, nesta ordem: o endereço discado; o **nome** anunciado em `advertise` (ex.: `.onion`); ou `ip_observado : listen_port`. Um **IP** anunciado é ignorado, para impedir que um par envenene a lista com endereços de terceiros.
+* Pares com `listen_port = 0` (Wallets e Nodes privados) nunca são anunciados.
+* Sem proxy, endereços `.onion` não são discados.
 
 ## 8. Privacidade e registros
 
-* Registros locais não armazenam endereços de pares além do necessário à operação.
+* Registros locais **nunca** contêm endereços de clientes; endereços de pares Node aparecem apenas em modo detalhado.
+* Proteção do IP do usuário (ADR-0011): canal cifrado com preenchimento, Tor/I2P via SOCKS5, serviços onion, Node privado e política da Wallet que recusa conexão direta a Node remoto sem consentimento explícito.
 * A origem de transações é protegida por Dandelion++ (seção 4.1). A Wallet ainda revela seu IP ao Node ao qual se conecta; recomenda-se Node próprio ou Tor.
 
 ## 9. Testes de aceitação cobertos

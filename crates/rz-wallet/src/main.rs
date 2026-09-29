@@ -16,11 +16,12 @@ use rz_core::TxKind;
 use rz_core::{format_zero, parse_zero, Genesis};
 use rz_crypto::Hash32;
 use rz_crypto::{keyfile, Address, SecretKey};
+use rz_p2p::PeerAddr;
 use rz_p2p::{Client, Message};
 use rz_privacy::keys::ShieldedAddress;
 use rz_wallet::{
-    account, connect, governance, private_view, send_account, send_private, send_transparent,
-    shield, Destination, Keys, PROPOSAL_CONTENT,
+    account, connect_to, governance, private_view, send_account, send_private, send_transparent,
+    shield, Destination, Keys, NetOptions, PROPOSAL_CONTENT,
 };
 
 const USAGE: &str = "\
@@ -52,17 +53,31 @@ Endereços:
 send para zs… gasta saldo privado. send para HEX gasta saldo transparente.
 shield move saldo transparente para privado; unshield faz o inverso.
 
+Rede (ADR-0011) — válido para todos os comandos que usam --node:
+  --node ADDR       IP:porta ou nome.onion:porta
+  --proxy ADDR      proxy SOCKS5 (Tor: 127.0.0.1:9050); o node não vê seu IP
+  --node-id HEX     identidade esperada do node (impede interceptação)
+  --direct          aceita conectar a node remoto SEM proxy (expõe seu IP ao node)
+Por padrão, sem --proxy só são aceitos nodes locais (127.0.0.1).
+
 A privacidade é probabilística e não constitui anonimato absoluto.
 AVISO: DEVNET — o ZERO desta rede não possui valor econômico.
 ";
 
 struct Args(HashMap<String, String>);
 
+/// Opções sem valor.
+const SWITCHES: &[&str] = &["direct"];
+
 impl Args {
     fn parse(raw: &[String]) -> Result<Self, String> {
         let mut map = HashMap::new();
         let mut it = raw.iter();
         while let Some(a) = it.next() {
+            if let Some(sw) = a.strip_prefix("--").filter(|n| SWITCHES.contains(n)) {
+                map.insert(sw.to_string(), String::new());
+                continue;
+            }
             let name = a
                 .strip_prefix("--")
                 .ok_or_else(|| format!("argumento inesperado: {a}"))?;
@@ -134,11 +149,30 @@ fn open(args: &Args) -> Result<(Client, Genesis), String> {
     let bytes = fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let genesis =
         Genesis::from_canonical_bytes(&bytes).map_err(|e| format!("genesis inválido: {e}"))?;
-    let node: SocketAddr = args
+    let node: PeerAddr = args
         .req("node")?
         .parse()
-        .map_err(|_| "--node: endereço inválido")?;
-    Ok((connect(node, &genesis)?, genesis))
+        .map_err(|e| format!("--node: {e}"))?;
+    let net = NetOptions {
+        proxy: match args.get("proxy") {
+            Some(p) => Some(
+                p.parse::<SocketAddr>()
+                    .map_err(|_| "--proxy: endereço inválido")?,
+            ),
+            None => None,
+        },
+        node_id: match args.get("node-id") {
+            Some(h) => {
+                Some(rz_crypto::NodeId::from_hex(h).ok_or("--node-id: identidade inválida")?)
+            }
+            None => None,
+        },
+        allow_direct: args.get("direct").is_some(),
+    };
+    if node.is_onion() && net.proxy.is_none() {
+        return Err("endereços .onion exigem --proxy (Tor)".into());
+    }
+    Ok((connect_to(&node, &genesis, &net)?, genesis))
 }
 
 fn fee(args: &Args, genesis: &Genesis) -> Result<u64, String> {

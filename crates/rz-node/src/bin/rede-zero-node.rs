@@ -3,8 +3,8 @@
 //! ```text
 //! rede-zero-node init-devnet --out DIR [--validators N] [--network-id ID]
 //!                            [--slot-ms MS] [--finality K] [--faucet ZERO] [--base-port P]
-//! rede-zero-node run --genesis FILE --data DIR [--listen ADDR] [--peer ADDR]...
-//!                    [--validator-key FILE] [--verbose | --quiet]
+//! rede-zero-node run --genesis FILE --data DIR [--listen ADDR | --no-listen] [--peer ADDR]...
+//!                    [--proxy ADDR] [--advertise ADDR] [--validator-key FILE] [--verbose | --quiet]
 //! rede-zero-node genesis-info --genesis FILE
 //! ```
 
@@ -38,10 +38,17 @@ USO:
 
   rede-zero-node run --genesis FILE --data DIR [opções]
       --listen ADDR       endereço de escuta (padrão 127.0.0.1:7100)
-      --peer ADDR         par inicial (pode repetir)
+      --no-listen         node privado: só disca, não aceita conexões nem anuncia endereço
+      --peer ADDR         par inicial: IP:porta ou nome.onion:porta (pode repetir)
+      --proxy ADDR        proxy SOCKS5 para conexões de saída (ex.: Tor 127.0.0.1:9050)
+      --advertise ADDR    endereço público anunciado (ex.: seu serviço nome.onion:porta)
+      --max-inbound-per-ip N  conexões de entrada por IP (padrão 8)
       --validator-key F   chave do validador (omitir para node não validador)
-      --verbose           registros detalhados (inclui endereços de pares)
+      --verbose           registros detalhados (endereços de pares; nunca de clientes)
       --quiet             sem registros
+
+  Privacidade de IP (ADR-0011): para operar só por Tor, use --proxy e
+  --advertise com um serviço onion apontando para --listen 127.0.0.1:PORTA.
 
   rede-zero-node genesis-info --genesis FILE
 
@@ -259,6 +266,16 @@ fn run(args: &Args) -> Result<(), String> {
         .parse()
         .map_err(|_| "--listen: endereço inválido")?;
     let mut cfg = NodeConfig::new(genesis, data, listen);
+    if args.has("no-listen") {
+        cfg.listen = None;
+    }
+    if let Some(p) = args.get("proxy") {
+        cfg.proxy = Some(p.parse().map_err(|_| "--proxy: endereço inválido")?);
+    }
+    if let Some(a) = args.get("advertise") {
+        cfg.advertise = Some(a.parse().map_err(|e| format!("--advertise: {e}"))?);
+    }
+    cfg.max_inbound_per_ip = args.num("max-inbound-per-ip", cfg.max_inbound_per_ip)?;
     for p in args.all("peer") {
         cfg.bootstrap.push(
             p.parse()
@@ -280,6 +297,9 @@ fn run(args: &Args) -> Result<(), String> {
         LogLevel::Info
     };
 
+    if cfg.proxy.is_none() && cfg.bootstrap.iter().any(|p| p.is_onion()) {
+        return Err("pares .onion exigem --proxy (Tor)".into());
+    }
     let node = Node::start(cfg).map_err(|e| format!("falha ao iniciar: {e}"))?;
     eprintln!("AVISO: DEVNET — o ZERO desta rede não possui valor econômico.");
 

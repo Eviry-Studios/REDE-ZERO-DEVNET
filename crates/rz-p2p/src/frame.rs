@@ -16,6 +16,10 @@ pub enum FrameError {
     Io(io::Error),
     TooLarge(u32),
     Decode(DecodeError),
+    /// Falha de autenticação do canal cifrado (adulteração, repetição).
+    Crypto,
+    /// Falha no handshake do canal cifrado.
+    Handshake(&'static str),
 }
 
 impl fmt::Display for FrameError {
@@ -24,6 +28,8 @@ impl fmt::Display for FrameError {
             Self::Io(e) => write!(f, "E/S: {e}"),
             Self::TooLarge(n) => write!(f, "mensagem de {n} bytes excede o limite"),
             Self::Decode(e) => write!(f, "mensagem malformada: {e}"),
+            Self::Crypto => write!(f, "falha de autenticação do canal"),
+            Self::Handshake(w) => write!(f, "handshake: {w}"),
         }
     }
 }

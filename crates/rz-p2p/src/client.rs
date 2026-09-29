@@ -1,18 +1,21 @@
 //! Cliente síncrono simples, usado por Wallets e testes.
 //!
-//! Conecta a um Node, realiza o handshake (verificando rede e Genesis) e
-//! permite requisições do tipo pergunta/resposta.
+//! Conecta a um Node (diretamente ou por proxy SOCKS5/Tor), estabelece o
+//! canal cifrado (ADR-0011), realiza o handshake de protocolo (verificando
+//! rede e Genesis) e permite requisições do tipo pergunta/resposta.
+//!
+//! O cliente não possui identidade persistente: usa chaves efêmeras por
+//! conexão e anuncia `listen_port = 0`, `relay = false`, sem endereço.
 
 use std::fmt;
 use std::io;
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
 
-use rz_crypto::Hash32;
+use rz_crypto::{Hash32, NodeId, PublicKey};
 
-use crate::{
-    check_hello, read_frame, write_frame, FrameError, Hello, HelloError, Message, P2P_VERSION,
-};
+use crate::secure::{initiate, SecureReader, SecureWriter};
+use crate::{check_hello, FrameError, Hello, HelloError, Message, PeerAddr, P2P_VERSION};
 
 #[derive(Debug)]
 pub enum ClientError {
@@ -55,27 +58,60 @@ impl From<FrameError> for ClientError {
     }
 }
 
+/// Opções de conexão.
+#[derive(Clone, Debug)]
+pub struct ConnectOptions {
+    /// Proxy SOCKS5 (ex.: Tor em `127.0.0.1:9050`).
+    pub proxy: Option<SocketAddr>,
+    /// Identidade esperada do Node; impede interceptação ativa.
+    pub expected_node: Option<NodeId>,
+    pub timeout: Duration,
+    /// Porta anunciada no HELLO (0 para clientes).
+    pub listen_port: u16,
+    /// Pede propagação de blocos e transações (Nodes).
+    pub relay: bool,
+}
+
+impl ConnectOptions {
+    pub fn new(timeout: Duration) -> Self {
+        Self {
+            proxy: None,
+            expected_node: None,
+            timeout,
+            listen_port: 0,
+            relay: false,
+        }
+    }
+}
+
 pub struct Client {
-    stream: TcpStream,
+    reader: SecureReader<TcpStream>,
+    writer: SecureWriter<TcpStream>,
     /// HELLO recebido do Node.
     pub hello: Hello,
+    /// Identidade comprovada do Node no canal cifrado.
+    pub node: PublicKey,
     timeout: Duration,
 }
 
 impl Client {
-    /// Conecta e verifica que o Node pertence à rede esperada. A Wallet não
-    /// confia no Node para dizer qual é a rede (THR-ID-003).
+    /// Conexão direta, sem proxy.
     pub fn connect(
         addr: SocketAddr,
         network_id: &str,
         genesis: Hash32,
         timeout: Duration,
     ) -> Result<Self, ClientError> {
-        Self::connect_with_port(addr, network_id, genesis, timeout, 0)
+        Self::connect_opts(
+            &PeerAddr::Ip(addr),
+            network_id,
+            genesis,
+            &ConnectOptions::new(timeout),
+        )
     }
 
-    /// Como [`Client::connect`], anunciando `listen_port` no HELLO. Com porta
-    /// diferente de zero, o Node trata a conexão como par (recebe propagação).
+    /// Como [`Client::connect`], anunciando `listen_port` e pedindo
+    /// propagação (usado em testes que simulam um par).
     pub fn connect_with_port(
         addr: SocketAddr,
         network_id: &str,
@@ -83,40 +119,61 @@ impl Client {
         timeout: Duration,
         listen_port: u16,
     ) -> Result<Self, ClientError> {
-        let mut stream = TcpStream::connect_timeout(&addr, timeout).map_err(ClientError::Io)?;
+        let mut o = ConnectOptions::new(timeout);
+        o.listen_port = listen_port;
+        o.relay = true;
+        Self::connect_opts(&PeerAddr::Ip(addr), network_id, genesis, &o)
+    }
+
+    /// Conecta e verifica que o Node pertence à rede esperada. A Wallet não
+    /// confia no Node para dizer qual é a rede (THR-ID-003).
+    pub fn connect_opts(
+        addr: &PeerAddr,
+        network_id: &str,
+        genesis: Hash32,
+        o: &ConnectOptions,
+    ) -> Result<Self, ClientError> {
+        let stream = crate::socks::connect(addr, o.proxy, o.timeout).map_err(ClientError::Io)?;
         stream
-            .set_read_timeout(Some(timeout))
+            .set_read_timeout(Some(o.timeout))
             .map_err(ClientError::Io)?;
         stream.set_nodelay(true).map_err(ClientError::Io)?;
-        write_frame(
-            &mut stream,
-            &Message::Hello(Hello {
-                p2p_version: P2P_VERSION,
-                network_id: network_id.to_owned(),
-                genesis,
-                height: 0,
-                listen_port,
-            }),
+        let (mut reader, mut writer, node) = initiate(
+            stream.try_clone().map_err(ClientError::Io)?,
+            stream,
+            network_id,
+            o.expected_node,
         )?;
-        let hello = match read_frame(&mut stream)? {
+        writer.write_message(&Message::Hello(Hello {
+            p2p_version: P2P_VERSION,
+            network_id: network_id.to_owned(),
+            genesis,
+            height: 0,
+            listen_port: o.listen_port,
+            relay: o.relay,
+            advertise: None,
+        }))?;
+        let hello = match reader.read_message()? {
             Message::Hello(h) => h,
             Message::Reject(r) => return Err(ClientError::Rejected(r)),
             _ => return Err(ClientError::Protocol("esperado HELLO")),
         };
         check_hello(&hello, network_id, &genesis).map_err(ClientError::Handshake)?;
         Ok(Self {
-            stream,
+            reader,
+            writer,
             hello,
-            timeout,
+            node,
+            timeout: o.timeout,
         })
     }
 
     pub fn send(&mut self, msg: &Message) -> Result<(), ClientError> {
-        write_frame(&mut self.stream, msg).map_err(Into::into)
+        self.writer.write_message(msg).map_err(Into::into)
     }
 
     pub fn recv(&mut self) -> Result<Message, ClientError> {
-        match read_frame(&mut self.stream)? {
+        match self.reader.read_message()? {
             Message::Reject(r) => Err(ClientError::Rejected(r)),
             m => Ok(m),
         }
@@ -139,8 +196,8 @@ impl Client {
         Err(ClientError::Timeout)
     }
 
-    /// Acesso ao socket, para testes que precisam de controle fino.
+    /// Acesso ao socket, para testes que precisam enviar bytes brutos.
     pub fn stream_mut(&mut self) -> &mut TcpStream {
-        &mut self.stream
+        self.writer.get_mut()
     }
 }

@@ -67,7 +67,7 @@ fn start(g: &Genesis, name: &str, key: SecretKey, peers: Vec<SocketAddr>) -> Nod
         std::env::temp_dir().join(format!("rz-gov-{name}-{}-{}", std::process::id(), now_ms()));
     let mut cfg = NodeConfig::new(g.clone(), dir, "127.0.0.1:0".parse().unwrap());
     cfg.validator_key = Some(key);
-    cfg.bootstrap = peers;
+    cfg.bootstrap = peers.into_iter().map(Into::into).collect();
     cfg.log = LogLevel::Quiet;
     Node::start(cfg).unwrap()
 }

@@ -9,8 +9,10 @@ mod frame;
 mod message;
 mod ratelimit;
 mod score;
+pub mod secure;
+pub mod socks;
 
-pub use client::{Client, ClientError};
+pub use client::{Client, ClientError, ConnectOptions};
 pub use frame::{read_frame, write_frame, FrameError, MAX_FRAME_SIZE};
 pub use message::{
     check_hello, Hello, HelloError, Message, PeerAddr, MAX_BLOCKS_PER_MSG, MAX_KEY_IMAGES_PER_MSG,
@@ -20,4 +22,4 @@ pub use ratelimit::TokenBucket;
 pub use score::{Offense, PeerScore, BAN_THRESHOLD};
 
 /// Versão do protocolo P2P.
-pub const P2P_VERSION: u16 = 1;
+pub const P2P_VERSION: u16 = 2;

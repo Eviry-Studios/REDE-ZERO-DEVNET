@@ -22,6 +22,8 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 curve25519-dalek = { version = "4.1", default-features = false, features = ["alloc", "zeroize", "rand_core", "precomputed-tables"] }
 bulletproofs = { version = "5", default-features = false, features = ["std"] }
 merlin = { version = "3", default-features = false }
+x25519-dalek = { version = "2", default-features = false, features = ["zeroize"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

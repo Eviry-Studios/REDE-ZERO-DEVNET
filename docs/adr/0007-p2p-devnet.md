@@ -1,6 +1,6 @@
 # ADR-0007 — P2P da DEVNET sobre TCP
 
-**Estado:** Aceita
+**Estado:** Aceita — limitações de canal e privacidade de rede tratadas pelas ADR-0010 e ADR-0011
 **Escopo:** DEVNET
 **Data:** 2026-09-29
 **Relacionamento:** SPEC §23–29, THR-P2P-001..006, THR-PRIV-002, THR-PRIV-003

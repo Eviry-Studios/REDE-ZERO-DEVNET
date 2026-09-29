@@ -24,10 +24,11 @@ use rz_codec::Encode;
 use rz_core::state::ExecParams;
 use rz_core::{Account, Block, BlockId, Genesis, Transaction, TxError, TxId};
 use rz_crypto::{Address, Hash32, SecretKey};
+use rz_p2p::secure::{initiate, respond, SecureReader};
 use rz_p2p::{
-    check_hello, read_frame, write_frame, FrameError, Hello, Message, Offense, PeerAddr, PeerScore,
-    TokenBucket, MAX_BLOCKS_PER_MSG, MAX_KEY_IMAGES_PER_MSG, MAX_OUTPUTS_PER_MSG,
-    MAX_PEERS_PER_MSG, P2P_VERSION,
+    check_hello, FrameError, Hello, Message, Offense, PeerAddr, PeerScore, TokenBucket,
+    MAX_BLOCKS_PER_MSG, MAX_KEY_IMAGES_PER_MSG, MAX_OUTPUTS_PER_MSG, MAX_PEERS_PER_MSG,
+    P2P_VERSION,
 };
 
 use crate::store::BlockStore;
@@ -60,9 +61,18 @@ pub enum LogLevel {
 pub struct NodeConfig {
     pub genesis: Genesis,
     pub data_dir: PathBuf,
-    pub listen: SocketAddr,
-    pub bootstrap: Vec<SocketAddr>,
+    /// Endereço de escuta. `None` = Node privado: só disca, nunca aceita
+    /// conexões nem anuncia endereço (ADR-0011).
+    pub listen: Option<SocketAddr>,
+    pub bootstrap: Vec<PeerAddr>,
     pub validator_key: Option<SecretKey>,
+    /// Chave de identidade do Node no canal cifrado. `None` = carrega ou
+    /// cria `node.key` no diretório de dados.
+    pub node_key: Option<SecretKey>,
+    /// Proxy SOCKS5 para conexões de saída (ex.: Tor em 127.0.0.1:9050).
+    pub proxy: Option<SocketAddr>,
+    /// Endereço público anunciado aos pares (ex.: serviço onion).
+    pub advertise: Option<PeerAddr>,
     pub max_inbound: usize,
     pub max_outbound: usize,
     pub max_inbound_per_ip: usize,
@@ -75,9 +85,12 @@ impl NodeConfig {
         Self {
             genesis,
             data_dir,
-            listen,
+            listen: Some(listen),
             bootstrap: Vec::new(),
             validator_key: None,
+            node_key: None,
+            proxy: None,
+            advertise: None,
             max_inbound: 32,
             max_outbound: 8,
             max_inbound_per_ip: 8,
@@ -106,9 +119,9 @@ struct Core {
 struct Peer {
     stream: TcpStream,
     tx: SyncSender<Message>,
-    outbound_target: Option<SocketAddr>,
-    listen: Option<SocketAddr>,
-    /// Pares que aceitam conexões recebem propagação; clientes (Wallets) não.
+    outbound_target: Option<PeerAddr>,
+    listen: Option<PeerAddr>,
+    /// Nodes (inclusive privados) recebem propagação; clientes (Wallets) não.
     relay: bool,
 }
 
@@ -117,16 +130,19 @@ struct Peers {
     conns: HashMap<u64, Peer>,
     next_id: u64,
     banned: HashMap<IpAddr, Instant>,
-    known: BTreeSet<SocketAddr>,
-    dialing: HashSet<SocketAddr>,
+    known: BTreeSet<PeerAddr>,
+    dialing: HashSet<PeerAddr>,
 }
 
 struct Shared {
     genesis: Genesis,
     genesis_hash: Hash32,
     key: Option<SecretKey>,
-    listen_addr: SocketAddr,
-    bootstrap: Vec<SocketAddr>,
+    node_key: SecretKey,
+    listen_addr: Option<SocketAddr>,
+    bootstrap: Vec<PeerAddr>,
+    proxy: Option<SocketAddr>,
+    advertise: Option<PeerAddr>,
     max_inbound: usize,
     max_outbound: usize,
     max_inbound_per_ip: usize,
@@ -179,15 +195,32 @@ impl Node {
             }
         }
 
-        let listener = TcpListener::bind(cfg.listen)?;
-        listener.set_nonblocking(true)?;
-        let listen_addr = listener.local_addr()?;
+        let node_key = match cfg.node_key {
+            Some(k) => k,
+            None => load_or_create_node_key(&cfg.data_dir)?,
+        };
+
+        let listener = match cfg.listen {
+            Some(addr) => {
+                let l = TcpListener::bind(addr)?;
+                l.set_nonblocking(true)?;
+                Some(l)
+            }
+            None => None,
+        };
+        let listen_addr = match &listener {
+            Some(l) => Some(l.local_addr()?),
+            None => None,
+        };
 
         let shared = Arc::new(Shared {
             genesis_hash,
             key: cfg.validator_key,
+            node_key,
             listen_addr,
             bootstrap: cfg.bootstrap,
+            proxy: cfg.proxy,
+            advertise: cfg.advertise,
             max_inbound: cfg.max_inbound,
             max_outbound: cfg.max_outbound,
             max_inbound_per_ip: cfg.max_inbound_per_ip,
@@ -208,20 +241,33 @@ impl Node {
         });
 
         shared.info(format!(
-            "rede {} | genesis {} | escutando {} | {} blocos no disco ({} descartados) | altura {}",
+            "rede {} | genesis {} | {} | {} blocos no disco ({} descartados) | altura {}",
             shared.genesis.network_id,
             genesis_hash,
-            listen_addr,
+            match listen_addr {
+                Some(a) => format!("escutando {a}"),
+                None => "node privado (sem escuta)".into(),
+            },
             total,
             rejected,
             lock(&shared.core).chain.height()
         ));
+        shared.info(format!(
+            "identidade do node {}",
+            shared.node_key.public_key().node_id()
+        ));
+        if let Some(p) = &shared.proxy {
+            shared.info(format!("conexões de saída via proxy SOCKS5 {p}"));
+        }
+        if let Some(a) = &shared.advertise {
+            shared.info(format!("endereço anunciado {a}"));
+        }
         if let Some(k) = &shared.key {
             shared.info(format!("validador {}", k.public_key()));
         }
 
         let mut threads = Vec::new();
-        {
+        if let Some(listener) = listener {
             let s = shared.clone();
             threads.push(thread::spawn(move || s.accept_loop(listener)));
         }
@@ -236,8 +282,19 @@ impl Node {
         Ok(Node { shared, threads })
     }
 
+    /// Endereço de escuta.
+    ///
+    /// # Panics
+    /// Em um Node privado (sem escuta).
     pub fn listen_addr(&self) -> SocketAddr {
-        self.shared.listen_addr
+        self.shared
+            .listen_addr
+            .expect("node privado não possui endereço de escuta")
+    }
+
+    /// Identidade do Node no canal cifrado.
+    pub fn node_id(&self) -> rz_crypto::NodeId {
+        self.shared.node_key.public_key().node_id()
     }
 
     pub fn genesis(&self) -> &Genesis {
@@ -310,7 +367,7 @@ impl Shared {
                 (t / 60_000) % 60,
                 (t / 1000) % 60,
                 t % 1000,
-                self.listen_addr.port(),
+                self.listen_addr.map_or(0, |a| a.port()),
                 msg.as_ref()
             );
         }
@@ -350,7 +407,9 @@ impl Shared {
             network_id: self.genesis.network_id.clone(),
             genesis: self.genesis_hash,
             height: lock(&self.core).chain.height(),
-            listen_port: self.listen_addr.port(),
+            listen_port: self.listen_addr.map_or(0, |a| a.port()),
+            relay: true,
+            advertise: self.advertise.clone(),
         }
     }
 
@@ -519,14 +578,14 @@ impl Shared {
     fn dial_loop(self: Arc<Self>) {
         while self.running() {
             self.check_embargo();
-            let candidates: Vec<SocketAddr> = {
+            let candidates: Vec<PeerAddr> = {
                 let mut p = lock(&self.peers);
                 let now = Instant::now();
                 p.banned.retain(|_, until| *until > now);
-                let connected: HashSet<SocketAddr> = p
+                let connected: HashSet<PeerAddr> = p
                     .conns
                     .values()
-                    .flat_map(|c| [c.outbound_target, c.listen])
+                    .flat_map(|c| [c.outbound_target.clone(), c.listen.clone()])
                     .flatten()
                     .collect();
                 let outbound = p
@@ -536,30 +595,32 @@ impl Shared {
                     .count()
                     + p.dialing.len();
                 let slots = self.max_outbound.saturating_sub(outbound);
-                let pool: Vec<SocketAddr> = self
+                let pool: Vec<PeerAddr> = self
                     .bootstrap
                     .iter()
                     .chain(p.known.iter())
-                    .copied()
                     .filter(|a| {
                         !self.is_self(a)
-                            && !connected.contains(a)
-                            && !p.dialing.contains(a)
-                            && !p.banned.contains_key(&a.ip())
+                            && !connected.contains(*a)
+                            && !p.dialing.contains(*a)
+                            && !matches!(a, PeerAddr::Ip(ip) if p.banned.contains_key(&ip.ip()))
+                            // Endereços onion só são alcançáveis via proxy Tor.
+                            && (self.proxy.is_some() || !a.is_onion())
                     })
+                    .cloned()
                     .collect::<BTreeSet<_>>()
                     .into_iter()
                     .take(slots)
                     .collect();
                 for a in &pool {
-                    p.dialing.insert(*a);
+                    p.dialing.insert(a.clone());
                 }
                 pool
             };
             for addr in candidates {
                 let s = self.clone();
                 thread::spawn(move || {
-                    if let Ok(stream) = TcpStream::connect_timeout(&addr, DIAL_TIMEOUT) {
+                    if let Ok(stream) = rz_p2p::socks::connect(&addr, s.proxy, DIAL_TIMEOUT) {
                         s.clone().run_connection(stream, Some(addr));
                     } else {
                         lock(&s.peers).dialing.remove(&addr);
@@ -575,15 +636,21 @@ impl Shared {
         }
     }
 
-    fn is_self(&self, a: &SocketAddr) -> bool {
-        a.port() == self.listen_addr.port()
-            && (a.ip() == self.listen_addr.ip()
-                || a.ip().is_loopback()
-                || self.listen_addr.ip().is_unspecified())
+    fn is_self(&self, a: &PeerAddr) -> bool {
+        if self.advertise.as_ref() == Some(a) {
+            return true;
+        }
+        match (a, self.listen_addr) {
+            (PeerAddr::Ip(a), Some(l)) => {
+                a.port() == l.port()
+                    && (a.ip() == l.ip() || a.ip().is_loopback() || l.ip().is_unspecified())
+            }
+            _ => false,
+        }
     }
 
-    fn run_connection(self: Arc<Self>, stream: TcpStream, outbound: Option<SocketAddr>) {
-        let result = self.clone().connection(stream, outbound);
+    fn run_connection(self: Arc<Self>, stream: TcpStream, outbound: Option<PeerAddr>) {
+        let result = self.clone().connection(stream, outbound.clone());
         if let Some(addr) = outbound {
             lock(&self.peers).dialing.remove(&addr);
         }
@@ -594,39 +661,66 @@ impl Shared {
 
     fn connection(
         self: Arc<Self>,
-        mut stream: TcpStream,
-        outbound: Option<SocketAddr>,
+        stream: TcpStream,
+        outbound: Option<PeerAddr>,
     ) -> io::Result<()> {
         let remote = stream.peer_addr()?;
         stream.set_nodelay(true)?;
         stream.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
         stream.set_write_timeout(Some(HANDSHAKE_TIMEOUT))?;
 
-        // Handshake (spec/P2P.md §3).
-        write_frame(&mut stream, &Message::Hello(self.hello())).map_err(frame_io)?;
-        let hello = match read_frame(&mut stream) {
+        // Canal cifrado (ADR-0011): quem disca inicia; quem aceita prova sua
+        // identidade de Node.
+        let net = &self.genesis.network_id;
+        let (mut reader, mut writer) = if outbound.is_some() {
+            let (r, w, _node) =
+                initiate(stream.try_clone()?, stream.try_clone()?, net, None).map_err(frame_io)?;
+            (r, w)
+        } else {
+            respond(
+                stream.try_clone()?,
+                stream.try_clone()?,
+                net,
+                &self.node_key,
+            )
+            .map_err(frame_io)?
+        };
+
+        // Handshake de protocolo (spec/P2P.md §3).
+        writer
+            .write_message(&Message::Hello(self.hello()))
+            .map_err(frame_io)?;
+        let hello = match reader.read_message() {
             Ok(Message::Hello(h)) => h,
             Ok(Message::Reject(r)) => {
                 return Err(io::Error::other(format!("rejeitado pelo par: {r}")))
             }
             Ok(_) => {
-                let _ = write_frame(&mut stream, &Message::Reject("esperado HELLO".into()));
+                let _ = writer.write_message(&Message::Reject("esperado HELLO".into()));
                 return Err(io::Error::other("mensagem antes do HELLO"));
             }
             Err(e) => return Err(frame_io(e)),
         };
-        if let Err(e) = check_hello(&hello, &self.genesis.network_id, &self.genesis_hash) {
-            let _ = write_frame(&mut stream, &Message::Reject(e.to_string()));
+        if let Err(e) = check_hello(&hello, net, &self.genesis_hash) {
+            let _ = writer.write_message(&Message::Reject(e.to_string()));
             return Err(io::Error::other(format!("handshake: {e}")));
         }
         stream.set_read_timeout(None)?;
+        stream.set_write_timeout(None)?;
 
-        let listen = match outbound {
-            Some(a) => Some(a),
-            None if hello.listen_port != 0 => Some(SocketAddr::new(remote.ip(), hello.listen_port)),
-            None => None,
+        // Endereço de escuta do par: o discado; um nome anunciado (ex.:
+        // onion); ou o IP observado com a porta declarada. Um IP anunciado
+        // nunca substitui o observado (evita envenenar a lista de pares).
+        let listen = match (&outbound, &hello.advertise) {
+            (Some(a), _) => Some(a.clone()),
+            (None, Some(a @ PeerAddr::Host { .. })) => Some(a.clone()),
+            (None, _) if hello.listen_port != 0 => Some(PeerAddr::Ip(SocketAddr::new(
+                remote.ip(),
+                hello.listen_port,
+            ))),
+            (None, _) => None,
         };
-        let relay = listen.is_some();
+        let relay = outbound.is_some() || hello.relay;
 
         let (tx, rx) = mpsc::sync_channel::<Message>(SEND_QUEUE);
         let id = {
@@ -638,8 +732,8 @@ impl Shared {
                 Peer {
                     stream: stream.try_clone()?,
                     tx: tx.clone(),
-                    outbound_target: outbound,
-                    listen,
+                    outbound_target: outbound.clone(),
+                    listen: listen.clone(),
                     relay,
                 },
             );
@@ -650,20 +744,21 @@ impl Shared {
             }
             id
         };
-        if outbound.is_some() {
-            self.debug(format!("conectado a {remote}"));
-        } else {
-            self.debug(format!("conexão recebida de {remote}"));
+        // Endereços de clientes nunca são registrados (THR-PRIV-004).
+        match &outbound {
+            Some(a) => self.debug(format!("conectado a {a}")),
+            None if relay => self.debug("par conectado"),
+            None => self.debug("cliente conectado"),
         }
 
-        let mut writer = stream.try_clone()?;
+        let shutdown_handle = stream.try_clone()?;
         let writer_thread = thread::spawn(move || {
             for msg in rx {
-                if write_frame(&mut writer, &msg).is_err() {
+                if writer.write_message(&msg).is_err() {
                     break;
                 }
             }
-            let _ = writer.shutdown(Shutdown::Both);
+            let _ = shutdown_handle.shutdown(Shutdown::Both);
         });
 
         let mut ctx = ConnCtx {
@@ -679,12 +774,15 @@ impl Shared {
         }
         self.maybe_sync(&mut ctx);
 
-        let banned = self.read_loop(&mut stream, &mut ctx);
+        let banned = self.read_loop(&mut reader, &mut ctx);
 
         {
             let mut p = lock(&self.peers);
             p.conns.remove(&id);
-            if banned {
+            // Atrás de um serviço onion, todas as conexões chegam do proxy
+            // local: banir o IP de loopback isolaria todos os pares onion.
+            let behind_onion = remote.ip().is_loopback() && self.advertise.is_some();
+            if banned && !behind_onion {
                 p.banned.insert(remote.ip(), Instant::now() + BAN_DURATION);
             }
         }
@@ -698,9 +796,9 @@ impl Shared {
     }
 
     /// Lê mensagens até o fim da conexão. Retorna `true` se o par foi banido.
-    fn read_loop(&self, stream: &mut TcpStream, ctx: &mut ConnCtx) -> bool {
+    fn read_loop(&self, reader: &mut SecureReader<TcpStream>, ctx: &mut ConnCtx) -> bool {
         while self.running() {
-            let flow = match read_frame(stream) {
+            let flow = match reader.read_message() {
                 Ok(msg) => {
                     if !ctx.bucket.try_take(1) {
                         Flow::Penalize(Offense::RateLimited)
@@ -712,6 +810,10 @@ impl Shared {
                 Err(FrameError::TooLarge(_)) => {
                     // O enquadramento foi perdido: encerra e penaliza.
                     ctx.score.penalize(Offense::MalformedMessage);
+                    return ctx.score.penalize(Offense::ProtocolViolation);
+                }
+                Err(FrameError::Crypto | FrameError::Handshake(_)) => {
+                    // Canal adulterado ou dessincronizado: encerra.
                     return ctx.score.penalize(Offense::ProtocolViolation);
                 }
                 Err(FrameError::Io(_)) => return false,
@@ -761,16 +863,15 @@ impl Shared {
                     .conns
                     .iter()
                     .filter(|(id, _)| **id != ctx.id)
-                    .filter_map(|(_, p)| p.listen)
+                    .filter_map(|(_, p)| p.listen.clone())
                     .take(MAX_PEERS_PER_MSG)
-                    .map(PeerAddr)
                     .collect();
                 self.send_to(ctx.id, Message::Peers(peers));
                 Flow::Continue
             }
             Message::Peers(list) => {
                 let mut p = lock(&self.peers);
-                for PeerAddr(a) in list {
+                for a in list {
                     if a.port() != 0 && !self.is_self(&a) && p.known.len() < 1024 {
                         p.known.insert(a);
                     }
@@ -1167,6 +1268,23 @@ fn random_below(n: u64) -> u64 {
         if v < zone {
             return v % n;
         }
+    }
+}
+
+/// Carrega a chave de identidade do Node, ou cria uma nova.
+///
+/// A identidade só é revelada a quem se conecta a este Node (lado que aceita
+/// conexões); um Node privado (`--no-listen`) nunca a expõe.
+fn load_or_create_node_key(dir: &std::path::Path) -> io::Result<SecretKey> {
+    let path = dir.join("node.key");
+    match rz_crypto::keyfile::load(&path) {
+        Ok(k) => Ok(k),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            let k = SecretKey::generate();
+            rz_crypto::keyfile::save(&path, &k)?;
+            Ok(k)
+        }
+        Err(e) => Err(e),
     }
 }
 

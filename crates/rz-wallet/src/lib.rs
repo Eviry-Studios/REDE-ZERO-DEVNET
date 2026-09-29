@@ -14,7 +14,9 @@ use std::time::Duration;
 use rz_core::private::{build_private_tx, build_shield, SpendableNote, Unshield};
 use rz_core::{Genesis, Transaction, TxBody, TxId, TxKind};
 use rz_crypto::{Address, SecretKey};
-use rz_p2p::{Client, Message, MAX_KEY_IMAGES_PER_MSG, MAX_OUTPUTS_PER_MSG};
+use rz_p2p::{
+    Client, ConnectOptions, Message, PeerAddr, MAX_KEY_IMAGES_PER_MSG, MAX_OUTPUTS_PER_MSG,
+};
 use rz_privacy::keys::{ShieldedAddress, ShieldedSecret};
 use rz_privacy::note::{scan_output, OutputData};
 
@@ -59,14 +61,38 @@ impl Destination {
     }
 }
 
+/// Como a Wallet alcança o Node (ADR-0011).
+#[derive(Clone, Debug, Default)]
+pub struct NetOptions {
+    /// Proxy SOCKS5 (Tor/I2P). Com proxy, o Node vê o endereço de saída do
+    /// proxy, não o IP do usuário.
+    pub proxy: Option<SocketAddr>,
+    /// Identidade esperada do Node (impede interceptação ativa).
+    pub node_id: Option<rz_crypto::NodeId>,
+    /// O usuário aceita expor seu IP a um Node remoto sem proxy.
+    pub allow_direct: bool,
+}
+
+/// Mensagem exibida quando a política de privacidade bloqueia a conexão.
+pub const DIRECT_REFUSED: &str = "conexão direta a um node remoto exporia seu endereço IP ao \
+operador do node. Use um node local (127.0.0.1), conecte via Tor com --proxy 127.0.0.1:9050, \
+ou aceite o risco explicitamente com --direct";
+
+/// Conecta respeitando a política de privacidade por padrão (REQ-023):
+/// sem proxy, só Nodes locais são aceitos, salvo consentimento explícito.
+pub fn connect_to(node: &PeerAddr, genesis: &Genesis, net: &NetOptions) -> Result<Client, String> {
+    if net.proxy.is_none() && !node.is_loopback() && !net.allow_direct {
+        return Err(DIRECT_REFUSED.into());
+    }
+    let mut o = ConnectOptions::new(Duration::from_secs(30));
+    o.proxy = net.proxy;
+    o.expected_node = net.node_id;
+    Client::connect_opts(node, &genesis.network_id, genesis.hash(), &o).map_err(|e| e.to_string())
+}
+
+/// Conexão direta a um Node local (atalho para testes e uso local).
 pub fn connect(node: SocketAddr, genesis: &Genesis) -> Result<Client, String> {
-    Client::connect(
-        node,
-        &genesis.network_id,
-        genesis.hash(),
-        Duration::from_secs(20),
-    )
-    .map_err(|e| e.to_string())
+    connect_to(&PeerAddr::Ip(node), genesis, &NetOptions::default())
 }
 
 /// `(saldo, nonce, altura)` de uma conta transparente.
