@@ -250,6 +250,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rz-chain"
+version = "0.1.0"
+dependencies = [
+ "rz-codec",
+ "rz-core",
+ "rz-crypto",
+]
+
+[[package]]
 name = "rz-codec"
 version = "0.1.0"
 

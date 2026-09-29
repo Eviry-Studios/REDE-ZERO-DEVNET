@@ -13,5 +13,6 @@ entrada → operação → saída esperada → regra de validação → casos de
 | [TRANSACTIONS.md](TRANSACTIONS.md) | DEVNET v0.1.0 | `crates/rz-core` |
 | [STATE.md](STATE.md) | DEVNET v0.1.0 | `crates/rz-core` |
 | [BLOCKS.md](BLOCKS.md) | DEVNET v0.1.0 | `crates/rz-core` |
+| [CONSENSUS.md](CONSENSUS.md) | DEVNET v0.1.0 (provisório) | `crates/rz-chain` |
 
 Todas as especificações deste diretório estão em estado **DEVNET** — não congeladas (`SPECIFICATIONS.md §74`). Em caso de divergência entre código e especificação, a divergência é um defeito a ser resolvido por processo formal.
