@@ -24,6 +24,7 @@ Uma decisão com escopo `DEVNET` **não** vale automaticamente para outros ambie
 | [0005](0005-modelo-de-contas.md) | Modelo de contas com nonce e unidade mínima do ZERO | DEVNET | Aceita |
 | [0006](0006-consenso-devnet.md) | Consenso da DEVNET: autoridade rotativa | DEVNET apenas | Aceita |
 | [0007](0007-p2p-devnet.md) | P2P da DEVNET sobre TCP | DEVNET | Aceita |
+| [0008](0008-governanca-bicameral.md) | Governança bicameral com compromisso temporal | DEVNET → TESTNET | Proposta |
 
 ## Modelo
 
