@@ -41,10 +41,16 @@ impl fmt::Display for MempoolError {
 
 impl std::error::Error for MempoolError {}
 
-/// Mempool ordenado por `(remetente, nonce)`: a seleção é determinística e
-/// respeita a sequência de nonces de cada conta.
+/// Mempool determinístico.
+///
+/// * Transações de conta: ordenadas por `(remetente, nonce)`, respeitando a
+///   sequência de nonces de cada conta.
+/// * Transações privadas: ordenadas por identificador; conflitos detectados
+///   pelas imagens de chave (duas transações gastando a mesma nota).
 pub struct Mempool {
     txs: BTreeMap<(Address, u64), Transaction>,
+    private: BTreeMap<TxId, Transaction>,
+    key_images: HashSet<[u8; 32]>,
     ids: HashSet<TxId>,
     capacity: usize,
 }
@@ -53,17 +59,19 @@ impl Mempool {
     pub fn new(capacity: usize) -> Self {
         Self {
             txs: BTreeMap::new(),
+            private: BTreeMap::new(),
+            key_images: HashSet::new(),
             ids: HashSet::new(),
             capacity,
         }
     }
 
     pub fn len(&self) -> usize {
-        self.txs.len()
+        self.txs.len() + self.private.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.txs.is_empty()
+        self.len() == 0
     }
 
     pub fn contains(&self, id: &TxId) -> bool {
@@ -72,11 +80,14 @@ impl Mempool {
 
     /// Valida e insere.
     ///
-    /// Uma transação com nonce futuro só é aceita se a transação anterior do
-    /// mesmo remetente já estiver pendente (nonces contíguos, até
+    /// Uma transação de conta com nonce futuro só é aceita se a transação
+    /// anterior do mesmo remetente já estiver pendente (nonces contíguos, até
     /// [`MAX_NONCE_GAP`]). Assim, a primeira transação de cada sequência
     /// sempre passa pela verificação completa de saldo, e contas sem fundos
     /// não conseguem ocupar o mempool (THR-P2P-002).
+    ///
+    /// Transações privadas são sempre verificadas por completo (anel, provas
+    /// e balanço) antes de entrar.
     pub fn insert(
         &mut self,
         tx: Transaction,
@@ -87,34 +98,52 @@ impl Mempool {
         if self.ids.contains(&id) {
             return Err(MempoolError::Duplicate);
         }
-        tx.check_stateless(params.min_fee)
-            .map_err(MempoolError::Invalid)?;
-        tx.verify_signature(params.network_id)
-            .map_err(MempoolError::Invalid)?;
-
-        let sender = tx.body.sender_address();
-        let current = state.account(&sender).nonce;
-        if tx.body.nonce < current {
-            return Err(MempoolError::Stale);
-        }
-        if tx.body.nonce - current > MAX_NONCE_GAP {
-            return Err(MempoolError::NonceTooFar);
-        }
-        if tx.body.nonce == current {
-            state
-                .check_transaction(&tx, params)
-                .map_err(MempoolError::Invalid)?;
-        } else if !self.txs.contains_key(&(sender, tx.body.nonce - 1)) {
-            return Err(MempoolError::NonceGap);
-        }
-        let key = (sender, tx.body.nonce);
-        if self.txs.contains_key(&key) {
-            return Err(MempoolError::Conflict);
-        }
-        if self.txs.len() >= self.capacity {
+        if self.len() >= self.capacity {
             return Err(MempoolError::Full);
         }
-        self.txs.insert(key, tx);
+        match &tx {
+            Transaction::Account(a) => {
+                a.check_stateless(params.min_fee)
+                    .map_err(MempoolError::Invalid)?;
+                a.verify_signature(params.network_id)
+                    .map_err(MempoolError::Invalid)?;
+                let sender = a.body.sender_address();
+                let nonce = a.body.nonce;
+                let current = state.account(&sender).nonce;
+                if nonce < current {
+                    return Err(MempoolError::Stale);
+                }
+                if nonce - current > MAX_NONCE_GAP {
+                    return Err(MempoolError::NonceTooFar);
+                }
+                if nonce == current {
+                    state
+                        .check_transaction(&tx, params)
+                        .map_err(MempoolError::Invalid)?;
+                } else if !self.txs.contains_key(&(sender, nonce - 1)) {
+                    return Err(MempoolError::NonceGap);
+                }
+                if self.txs.contains_key(&(sender, nonce)) {
+                    return Err(MempoolError::Conflict);
+                }
+                self.txs.insert((sender, nonce), tx);
+            }
+            Transaction::Private(p) => {
+                if p.inputs
+                    .iter()
+                    .any(|i| self.key_images.contains(&i.key_image))
+                {
+                    return Err(MempoolError::Conflict);
+                }
+                state
+                    .check_transaction(&tx, params)
+                    .map_err(MempoolError::Invalid)?;
+                for i in &p.inputs {
+                    self.key_images.insert(i.key_image);
+                }
+                self.private.insert(id, tx);
+            }
+        }
         self.ids.insert(id);
         Ok(id)
     }
@@ -123,7 +152,7 @@ impl Mempool {
     pub fn select(&self, state: &State, params: &ExecParams<'_>, max: usize) -> Vec<Transaction> {
         let mut scratch = state.clone();
         let mut out = Vec::new();
-        for tx in self.txs.values() {
+        for tx in self.txs.values().chain(self.private.values()) {
             if out.len() >= max {
                 break;
             }
@@ -134,8 +163,7 @@ impl Mempool {
         out
     }
 
-    /// Remove transações cujo nonce já foi consumido no estado dado, ou que
-    /// se tornaram inválidas.
+    /// Remove transações já incluídas ou que se tornaram inválidas.
     pub fn prune(&mut self, state: &State, params: &ExecParams<'_>) {
         let ids = &mut self.ids;
         self.txs.retain(|(sender, nonce), tx| {
@@ -144,6 +172,22 @@ impl Mempool {
                 || (*nonce == current && state.check_transaction(tx, params).is_ok());
             if !keep {
                 ids.remove(&tx.id());
+            }
+            keep
+        });
+        // Uma transação privada só deixa de ser válida quando alguma de suas
+        // notas é gasta — verificação barata, sem refazer provas.
+        let key_images = &mut self.key_images;
+        self.private.retain(|id, tx| {
+            let Transaction::Private(p) = tx else {
+                return false;
+            };
+            let keep = !p.inputs.iter().any(|i| state.is_spent(&i.key_image));
+            if !keep {
+                ids.remove(id);
+                for i in &p.inputs {
+                    key_images.remove(&i.key_image);
+                }
             }
             keep
         });
@@ -202,7 +246,12 @@ mod tests {
         m.insert(tx(0, 10), &s, &p).unwrap();
         m.insert(tx(1, 10), &s, &p).unwrap();
         let sel = m.select(&s, &p, 10);
-        assert_eq!(sel.iter().map(|t| t.body.nonce).collect::<Vec<_>>(), [0, 1]);
+        assert_eq!(
+            sel.iter()
+                .map(|t| t.as_account().unwrap().body.nonce)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
 
         s.apply_transaction(&sel[0], &p).unwrap();
         m.prune(&s, &p);
@@ -227,7 +276,9 @@ mod tests {
         let s = State::from_genesis(&g).unwrap();
         let mut m = Mempool::new(10);
         let mut bad = tx(0, 10);
-        bad.signature.0[0] ^= 1;
+        if let Transaction::Account(a) = &mut bad {
+            a.signature.0[0] ^= 1;
+        }
         assert!(matches!(
             m.insert(bad, &s, &p),
             Err(MempoolError::Invalid(_))

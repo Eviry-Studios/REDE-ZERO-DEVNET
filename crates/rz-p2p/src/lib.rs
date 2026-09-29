@@ -13,7 +13,8 @@ mod score;
 pub use client::{Client, ClientError};
 pub use frame::{read_frame, write_frame, FrameError, MAX_FRAME_SIZE};
 pub use message::{
-    check_hello, Hello, HelloError, Message, PeerAddr, MAX_BLOCKS_PER_MSG, MAX_PEERS_PER_MSG,
+    check_hello, Hello, HelloError, Message, PeerAddr, MAX_BLOCKS_PER_MSG, MAX_KEY_IMAGES_PER_MSG,
+    MAX_OUTPUTS_PER_MSG, MAX_PEERS_PER_MSG,
 };
 pub use ratelimit::TokenBucket;
 pub use score::{Offense, PeerScore, BAN_THRESHOLD};

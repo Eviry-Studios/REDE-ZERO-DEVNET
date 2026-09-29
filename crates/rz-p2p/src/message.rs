@@ -7,6 +7,7 @@ use rz_codec::{Decode, DecodeError, Decoder, Encode, Encoder};
 use rz_core::limits::MAX_NETWORK_ID_LEN;
 use rz_core::{Block, BlockId, Transaction, TxId};
 use rz_crypto::{Address, Hash32};
+use rz_privacy::note::OutputData;
 
 use crate::P2P_VERSION;
 
@@ -14,6 +15,10 @@ use crate::P2P_VERSION;
 pub const MAX_BLOCKS_PER_MSG: usize = 64;
 /// Máximo de endereços em uma resposta `Peers`.
 pub const MAX_PEERS_PER_MSG: usize = 32;
+/// Máximo de saídas privadas em uma resposta `Outputs`.
+pub const MAX_OUTPUTS_PER_MSG: usize = 4096;
+/// Máximo de imagens de chave em uma resposta `KeyImages`.
+pub const MAX_KEY_IMAGES_PER_MSG: usize = 8192;
 const MAX_REASON_LEN: usize = 256;
 
 /// Endereço de par: IPv6 (IPv4 mapeado) de 16 bytes + porta.
@@ -165,6 +170,19 @@ pub enum Message {
     },
     /// `0x0e` — rejeição seguida de encerramento da conexão.
     Reject(String),
+    /// `0x0f` — solicita saídas privadas a partir de um índice global.
+    GetOutputs { from: u64, max: u32 },
+    /// `0x10`
+    Outputs {
+        start: u64,
+        outputs: Vec<OutputData>,
+    },
+    /// `0x11` — solicita imagens de chave gastas a partir de uma posição.
+    GetKeyImages { from: u64, max: u32 },
+    /// `0x12`
+    KeyImages { start: u64, images: Vec<[u8; 32]> },
+    /// `0x13` — transação em fase de haste (Dandelion++, `spec/P2P.md §4`).
+    StemTransaction(Transaction),
 }
 
 impl Encode for Message {
@@ -239,6 +257,21 @@ impl Encode for Message {
             Message::Reject(r) => {
                 e.u8(0x0e).str(r);
             }
+            Message::GetOutputs { from, max } => {
+                e.u8(0x0f).u64(*from).u32(*max);
+            }
+            Message::Outputs { start, outputs } => {
+                e.u8(0x10).u64(*start).list(outputs);
+            }
+            Message::GetKeyImages { from, max } => {
+                e.u8(0x11).u64(*from).u32(*max);
+            }
+            Message::KeyImages { start, images } => {
+                e.u8(0x12).u64(*start).list(images);
+            }
+            Message::StemTransaction(tx) => {
+                e.u8(0x13).put(tx);
+            }
         }
     }
 }
@@ -279,6 +312,23 @@ impl Decode for Message {
                 mempool: d.u32()?,
             },
             0x0e => Message::Reject(d.str(MAX_REASON_LEN)?),
+            0x0f => Message::GetOutputs {
+                from: d.u64()?,
+                max: d.u32()?,
+            },
+            0x10 => Message::Outputs {
+                start: d.u64()?,
+                outputs: d.list(MAX_OUTPUTS_PER_MSG)?,
+            },
+            0x11 => Message::GetKeyImages {
+                from: d.u64()?,
+                max: d.u32()?,
+            },
+            0x12 => Message::KeyImages {
+                start: d.u64()?,
+                images: d.list(MAX_KEY_IMAGES_PER_MSG)?,
+            },
+            0x13 => Message::StemTransaction(d.get()?),
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }
@@ -303,6 +353,11 @@ impl Message {
             Message::GetStatus => "GET_STATUS",
             Message::Status { .. } => "STATUS",
             Message::Reject(_) => "REJECT",
+            Message::GetOutputs { .. } => "GET_OUTPUTS",
+            Message::Outputs { .. } => "OUTPUTS",
+            Message::GetKeyImages { .. } => "GET_KEY_IMAGES",
+            Message::KeyImages { .. } => "KEY_IMAGES",
+            Message::StemTransaction(_) => "STEM_TRANSACTION",
         }
     }
 }
@@ -358,6 +413,21 @@ mod tests {
                 mempool: 0,
             },
             Message::Reject("rede diferente".into()),
+            Message::GetOutputs { from: 0, max: 10 },
+            Message::Outputs {
+                start: 3,
+                outputs: vec![OutputData {
+                    one_time_key: [1; 32],
+                    tx_pub: [2; 32],
+                    commitment: [3; 32],
+                    enc_amount: [4; 8],
+                }],
+            },
+            Message::GetKeyImages { from: 1, max: 5 },
+            Message::KeyImages {
+                start: 1,
+                images: vec![[9; 32]],
+            },
         ];
         for m in msgs {
             let bytes = m.to_canonical_bytes();

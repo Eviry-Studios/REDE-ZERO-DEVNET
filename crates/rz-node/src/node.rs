@@ -25,7 +25,8 @@ use rz_core::{Account, Block, BlockId, Genesis, TxError};
 use rz_crypto::{Address, Hash32, SecretKey};
 use rz_p2p::{
     check_hello, read_frame, write_frame, FrameError, Hello, Message, Offense, PeerAddr, PeerScore,
-    TokenBucket, MAX_BLOCKS_PER_MSG, MAX_PEERS_PER_MSG, P2P_VERSION,
+    TokenBucket, MAX_BLOCKS_PER_MSG, MAX_KEY_IMAGES_PER_MSG, MAX_OUTPUTS_PER_MSG,
+    MAX_PEERS_PER_MSG, P2P_VERSION,
 };
 
 use crate::store::BlockStore;
@@ -788,11 +789,54 @@ impl Shared {
                 );
                 Flow::Continue
             }
-            Message::Reject(_) => Flow::Disconnect,
-            // Respostas não solicitadas são ignoradas.
-            Message::Account { .. } | Message::TxResult { .. } | Message::Status { .. } => {
+            Message::GetOutputs { from, max } => {
+                let outputs = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let all = state.outputs();
+                    let start = usize::try_from(from).unwrap_or(usize::MAX).min(all.len());
+                    let end = start
+                        .saturating_add((max as usize).min(MAX_OUTPUTS_PER_MSG))
+                        .min(all.len());
+                    all[start..end].to_vec()
+                };
+                self.send_to(
+                    ctx.id,
+                    Message::Outputs {
+                        start: from,
+                        outputs,
+                    },
+                );
                 Flow::Continue
             }
+            Message::GetKeyImages { from, max } => {
+                let images = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let all = state.key_image_log();
+                    let start = usize::try_from(from).unwrap_or(usize::MAX).min(all.len());
+                    let end = start
+                        .saturating_add((max as usize).min(MAX_KEY_IMAGES_PER_MSG))
+                        .min(all.len());
+                    all[start..end].to_vec()
+                };
+                self.send_to(
+                    ctx.id,
+                    Message::KeyImages {
+                        start: from,
+                        images,
+                    },
+                );
+                Flow::Continue
+            }
+            Message::StemTransaction(tx) => self.handle_tx(ctx, tx),
+            Message::Reject(_) => Flow::Disconnect,
+            // Respostas não solicitadas são ignoradas.
+            Message::Account { .. }
+            | Message::TxResult { .. }
+            | Message::Status { .. }
+            | Message::Outputs { .. }
+            | Message::KeyImages { .. } => Flow::Continue,
         }
     }
 
@@ -834,7 +878,13 @@ impl Shared {
                 match e {
                     // Erros que um par honesto nunca produz.
                     MempoolError::Invalid(
-                        TxError::Signature | TxError::UnsupportedVersion(_) | TxError::ZeroAmount,
+                        TxError::Signature
+                        | TxError::UnsupportedVersion(_)
+                        | TxError::ZeroAmount
+                        | TxError::RingSignature
+                        | TxError::RangeProof
+                        | TxError::Excess
+                        | TxError::Balance,
                     ) => Flow::Penalize(Offense::InvalidTransaction),
                     _ => Flow::Continue,
                 }

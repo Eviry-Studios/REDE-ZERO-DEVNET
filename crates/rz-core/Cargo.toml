@@ -9,6 +9,8 @@ repository.workspace = true
 [dependencies]
 rz-codec.workspace = true
 rz-crypto.workspace = true
+rz-privacy.workspace = true
+rand_core.workspace = true
 
 [lints]
 workspace = true

@@ -1,17 +1,32 @@
-//! Estado da rede e função de transição (`SPEC §12–§14`, `§33–§36`).
+//! Estado da rede e função de transição (`SPEC §12–§14`, `§33–§36`,
+//! `spec/STATE.md`, `spec/PRIVACY.md`).
 //!
 //! `S(n+1) = F(S(n), B(n+1))`. A única forma de alterar saldos é aplicar
 //! transações válidas ou creditar taxas segundo a regra do bloco. Não existe
 //! operação pública que permita `saldo += X` arbitrário (INV-003).
+//!
+//! O estado tem duas partes:
+//!
+//! * **transparente** — contas `endereço → (saldo, nonce)`;
+//! * **privada** — lista de notas (saídas com valor oculto) e conjunto de
+//!   imagens de chave já gastas, mais a **oferta privada** total, pública e
+//!   rastreada por entradas e saídas públicas (defesa contra inflação oculta).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use rz_codec::Encoder;
+use rz_codec::{Encode, Encoder};
 use rz_crypto::{context, hash, Address, Hash32};
+use rz_privacy::clsag::{self, RingMember};
+use rz_privacy::note::OutputData;
+use rz_privacy::{balance_holds, commitment, decode_point, excess};
 
 use crate::genesis::{Genesis, GenesisError};
-use crate::tx::{Transaction, TxError, TxKind};
+use crate::private::{
+    accumulate, context as pctx, min_ring_size, shield_message, PrivateTx, ShieldedOutput,
+    PRIVATE_TX_VERSION, RING_SIZE,
+};
+use crate::tx::{AccountTx, Transaction, TxError, TxKind};
 
 /// Conta: saldo em unidades mínimas e contador de transações.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -64,11 +79,26 @@ impl fmt::Display for StateError {
 
 impl std::error::Error for StateError {}
 
-/// Estado completo. `BTreeMap` garante ordem de iteração determinística.
+/// Estado completo. Estruturas ordenadas garantem determinismo.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct State {
     accounts: BTreeMap<Address, Account>,
     total_supply: u64,
+    shielded_supply: u64,
+    outputs: Vec<OutputData>,
+    output_acc: Hash32,
+    key_images: BTreeSet<[u8; 32]>,
+    key_image_log: Vec<[u8; 32]>,
+    key_image_acc: Hash32,
+}
+
+/// Efeito calculado de uma transação, aplicado só após todas as verificações.
+struct Effect {
+    accounts: Vec<(Address, Account)>,
+    new_outputs: Vec<OutputData>,
+    spent: Vec<[u8; 32]>,
+    shielded_supply: u64,
+    fee: u64,
 }
 
 impl State {
@@ -92,6 +122,12 @@ impl State {
         Ok(Self {
             accounts,
             total_supply,
+            shielded_supply: 0,
+            outputs: Vec::new(),
+            output_acc: Hash32::ZERO,
+            key_images: BTreeSet::new(),
+            key_image_log: Vec::new(),
+            key_image_acc: Hash32::ZERO,
         })
     }
 
@@ -103,25 +139,52 @@ impl State {
         self.total_supply
     }
 
+    /// Total de ZERO em notas privadas (público, sem revelar notas).
+    pub fn shielded_supply(&self) -> u64 {
+        self.shielded_supply
+    }
+
     pub fn accounts(&self) -> impl Iterator<Item = (&Address, &Account)> {
         self.accounts.iter()
     }
 
-    /// Compromisso criptográfico do estado:
-    /// `H(STATE_ROOT, u64(total_supply) ‖ list<(address, balance, nonce)>)`.
+    /// Todas as notas, por índice global.
+    pub fn outputs(&self) -> &[OutputData] {
+        &self.outputs
+    }
+
+    /// Imagens de chave gastas, na ordem em que foram registradas.
+    pub fn key_image_log(&self) -> &[[u8; 32]] {
+        &self.key_image_log
+    }
+
+    pub fn is_spent(&self, key_image: &[u8; 32]) -> bool {
+        self.key_images.contains(key_image)
+    }
+
+    /// Compromisso criptográfico do estado (`spec/STATE.md §3`).
     pub fn root(&self) -> Hash32 {
         let mut e = Encoder::new();
-        e.u64(self.total_supply);
+        e.u64(self.total_supply).u64(self.shielded_supply);
         e.u32(u32::try_from(self.accounts.len()).unwrap_or(u32::MAX));
         for (addr, acc) in &self.accounts {
             e.put(addr).u64(acc.balance).u64(acc.nonce);
         }
+        e.u64(self.outputs.len() as u64)
+            .put(&self.output_acc)
+            .u64(self.key_image_log.len() as u64)
+            .put(&self.key_image_acc);
         hash(context::STATE_ROOT, &e.into_bytes())
     }
 
-    /// Verifica a invariante monetária: soma dos saldos = oferta total.
+    /// Invariante monetária: `Σ saldos + oferta_privada = oferta_total`.
     pub fn check_supply(&self) -> Result<(), StateError> {
-        let actual: u128 = self.accounts.values().map(|a| a.balance as u128).sum();
+        let actual: u128 = self
+            .accounts
+            .values()
+            .map(|a| a.balance as u128)
+            .sum::<u128>()
+            + self.shielded_supply as u128;
         if actual != self.total_supply as u128 {
             return Err(StateError::SupplyMismatch {
                 expected: self.total_supply,
@@ -132,8 +195,6 @@ impl State {
     }
 
     /// Valida uma transação contra este estado **sem alterá-lo**.
-    ///
-    /// Ordem (`SPEC §10`): formato/taxa (barato) → assinatura → estado.
     pub fn check_transaction(&self, tx: &Transaction, p: &ExecParams<'_>) -> Result<(), TxError> {
         self.plan(tx, p).map(|_| ())
     }
@@ -146,12 +207,25 @@ impl State {
         tx: &Transaction,
         p: &ExecParams<'_>,
     ) -> Result<u64, TxError> {
-        let plan = self.plan(tx, p)?;
-        self.accounts.insert(plan.sender, plan.sender_after);
-        if let Some((to, acc)) = plan.recipient_after {
-            self.accounts.insert(to, acc);
+        let effect = self.plan(tx, p)?;
+        for (addr, acc) in effect.accounts {
+            self.accounts.insert(addr, acc);
         }
-        Ok(tx.body.fee)
+        for out in effect.new_outputs {
+            self.output_acc = accumulate(
+                pctx::OUTPUT_ACC,
+                &self.output_acc,
+                &out.to_canonical_bytes(),
+            );
+            self.outputs.push(out);
+        }
+        for ki in effect.spent {
+            self.key_image_acc = accumulate(pctx::KEY_IMAGE_ACC, &self.key_image_acc, &ki);
+            self.key_images.insert(ki);
+            self.key_image_log.push(ki);
+        }
+        self.shielded_supply = effect.shielded_supply;
+        Ok(effect.fee)
     }
 
     /// Credita as taxas coletadas no bloco ao produtor (ADR-0005).
@@ -166,7 +240,14 @@ impl State {
         Ok(())
     }
 
-    fn plan(&self, tx: &Transaction, p: &ExecParams<'_>) -> Result<Plan, TxError> {
+    fn plan(&self, tx: &Transaction, p: &ExecParams<'_>) -> Result<Effect, TxError> {
+        match tx {
+            Transaction::Account(a) => self.plan_account(a, p),
+            Transaction::Private(t) => self.plan_private(t, p),
+        }
+    }
+
+    fn plan_account(&self, tx: &AccountTx, p: &ExecParams<'_>) -> Result<Effect, TxError> {
         tx.check_stateless(p.min_fee)?;
         tx.verify_signature(p.network_id)?;
 
@@ -178,49 +259,169 @@ impl State {
                 got: tx.body.nonce,
             });
         }
+        let amount = match &tx.body.kind {
+            TxKind::Transfer { amount, .. } | TxKind::Shield { amount, .. } => *amount,
+        };
+        let required = amount.checked_add(tx.body.fee).ok_or(TxError::Overflow)?;
+        if sender_acc.balance < required {
+            return Err(TxError::InsufficientBalance {
+                balance: sender_acc.balance,
+                required,
+            });
+        }
+        sender_acc.balance -= required;
+        sender_acc.nonce = sender_acc.nonce.checked_add(1).ok_or(TxError::Overflow)?;
+
+        let mut effect = Effect {
+            accounts: Vec::new(),
+            new_outputs: Vec::new(),
+            spent: Vec::new(),
+            shielded_supply: self.shielded_supply,
+            fee: tx.body.fee,
+        };
 
         match &tx.body.kind {
             TxKind::Transfer { to, amount } => {
-                let required = amount.checked_add(tx.body.fee).ok_or(TxError::Overflow)?;
-                if sender_acc.balance < required {
-                    return Err(TxError::InsufficientBalance {
-                        balance: sender_acc.balance,
-                        required,
-                    });
-                }
-                sender_acc.balance -= required;
-                sender_acc.nonce = sender_acc.nonce.checked_add(1).ok_or(TxError::Overflow)?;
-
                 if *to == sender {
                     sender_acc.balance = sender_acc
                         .balance
                         .checked_add(*amount)
                         .ok_or(TxError::Overflow)?;
-                    return Ok(Plan {
-                        sender,
-                        sender_after: sender_acc,
-                        recipient_after: None,
-                    });
+                    effect.accounts.push((sender, sender_acc));
+                } else {
+                    let mut to_acc = self.account(to);
+                    to_acc.balance = to_acc
+                        .balance
+                        .checked_add(*amount)
+                        .ok_or(TxError::Overflow)?;
+                    effect.accounts.push((sender, sender_acc));
+                    effect.accounts.push((*to, to_acc));
                 }
-                let mut to_acc = self.account(to);
-                to_acc.balance = to_acc
-                    .balance
+            }
+            TxKind::Shield {
+                amount,
+                outputs,
+                excess: proof,
+            } => {
+                verify_outputs(outputs)?;
+                let commitments: Vec<[u8; 32]> =
+                    outputs.iter().map(|o| o.data.commitment).collect();
+                let msg = shield_message(tx.body.sender.as_bytes(), *amount, outputs);
+                if !excess::verify(&commitments, *amount, &msg, proof) {
+                    return Err(TxError::Excess);
+                }
+                effect.shielded_supply = self
+                    .shielded_supply
                     .checked_add(*amount)
                     .ok_or(TxError::Overflow)?;
-                Ok(Plan {
-                    sender,
-                    sender_after: sender_acc,
-                    recipient_after: Some((*to, to_acc)),
-                })
+                effect.new_outputs = outputs.iter().map(|o| o.data.clone()).collect();
+                effect.accounts.push((sender, sender_acc));
             }
         }
+        Ok(effect)
+    }
+
+    fn plan_private(&self, tx: &PrivateTx, p: &ExecParams<'_>) -> Result<Effect, TxError> {
+        // Verificações estruturais baratas primeiro (THR-P2P-002).
+        if tx.version != PRIVATE_TX_VERSION {
+            return Err(TxError::UnsupportedVersion(tx.version));
+        }
+        if tx.fee < p.min_fee {
+            return Err(TxError::FeeTooLow {
+                fee: tx.fee,
+                min: p.min_fee,
+            });
+        }
+        if tx.inputs.is_empty() {
+            return Err(TxError::InvalidPrivate("sem entradas"));
+        }
+        if tx.signatures.len() != tx.inputs.len() {
+            return Err(TxError::InvalidPrivate("número de assinaturas"));
+        }
+        if tx.outputs.is_empty() && tx.unshield.is_none() {
+            return Err(TxError::InvalidPrivate("sem saídas"));
+        }
+        if tx.unshield.as_ref().is_some_and(|u| u.amount == 0) {
+            return Err(TxError::ZeroAmount);
+        }
+        let public = tx.public_amount().ok_or(TxError::Overflow)?;
+
+        let total = self.outputs.len() as u64;
+        let ring_min = min_ring_size(self.outputs.len()).max(1);
+        let mut seen = BTreeSet::new();
+        for input in &tx.inputs {
+            let n = input.ring.len();
+            if n < ring_min || n > RING_SIZE {
+                return Err(TxError::InvalidPrivate("tamanho do anel"));
+            }
+            if !input.ring.windows(2).all(|w| w[0] < w[1]) {
+                return Err(TxError::InvalidPrivate("anel fora de ordem"));
+            }
+            if input.ring.last().is_some_and(|i| *i >= total) {
+                return Err(TxError::InvalidPrivate("membro inexistente"));
+            }
+            if self.key_images.contains(&input.key_image) || !seen.insert(input.key_image) {
+                return Err(TxError::KeyImageSpent);
+            }
+        }
+
+        let pseudo: Vec<[u8; 32]> = tx.inputs.iter().map(|i| i.pseudo_out).collect();
+        let commitments: Vec<[u8; 32]> = tx.outputs.iter().map(|o| o.data.commitment).collect();
+        if !balance_holds(&pseudo, &commitments, public) {
+            return Err(TxError::Balance);
+        }
+
+        let msg = tx.message(p.network_id);
+        for (input, sig) in tx.inputs.iter().zip(&tx.signatures) {
+            let ring: Vec<RingMember> = input
+                .ring
+                .iter()
+                .map(|i| {
+                    let o = &self.outputs[*i as usize];
+                    RingMember {
+                        one_time_key: o.one_time_key,
+                        commitment: o.commitment,
+                    }
+                })
+                .collect();
+            if !clsag::verify(&ring, &input.pseudo_out, &input.key_image, &msg, sig) {
+                return Err(TxError::RingSignature);
+            }
+        }
+        verify_outputs(&tx.outputs)?;
+
+        let shielded_supply = self
+            .shielded_supply
+            .checked_sub(public)
+            .ok_or(TxError::ShieldedSupplyUnderflow)?;
+
+        let mut accounts = Vec::new();
+        if let Some(u) = &tx.unshield {
+            let mut acc = self.account(&u.to);
+            acc.balance = acc.balance.checked_add(u.amount).ok_or(TxError::Overflow)?;
+            accounts.push((u.to, acc));
+        }
+        Ok(Effect {
+            accounts,
+            new_outputs: tx.outputs.iter().map(|o| o.data.clone()).collect(),
+            spent: tx.inputs.iter().map(|i| i.key_image).collect(),
+            shielded_supply,
+            fee: tx.fee,
+        })
     }
 }
 
-struct Plan {
-    sender: Address,
-    sender_after: Account,
-    recipient_after: Option<(Address, Account)>,
+/// Pontos válidos e prova de faixa válida para cada saída.
+fn verify_outputs(outputs: &[ShieldedOutput]) -> Result<(), TxError> {
+    for o in outputs {
+        if decode_point(&o.data.one_time_key).is_none() || decode_point(&o.data.tx_pub).is_none() {
+            return Err(TxError::InvalidPrivate("ponto inválido"));
+        }
+        if !commitment::verify_range(&o.data.commitment, &o.range_proof) {
+            return Err(TxError::RangeProof);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

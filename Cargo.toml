@@ -30,3 +30,11 @@ unwrap_used = "warn"
 
 [profile.release]
 overflow-checks = true
+
+# Dependências criptográficas otimizadas mesmo em builds de desenvolvimento,
+# para que testes com provas e assinaturas em anel rodem em tempo razoável.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.rz-privacy]
+opt-level = 3

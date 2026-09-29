@@ -10,6 +10,7 @@ repository.workspace = true
 rz-codec.workspace = true
 rz-crypto.workspace = true
 rz-core.workspace = true
+rz-privacy.workspace = true
 
 [lints]
 workspace = true

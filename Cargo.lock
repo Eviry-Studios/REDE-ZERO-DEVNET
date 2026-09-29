@@ -377,8 +377,10 @@ version = "0.1.0"
 name = "rz-core"
 version = "0.1.0"
 dependencies = [
+ "rand_core",
  "rz-codec",
  "rz-crypto",
+ "rz-privacy",
 ]
 
 [[package]]
@@ -409,6 +411,7 @@ dependencies = [
  "rz-codec",
  "rz-core",
  "rz-crypto",
+ "rz-privacy",
 ]
 
 [[package]]
@@ -420,6 +423,7 @@ dependencies = [
  "curve25519-dalek",
  "merlin",
  "rand_core",
+ "rz-codec",
 ]
 
 [[package]]

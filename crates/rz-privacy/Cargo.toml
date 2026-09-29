@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+rz-codec.workspace = true
 curve25519-dalek.workspace = true
 bulletproofs.workspace = true
 merlin.workspace = true

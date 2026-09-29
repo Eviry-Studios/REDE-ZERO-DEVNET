@@ -8,14 +8,16 @@ pub mod amount;
 pub mod block;
 pub mod genesis;
 pub mod limits;
+pub mod private;
 pub mod state;
 pub mod tx;
 
 pub use amount::{format_zero, parse_zero, UNITS_PER_ZERO};
 pub use block::{apply_block, Block, BlockError, BlockHeader, BlockId};
 pub use genesis::{Allocation, Genesis, GenesisError, NetworkKind};
+pub use private::{PrivateTx, RingInput, ShieldedOutput, Unshield};
 pub use state::{Account, State, StateError};
-pub use tx::{Transaction, TxBody, TxError, TxId, TxKind};
+pub use tx::{AccountTx, Transaction, TxBody, TxError, TxId, TxKind};
 
 /// Versão do protocolo implementada por este crate.
 pub const PROTOCOL_VERSION: u16 = 1;

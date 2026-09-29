@@ -4,6 +4,9 @@ use std::fmt;
 
 use rz_codec::{Decode, DecodeError, Decoder, Encode, Encoder};
 use rz_crypto::{context, hash, Address, CryptoError, Hash32, PublicKey, SecretKey, Signature};
+use rz_privacy::excess::ExcessProof;
+
+use crate::private::{PrivateTx, ShieldedOutput, MAX_OUTPUTS};
 
 /// Versão atual do formato de transação.
 pub const TX_VERSION: u16 = 1;
@@ -45,8 +48,15 @@ impl Decode for TxId {
 /// tags desconhecidas são rejeitadas na decodificação.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TxKind {
-    /// Tag `0x00` — transferência de ZERO.
+    /// Tag `0x00` — transferência transparente de ZERO.
     Transfer { to: Address, amount: u64 },
+    /// Tag `0x01` — blindagem: move `amount` da conta para notas privadas.
+    /// A prova de excesso demonstra que as saídas somam exatamente `amount`.
+    Shield {
+        amount: u64,
+        outputs: Vec<ShieldedOutput>,
+        excess: ExcessProof,
+    },
 }
 
 impl Encode for TxKind {
@@ -54,6 +64,13 @@ impl Encode for TxKind {
         match self {
             TxKind::Transfer { to, amount } => {
                 e.u8(0x00).put(to).u64(*amount);
+            }
+            TxKind::Shield {
+                amount,
+                outputs,
+                excess,
+            } => {
+                e.u8(0x01).u64(*amount).list(outputs).put(excess);
             }
         }
     }
@@ -65,6 +82,11 @@ impl Decode for TxKind {
             0x00 => Ok(TxKind::Transfer {
                 to: d.get()?,
                 amount: d.u64()?,
+            }),
+            0x01 => Ok(TxKind::Shield {
+                amount: d.u64()?,
+                outputs: d.list(MAX_OUTPUTS)?,
+                excess: d.get()?,
             }),
             t => Err(DecodeError::InvalidTag(t)),
         }
@@ -129,27 +151,87 @@ impl TxBody {
             network_id,
             &self.to_canonical_bytes(),
         );
-        Ok(Transaction {
+        Ok(Transaction::Account(AccountTx {
             body: self,
             signature,
-        })
+        }))
     }
 }
 
-/// Transação assinada.
+/// Transação de conta (transparente), assinada pelo remetente.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Transaction {
+pub struct AccountTx {
     pub body: TxBody,
     pub signature: Signature,
 }
 
+/// Transação: de conta (tag `0x00`) ou privada (tag `0x01`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Transaction {
+    Account(AccountTx),
+    Private(PrivateTx),
+}
+
 impl Encode for Transaction {
+    fn encode(&self, e: &mut Encoder) {
+        match self {
+            Transaction::Account(a) => {
+                e.u8(0x00).put(a);
+            }
+            Transaction::Private(p) => {
+                e.u8(0x01).put(p);
+            }
+        }
+    }
+}
+
+impl Decode for Transaction {
+    fn decode(d: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        match d.u8()? {
+            0x00 => Ok(Transaction::Account(d.get()?)),
+            0x01 => Ok(Transaction::Private(d.get()?)),
+            t => Err(DecodeError::InvalidTag(t)),
+        }
+    }
+}
+
+impl Transaction {
+    pub fn id(&self) -> TxId {
+        match self {
+            Transaction::Account(a) => a.id(),
+            Transaction::Private(p) => p.id(),
+        }
+    }
+
+    pub fn fee(&self) -> u64 {
+        match self {
+            Transaction::Account(a) => a.body.fee,
+            Transaction::Private(p) => p.fee,
+        }
+    }
+
+    pub fn as_account(&self) -> Option<&AccountTx> {
+        match self {
+            Transaction::Account(a) => Some(a),
+            Transaction::Private(_) => None,
+        }
+    }
+
+    pub fn as_private(&self) -> Option<&PrivateTx> {
+        match self {
+            Transaction::Private(p) => Some(p),
+            Transaction::Account(_) => None,
+        }
+    }
+}
+
+impl Encode for AccountTx {
     fn encode(&self, e: &mut Encoder) {
         e.put(&self.body).put(&self.signature);
     }
 }
 
-impl Decode for Transaction {
+impl Decode for AccountTx {
     fn decode(d: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         Ok(Self {
             body: d.get()?,
@@ -158,7 +240,7 @@ impl Decode for Transaction {
     }
 }
 
-impl Transaction {
+impl AccountTx {
     pub fn id(&self) -> TxId {
         self.body.id()
     }
@@ -173,6 +255,16 @@ impl Transaction {
                 return Err(TxError::ZeroAmount);
             }
             TxKind::Transfer { .. } => {}
+            TxKind::Shield {
+                amount, outputs, ..
+            } => {
+                if *amount == 0 {
+                    return Err(TxError::ZeroAmount);
+                }
+                if outputs.is_empty() {
+                    return Err(TxError::InvalidPrivate("blindagem sem saídas"));
+                }
+            }
         }
         if self.body.fee < min_fee {
             return Err(TxError::FeeTooLow {
@@ -202,11 +294,34 @@ impl Transaction {
 pub enum TxError {
     UnsupportedVersion(u16),
     ZeroAmount,
-    FeeTooLow { fee: u64, min: u64 },
+    FeeTooLow {
+        fee: u64,
+        min: u64,
+    },
     Signature,
-    BadNonce { expected: u64, got: u64 },
-    InsufficientBalance { balance: u64, required: u64 },
+    BadNonce {
+        expected: u64,
+        got: u64,
+    },
+    InsufficientBalance {
+        balance: u64,
+        required: u64,
+    },
     Overflow,
+    /// Estrutura de transação privada inválida.
+    InvalidPrivate(&'static str),
+    /// Prova de faixa inválida.
+    RangeProof,
+    /// Prova de excesso (blindagem) inválida.
+    Excess,
+    /// Assinatura em anel inválida.
+    RingSignature,
+    /// Entradas e saídas não se equilibram.
+    Balance,
+    /// Nota já gasta (imagem de chave repetida).
+    KeyImageSpent,
+    /// A oferta privada ficaria negativa — defesa contra inflação oculta.
+    ShieldedSupplyUnderflow,
 }
 
 impl fmt::Display for TxError {
@@ -223,6 +338,13 @@ impl fmt::Display for TxError {
                 write!(f, "saldo insuficiente: {balance} < {required}")
             }
             Self::Overflow => write!(f, "overflow aritmético"),
+            Self::InvalidPrivate(w) => write!(f, "transação privada inválida: {w}"),
+            Self::RangeProof => write!(f, "prova de faixa inválida"),
+            Self::Excess => write!(f, "prova de excesso inválida"),
+            Self::RingSignature => write!(f, "assinatura em anel inválida"),
+            Self::Balance => write!(f, "entradas e saídas não se equilibram"),
+            Self::KeyImageSpent => write!(f, "nota já gasta"),
+            Self::ShieldedSupplyUnderflow => write!(f, "oferta privada ficaria negativa"),
         }
     }
 }
@@ -234,6 +356,13 @@ mod tests {
     use super::*;
 
     const NET: &str = "rede-zero-devnet-test";
+
+    fn acc(tx: Transaction) -> AccountTx {
+        match tx {
+            Transaction::Account(a) => a,
+            Transaction::Private(_) => unreachable!(),
+        }
+    }
 
     fn body(key: &SecretKey) -> TxBody {
         TxBody {
@@ -251,9 +380,9 @@ mod tests {
     #[test]
     fn roundtrip() {
         let k = SecretKey::from_seed([1; 32]);
-        let tx = body(&k).sign(&k, NET).unwrap();
+        let tx = acc(body(&k).sign(&k, NET).unwrap());
         let bytes = tx.to_canonical_bytes();
-        assert_eq!(Transaction::from_canonical_bytes(&bytes).unwrap(), tx);
+        assert_eq!(AccountTx::from_canonical_bytes(&bytes).unwrap(), tx);
     }
 
     // AT-CAN-001 — mesmo objeto, mesma codificação
@@ -317,7 +446,7 @@ mod tests {
     #[test]
     fn at_tx_003_004_signature() {
         let k = SecretKey::from_seed([1; 32]);
-        let tx = body(&k).sign(&k, NET).unwrap();
+        let tx = acc(body(&k).sign(&k, NET).unwrap());
         assert!(tx.verify_signature(NET).is_ok());
 
         let mut tampered = tx.clone();
@@ -339,7 +468,7 @@ mod tests {
     #[test]
     fn at_tx_005_fee() {
         let k = SecretKey::from_seed([1; 32]);
-        let tx = body(&k).sign(&k, NET).unwrap();
+        let tx = acc(body(&k).sign(&k, NET).unwrap());
         assert!(tx.check_stateless(10).is_ok());
         assert_eq!(
             tx.check_stateless(11),
@@ -362,7 +491,7 @@ mod tests {
             to: b.sender_address(),
             amount: 0,
         };
-        let tx = b.sign(&k, NET).unwrap();
+        let tx = acc(b.sign(&k, NET).unwrap());
         assert_eq!(tx.check_stateless(0), Err(TxError::ZeroAmount));
     }
 
@@ -371,7 +500,7 @@ mod tests {
         let k = SecretKey::from_seed([1; 32]);
         let mut b = body(&k);
         b.version = 2;
-        let tx = b.sign(&k, NET).unwrap();
+        let tx = acc(b.sign(&k, NET).unwrap());
         assert_eq!(tx.check_stateless(0), Err(TxError::UnsupportedVersion(2)));
     }
 }
