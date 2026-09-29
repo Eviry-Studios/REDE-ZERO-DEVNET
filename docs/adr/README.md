@@ -28,6 +28,8 @@ Uma decisão com escopo `DEVNET` **não** vale automaticamente para outros ambie
 | [0009](0009-privacidade-transacional.md) | Privacidade transacional: RingCT sobre Ristretto255 | DEVNET | Aceita (auditoria pendente) |
 | [0010](0010-privacidade-de-rede.md) | Privacidade de rede: Dandelion++ | DEVNET | Aceita |
 | [0011](0011-protecao-do-ip.md) | Proteção do endereço IP do usuário | DEVNET | Aceita |
+| [0012](0012-consenso-zero-bft.md) | Consenso Zero-BFT | DEVNET → TESTNET | Aceita (implementação em andamento) |
+| [0013](0013-democracia-organica.md) | Democracia Orgânica: incorporação com notas de conformidade | Projeto | Aceita |
 
 ## Modelo
 

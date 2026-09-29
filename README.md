@@ -104,6 +104,7 @@ scripts/devnet.sh     DEVNET local com N validadores
 | [Manifesto Exonet](docs/Manifesto_Exonet.pdf) | Por quê? | inicial |
 | [REQUIREMENTS.md](docs/REQUIREMENTS.md) | O que deve existir? | 0.2.0 |
 | [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.3.0 |
+| [DEMOCRACIA_ORGANICA.md](docs/DEMOCRACIA_ORGANICA.md) | Como indivíduos e Comunidades participam? | 0.1.0 (conceitual) |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Como os componentes se organizam? | 0.1.0 |
 | [SPECIFICATIONS.md](docs/SPECIFICATIONS.md) | Quais são as regras técnicas? | 0.1.0 |
 | [spec/](spec/) | Regras exatas e testáveis por componente | DEVNET 0.1.0 |

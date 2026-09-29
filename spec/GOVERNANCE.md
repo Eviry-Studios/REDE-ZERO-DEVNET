@@ -180,3 +180,11 @@ A parte de governança do estado (parâmetros vigentes, bloqueios, próximo id d
 | Propriedade | Aprovação exige as duas câmaras |
 
 Implementados em `crates/rz-core/src/governance.rs`, `governance_tests.rs` e `crates/rz-wallet/tests/governance_devnet.rs`.
+
+## 10. Sinalização comunitária (Democracia Orgânica)
+
+`docs/DEMOCRACIA_ORGANICA.md` (ADR-0013) prevê que Comunidades reconhecidas manifestem posição sobre propostas. Nesta versão:
+
+* a posição comunitária **não** entra na apuração da seção 5 (N-1);
+* quando especificada (`spec/COMMUNITIES.md`), ela será registrada ao lado do resultado oficial, exigindo prova conforme o mecanismo de decisão que a Comunidade declarou no reconhecimento (N-6);
+* peso decisório para Comunidades exige nova ADR com análise de resistência a Sybil (REQ-044).
