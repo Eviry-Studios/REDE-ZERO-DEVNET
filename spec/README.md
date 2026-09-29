@@ -10,5 +10,8 @@ entrada → operação → saída esperada → regra de validação → casos de
 | --- | --- | --- |
 | [ENCODING.md](ENCODING.md) | DEVNET v0.1.0 | `crates/rz-codec` |
 | [CRYPTOGRAPHY.md](CRYPTOGRAPHY.md) | DEVNET v0.1.0 | `crates/rz-crypto` |
+| [TRANSACTIONS.md](TRANSACTIONS.md) | DEVNET v0.1.0 | `crates/rz-core` |
+| [STATE.md](STATE.md) | DEVNET v0.1.0 | `crates/rz-core` |
+| [BLOCKS.md](BLOCKS.md) | DEVNET v0.1.0 | `crates/rz-core` |
 
 Todas as especificações deste diretório estão em estado **DEVNET** — não congeladas (`SPECIFICATIONS.md §74`). Em caso de divergência entre código e especificação, a divergência é um defeito a ser resolvido por processo formal.

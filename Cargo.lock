@@ -254,6 +254,14 @@ name = "rz-codec"
 version = "0.1.0"
 
 [[package]]
+name = "rz-core"
+version = "0.1.0"
+dependencies = [
+ "rz-codec",
+ "rz-crypto",
+]
+
+[[package]]
 name = "rz-crypto"
 version = "0.1.0"
 dependencies = [

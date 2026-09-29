@@ -1,0 +1,14 @@
+[package]
+name = "rz-core"
+description = "Transações, estado, ZERO, blocos e Genesis da Rede Zero"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+rz-codec.workspace = true
+rz-crypto.workspace = true
+
+[lints]
+workspace = true
