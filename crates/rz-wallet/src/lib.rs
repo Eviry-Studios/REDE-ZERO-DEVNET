@@ -255,7 +255,7 @@ fn select_notes(
     mut notes: Vec<SpendableNote>,
     required: u64,
 ) -> Result<Vec<SpendableNote>, String> {
-    notes.sort_by(|a, b| b.note.amount.cmp(&a.note.amount));
+    notes.sort_by_key(|n| std::cmp::Reverse(n.note.amount));
     let mut chosen = Vec::new();
     let mut total = 0u64;
     for n in notes {
