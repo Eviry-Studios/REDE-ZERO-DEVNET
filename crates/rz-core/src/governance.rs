@@ -37,9 +37,9 @@ pub struct GovernanceParams {
 
 impl GovernanceParams {
     /// Valores iniciais de `spec/GOVERNANCE.md §2`, convertidos em blocos
-    /// para a duração de slot informada.
-    pub fn for_slot_ms(slot_ms: u64) -> Self {
-        let blocks = |secs: u64| (secs.saturating_mul(1000) / slot_ms.max(1)).max(1);
+    /// para o intervalo de bloco informado.
+    pub fn for_block_ms(block_ms: u64) -> Self {
+        let blocks = |secs: u64| (secs.saturating_mul(1000) / block_ms.max(1)).max(1);
         const DAY: u64 = 86_400;
         Self {
             deposit: 100 * crate::UNITS_PER_ZERO,
@@ -72,7 +72,7 @@ impl GovernanceParams {
 
 impl Default for GovernanceParams {
     fn default() -> Self {
-        Self::for_slot_ms(2_000)
+        Self::for_block_ms(2_000)
     }
 }
 
@@ -1047,6 +1047,14 @@ mod tests {
             &cur
         )
         .is_err());
+        // Temporizadores absurdos travariam (ou derrubariam) os Nodes.
+        for bad in [
+            ParamChange::TimeoutPropose(u64::MAX),
+            ParamChange::BlockInterval(crate::consensus::MAX_TIME_PARAM_MS + 1),
+            ParamChange::TimeoutDelta(u64::MAX),
+        ] {
+            assert!(check_proposal_shape(Category::Constitutional, &[bad], &cur).is_err());
+        }
     }
 
     #[test]

@@ -23,6 +23,11 @@ pub mod context {
 /// Máximo de validadores ativos decodificáveis.
 pub const MAX_VALIDATORS_DECODE: usize = 1_000;
 
+/// Limite de intervalos e temporizadores (10 minutos). Impede que um
+/// parâmetro aprovado por governança torne os temporizadores dos Nodes
+/// inutilizáveis (ou provoque estouro ao somar ao relógio).
+pub const MAX_TIME_PARAM_MS: u64 = 600_000;
+
 // ------------------------------------------------------------- parâmetros
 
 /// Parâmetros do consenso (Genesis; ajustáveis por governança constitucional).
@@ -91,12 +96,17 @@ impl ConsensusParams {
         if self.unbonding_blocks == 0 {
             return Err("unbonding_blocks deve ser positivo");
         }
-        if self.block_interval_ms == 0
-            || self.timeout_propose_ms == 0
-            || self.timeout_prevote_ms == 0
-            || self.timeout_precommit_ms == 0
-        {
-            return Err("intervalos e temporizadores devem ser positivos");
+        let times = [
+            self.block_interval_ms,
+            self.timeout_propose_ms,
+            self.timeout_prevote_ms,
+            self.timeout_precommit_ms,
+        ];
+        if times.iter().any(|t| *t == 0 || *t > MAX_TIME_PARAM_MS) {
+            return Err("intervalos e temporizadores fora dos limites");
+        }
+        if self.timeout_delta_ms > MAX_TIME_PARAM_MS {
+            return Err("timeout_delta_ms fora dos limites");
         }
         Ok(())
     }

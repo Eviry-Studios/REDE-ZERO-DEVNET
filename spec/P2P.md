@@ -118,7 +118,7 @@ Transações em haste devem ser executáveis sobre a ponta atual (nonce igual ao
 ### 4.2 Blocos
 
 * Um bloco é repassado somente se foi importado com sucesso pela primeira vez.
-* `CONSENSUS_PROPOSAL` e `CONSENSUS_VOTE` são deduplicados pelo identificador (cache de 50 000) e repassados apenas quando novos e aceitos pela máquina de consenso (assinatura válida, altura corrente ou seguinte). Validadores retransmitem periodicamente a proposta da rodada e os próprios votos (`spec/CONSENSUS.md §5`).
+* `CONSENSUS_PROPOSAL` e `CONSENSUS_VOTE` são deduplicados pelo identificador (cache de 50 000). Só são marcados como vistos e repassados quando aceitos pela máquina de consenso (assinatura válida, autor no conjunto, altura e rodada dentro dos limites de `spec/CONSENSUS.md §5`); uma mensagem descartada volta a ser considerada se retransmitida. Validadores retransmitem periodicamente a proposta da rodada e os próprios votos (`spec/CONSENSUS.md §5`).
 
 ### 4.3 Consultas de Wallet
 

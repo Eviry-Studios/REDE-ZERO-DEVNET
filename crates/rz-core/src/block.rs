@@ -239,6 +239,10 @@ fn execute(
     if txs.len() > parent_state.params().max_block_txs as usize {
         return Err(BlockError::TooManyTransactions(txs.len()));
     }
+    let bytes: usize = txs.iter().map(|t| t.to_canonical_bytes().len()).sum();
+    if bytes > crate::limits::MAX_BLOCK_TX_BYTES {
+        return Err(BlockError::TooLarge(bytes));
+    }
     let params = ExecParams::at(genesis, height);
     let mut state = parent_state.clone();
     let mut fees: u64 = 0;
@@ -298,12 +302,20 @@ pub fn apply_block(
 pub enum BlockError {
     UnsupportedVersion(u16),
     WrongParent,
-    WrongHeight { expected: u64, got: u64 },
+    WrongHeight {
+        expected: u64,
+        got: u64,
+    },
     TxRootMismatch,
     StateRootMismatch,
     Signature,
     TooManyTransactions(usize),
-    Transaction { index: usize, error: TxError },
+    /// Transações somam mais que `MAX_BLOCK_TX_BYTES`.
+    TooLarge(usize),
+    Transaction {
+        index: usize,
+        error: TxError,
+    },
     State(StateError),
     Overflow,
 }
@@ -323,6 +335,7 @@ impl fmt::Display for BlockError {
             Self::StateRootMismatch => write!(f, "state_root não confere"),
             Self::Signature => write!(f, "assinatura do bloco inválida"),
             Self::TooManyTransactions(n) => write!(f, "transações demais: {n}"),
+            Self::TooLarge(n) => write!(f, "transações somam {n} bytes, acima do limite"),
             Self::Transaction { index, error } => write!(f, "transação {index} inválida: {error}"),
             Self::State(e) => write!(f, "estado inválido: {e}"),
             Self::Overflow => write!(f, "overflow aritmético"),
@@ -494,5 +507,21 @@ mod tests {
         let err =
             Block::build(&g, gid, 0, &s, 1, vec![tx(0, 1), tx(1, 1)], &validator()).unwrap_err();
         assert_eq!(err, BlockError::TooManyTransactions(2));
+    }
+
+    // Todo bloco válido precisa caber num quadro P2P (THR-CON-005).
+    #[test]
+    fn oversized_block_rejected() {
+        let (mut g, _, _) = setup();
+        g.max_block_txs = 10_000;
+        let s = State::from_genesis(&g).unwrap();
+        let gid = BlockId(g.hash());
+        let to = rz_privacy::keys::ShieldedSecret::from_seed(&[5; 32]).address();
+        let shield = crate::private::build_shield(&rich(), &g.network_id, 0, 1, &to, 10).unwrap();
+        let size = shield.to_canonical_bytes().len();
+        let n = crate::limits::MAX_BLOCK_TX_BYTES / size + 1;
+        // O limite é verificado antes de executar: repetir a mesma transação basta.
+        let err = Block::build(&g, gid, 0, &s, 0, vec![shield; n], &validator()).unwrap_err();
+        assert!(matches!(err, BlockError::TooLarge(b) if b > crate::limits::MAX_BLOCK_TX_BYTES));
     }
 }

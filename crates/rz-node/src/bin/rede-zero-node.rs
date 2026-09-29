@@ -204,7 +204,7 @@ fn init_devnet(args: &Args) -> Result<(), String> {
         max_block_txs: 1_000,
         validators,
         allocations,
-        governance: rz_core::GovernanceParams::for_slot_ms(block_ms),
+        governance: rz_core::GovernanceParams::for_block_ms(block_ms),
     };
     genesis.validate().map_err(|e| e.to_string())?;
     let genesis_path = out.join("genesis.bin");

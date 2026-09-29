@@ -20,6 +20,7 @@ use rand_core::{OsRng, RngCore};
 use rz_chain::bft::{App, Bft, Output, Timeout};
 use rz_chain::{Chain, ChainError, Mempool, MempoolError};
 use rz_codec::Encode;
+use rz_core::consensus::MAX_TIME_PARAM_MS;
 use rz_core::state::ExecParams;
 use rz_core::{
     Account, Block, BlockId, CommittedBlock, Genesis, Proposal, Transaction, TxBody, TxError, TxId,
@@ -39,6 +40,8 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(3);
 const BAN_DURATION: Duration = Duration::from_secs(600);
 const SEND_QUEUE: usize = 1024;
+/// Capacidade da fila de propostas e votos para a thread de consenso.
+const CONSENSUS_QUEUE: usize = 8_192;
 const MAX_BLOCKS_RESPONSE_BYTES: usize = 3 * 1024 * 1024;
 
 // Dandelion++ (ADR-0010, spec/P2P.md §4).
@@ -121,6 +124,15 @@ enum ConsensusEvent {
 }
 
 /// Identificadores de mensagens de consenso já vistas (evita reenvio em laço).
+/// Instante daqui a `ms` milissegundos, sem estouro: valores acima de
+/// `MAX_TIME_PARAM_MS` são limitados (defesa em profundidade além de
+/// `ConsensusParams::validate`).
+fn after_ms(ms: u64) -> Instant {
+    let d = Duration::from_millis(ms.min(MAX_TIME_PARAM_MS));
+    let now = Instant::now();
+    now.checked_add(d).unwrap_or(now)
+}
+
 #[derive(Default)]
 struct Seen {
     set: HashSet<Hash32>,
@@ -129,6 +141,10 @@ struct Seen {
 
 impl Seen {
     const CAP: usize = 50_000;
+
+    fn contains(&self, id: &Hash32) -> bool {
+        self.set.contains(id)
+    }
 
     fn insert(&mut self, id: Hash32) -> bool {
         if !self.set.insert(id) {
@@ -185,7 +201,7 @@ struct Shared {
     peers: Mutex<Peers>,
     shutdown: AtomicBool,
     stem: Mutex<Stem>,
-    consensus_tx: mpsc::Sender<ConsensusEvent>,
+    consensus_tx: mpsc::SyncSender<ConsensusEvent>,
     seen: Mutex<Seen>,
 }
 
@@ -250,7 +266,9 @@ impl Node {
             None => None,
         };
 
-        let (consensus_tx, consensus_rx) = mpsc::channel::<ConsensusEvent>();
+        // Fila limitada: sob inundação, mensagens excedentes são descartadas
+        // (a retransmissão periódica as recupera).
+        let (consensus_tx, consensus_rx) = mpsc::sync_channel::<ConsensusEvent>(CONSENSUS_QUEUE);
         let shared = Arc::new(Shared {
             genesis_hash,
             key: cfg.validator_key,
@@ -493,9 +511,9 @@ impl Shared {
                 .params()
                 .consensus
                 .timeout_propose_ms
-                .max(200),
+                .clamp(200, MAX_TIME_PARAM_MS),
         );
-        let mut next_retransmit = Instant::now() + retransmit_every;
+        let mut next_retransmit = after_ms(retransmit_every.as_millis() as u64);
 
         while self.running() {
             let now = Instant::now();
@@ -527,6 +545,12 @@ impl Shared {
                 wait = wait.min(t.saturating_duration_since(now));
             }
 
+            // Blocos importados pela sincronização também avançam a altura,
+            // mesmo que o aviso ChainAdvanced tenha se perdido na fila cheia.
+            if next_height_at.is_none() && lock(&self.core).chain.height() >= bft.height() {
+                next_height_at = Some(Instant::now());
+            }
+
             match rx.recv_timeout(wait) {
                 Ok(ConsensusEvent::Proposal(p, from)) => {
                     let r = {
@@ -534,7 +558,7 @@ impl Shared {
                         let mut app = NodeApp::new(&guard, &self.genesis, self.key.as_ref());
                         bft.on_proposal((*p).clone(), &mut app)
                     };
-                    if r.relay {
+                    if r.relay && lock(&self.seen).insert(p.id()) {
                         self.broadcast(&Message::ConsensusProposal(p), from);
                     }
                     self.apply_outputs(r.outputs, &mut timers, &mut next_height_at, &bft);
@@ -545,7 +569,7 @@ impl Shared {
                         let mut app = NodeApp::new(&guard, &self.genesis, self.key.as_ref());
                         bft.on_vote(v.clone(), &mut app)
                     };
-                    if r.relay {
+                    if r.relay && lock(&self.seen).insert(v.id()) {
                         self.broadcast(&Message::ConsensusVote(v), from);
                     }
                     self.apply_outputs(r.outputs, &mut timers, &mut next_height_at, &bft);
@@ -601,7 +625,7 @@ impl Shared {
                     self.broadcast(&Message::ConsensusVote(v), None);
                 }
                 Output::ScheduleTimeout(t, ms) => {
-                    timers.push((Instant::now() + Duration::from_millis(ms), t));
+                    timers.push((after_ms(ms), t));
                 }
                 Output::Decide(block, commit) => {
                     let cb = CommittedBlock {
@@ -630,7 +654,7 @@ impl Shared {
                         .params()
                         .consensus
                         .block_interval_ms;
-                    *next_height_at = Some(Instant::now() + Duration::from_millis(interval));
+                    *next_height_at = Some(after_ms(interval));
                 }
                 Output::VoteEvidence(a, b) => {
                     self.info(format!(
@@ -1056,18 +1080,21 @@ impl Shared {
             Message::Transaction(tx) => self.handle_tx(ctx, tx),
             Message::Block(b) => self.handle_block(ctx, *b),
             Message::ConsensusProposal(p) => {
-                if lock(&self.seen).insert(p.id()) {
+                // Marcada como vista só quando o consenso a aceita: uma
+                // mensagem descartada (rodada adiantada, fila cheia) volta a
+                // ser considerada quando retransmitida.
+                if !lock(&self.seen).contains(&p.id()) {
                     let _ = self
                         .consensus_tx
-                        .send(ConsensusEvent::Proposal(p, Some(ctx.id)));
+                        .try_send(ConsensusEvent::Proposal(p, Some(ctx.id)));
                 }
                 Flow::Continue
             }
             Message::ConsensusVote(v) => {
-                if lock(&self.seen).insert(v.id()) {
+                if !lock(&self.seen).contains(&v.id()) {
                     let _ = self
                         .consensus_tx
-                        .send(ConsensusEvent::Vote(v, Some(ctx.id)));
+                        .try_send(ConsensusEvent::Vote(v, Some(ctx.id)));
                 }
                 Flow::Continue
             }
@@ -1362,7 +1389,7 @@ impl Shared {
         match self.commit_block(cb.clone()) {
             Ok(true) => {
                 self.broadcast(&Message::Block(Box::new(cb)), Some(ctx.id));
-                let _ = self.consensus_tx.send(ConsensusEvent::ChainAdvanced);
+                let _ = self.consensus_tx.try_send(ConsensusEvent::ChainAdvanced);
                 Flow::Continue
             }
             Ok(false) => Flow::Continue,
@@ -1393,7 +1420,7 @@ impl Shared {
         }
         let height = lock(&self.core).chain.height();
         if imported {
-            let _ = self.consensus_tx.send(ConsensusEvent::ChainAdvanced);
+            let _ = self.consensus_tx.try_send(ConsensusEvent::ChainAdvanced);
             if ctx.peer_height > height {
                 self.request_blocks(ctx, height + 1);
             }

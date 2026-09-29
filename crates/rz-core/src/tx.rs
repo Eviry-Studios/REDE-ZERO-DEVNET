@@ -76,7 +76,7 @@ pub enum TxKind {
     /// Tag `0x13` — registra ou substitui o voto do remetente.
     Vote { proposal: Hash32, choice: Choice },
     /// Tag `0x14` — denuncia equivocação: dois cabeçalhos distintos assinados
-    /// pelo mesmo produtor para o mesmo slot (`SPEC §49`, THR-CON-004).
+    /// pelo mesmo proponente para a mesma altura e rodada (`SPEC §49`, THR-CON-004).
     ReportEquivocation {
         first: Box<SignedHeader>,
         second: Box<SignedHeader>,

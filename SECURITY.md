@@ -32,7 +32,7 @@ Pedimos que a pesquisa **não** envolva:
 * negação de serviço contra ambientes compartilhados;
 * acesso a dados de outras pessoas.
 
-Use sua própria DEVNET local para testes (ver `README.md`).
+Use sua própria DEVNET local para testes (ver `README.md`). O escopo priorizado, as invariantes a atacar, os testes de robustez e os achados da revisão interna estão em [`docs/AUDIT.md`](docs/AUDIT.md).
 
 ## Segredos no repositório
 

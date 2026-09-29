@@ -35,7 +35,7 @@ Declarados no Genesis e alteráveis por governança (categoria constitucional, `
 | `timeout_precommit_ms` | u64 | espera após > 2/3 de pré-compromissos quaisquer | 500 |
 | `timeout_delta_ms` | u64 | acréscimo por rodada em cada temporizador | 500 |
 
-`validate()` exige `epoch_blocks`, `unbonding_blocks`, `block_interval_ms` e os três temporizadores base maiores que zero, `1 ≤ max_validators ≤ 1 000` e `slash_bps ≤ 10 000`. `timeout_delta_ms` pode ser zero.
+`validate()` exige `epoch_blocks` e `unbonding_blocks` maiores que zero, `block_interval_ms` e os três temporizadores base em `1..=600 000` ms (`MAX_TIME_PARAM_MS`), `timeout_delta_ms ≤ 600 000`, `1 ≤ max_validators ≤ 1 000` e `slash_bps ≤ 10 000`. O limite superior dos tempos impede que um parâmetro aprovado por governança paralise os Nodes (`docs/AUDIT.md` RZ-IR-01).
 
 ## 3. Conjunto de validadores
 
@@ -168,9 +168,16 @@ Temporizadores crescem com a rodada: `timeout_x(r) = timeout_x_ms + r · timeout
 
 **Validade de bloco** (`App::validate_block`) é a mesma do import (`Chain::check_next`): altura e pai corretos, proponente sorteado para (`height`, `header.round`) e todas as regras de `spec/BLOCKS.md` e `spec/STATE.md`.
 
-**Retransmissão.** Periodicamente, cada Node reenvia a proposta da rodada corrente e os próprios votos da altura corrente. Isso recupera mensagens perdidas durante partições sem aumentar a superfície de ataque, porque só retransmite o que ele mesmo assinou ou já validou.
+**Retransmissão.** Periodicamente, cada Node reenvia a proposta da rodada corrente e os próprios votos da rodada corrente. Isso recupera mensagens perdidas durante partições sem aumentar a superfície de ataque, porque só retransmite o que ele mesmo assinou ou já validou.
 
-**Mensagens futuras.** Propostas e votos da altura `h + 1` recebidos antes da decisão ficam em um buffer limitado e são processados ao iniciar a nova altura. Alturas mais distantes são descartadas; o Node recupera o atraso sincronizando blocos finalizados.
+**Mensagens futuras e limites de memória** (`FUTURE_ROUND_WINDOW = 2`, `docs/AUDIT.md` RZ-IR-02/03):
+
+* propostas e votos da altura `h + 1` só são guardados (buffer de até 4 096) se o autor pertence ao conjunto vigente e a rodada é `≤ FUTURE_ROUND_WINDOW`; são processados ao iniciar a nova altura;
+* na altura corrente, propostas de rodada `> rodada_atual + FUTURE_ROUND_WINDOW` são descartadas;
+* para rodadas futuras, guarda-se só o voto de rodada **mais alta** de cada validador e tipo. Isso basta para o salto de rodada (> 1/3 do poder numa mesma rodada à frente) e limita a memória a um voto futuro por validador;
+* alturas mais distantes são descartadas; o Node recupera o atraso sincronizando blocos finalizados.
+
+Mensagens descartadas não são repassadas nem marcadas como vistas; a retransmissão as entrega de novo quando a rodada chegar.
 
 **Após decidir**, o Node grava o `CommittedBlock`, difunde `Block` e inicia a altura seguinte após `block_interval_ms`.
 
@@ -229,7 +236,7 @@ CommittedBlock recebido
 
 ## 8. Mensagens P2P
 
-`ConsensusProposal` (0x16) e `ConsensusVote` (0x17) transportam as mensagens de §4; `Block` (0x06) e `Blocks` (0x08) transportam `CommittedBlock`. Ver `spec/P2P.md`. Propostas e votos são deduplicados por identificador antes de chegar à máquina de consenso e repassados apenas quando novos.
+`ConsensusProposal` (0x16) e `ConsensusVote` (0x17) transportam as mensagens de §4; `Block` (0x06) e `Blocks` (0x08) transportam `CommittedBlock`. Ver `spec/P2P.md`. Propostas e votos são deduplicados por identificador, marcados como vistos e repassados **somente quando aceitos** pela máquina de consenso. A fila para a thread de consenso é limitada (8 192); sob inundação, o excedente é descartado.
 
 ## 9. Limitações conhecidas
 

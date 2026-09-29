@@ -3,6 +3,8 @@
 use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 
+use rz_codec::Encode;
+use rz_core::limits::MAX_BLOCK_TX_BYTES;
 use rz_core::state::ExecParams;
 use rz_core::{State, Transaction, TxError, TxId};
 use rz_crypto::Address;
@@ -152,11 +154,18 @@ impl Mempool {
     pub fn select(&self, state: &State, params: &ExecParams<'_>, max: usize) -> Vec<Transaction> {
         let mut scratch = state.clone();
         let mut out = Vec::new();
+        let mut bytes = 0usize;
         for tx in self.txs.values().chain(self.private.values()) {
             if out.len() >= max {
                 break;
             }
+            // Respeita o limite de bytes do bloco (`MAX_BLOCK_TX_BYTES`).
+            let size = tx.to_canonical_bytes().len();
+            if bytes + size > MAX_BLOCK_TX_BYTES {
+                continue;
+            }
             if scratch.apply_transaction(tx, params).is_ok() {
+                bytes += size;
                 out.push(tx.clone());
             }
         }

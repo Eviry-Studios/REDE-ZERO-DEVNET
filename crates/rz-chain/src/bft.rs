@@ -70,6 +70,13 @@ pub struct Reaction {
 /// Mensagens para alturas futuras guardadas até a altura começar.
 const MAX_FUTURE_MSGS: usize = 4_096;
 
+/// Quantas rodadas à frente da atual uma proposta é guardada, e até que
+/// rodada mensagens da altura seguinte são guardadas. Mensagens além disso
+/// são descartadas sem repasse; a retransmissão periódica as entrega de novo
+/// quando a rodada chegar. Limita a memória que um validador bizantino pode
+/// ocupar assinando mensagens para rodadas arbitrárias.
+pub const FUTURE_ROUND_WINDOW: u32 = 2;
+
 enum Pending {
     Proposal(Box<Proposal>),
     Vote(Vote),
@@ -222,13 +229,23 @@ impl Bft {
     pub fn on_proposal(&mut self, p: Proposal, app: &mut dyn App) -> Reaction {
         let mut r = Reaction::default();
         if p.height == self.height + 1 {
-            if self.future.len() < MAX_FUTURE_MSGS && p.verify(&self.network_id) {
+            // A altura seguinte ainda não tem conjunto conhecido: usa o atual
+            // como filtro (quem entra na época seguinte é recuperado pela
+            // retransmissão).
+            if self.future.len() < MAX_FUTURE_MSGS
+                && p.round <= FUTURE_ROUND_WINDOW
+                && self.validators.contains(&p.proposer)
+                && p.verify(&self.network_id)
+            {
                 self.future.push(Pending::Proposal(Box::new(p)));
                 r.relay = true;
             }
             return r;
         }
-        if p.height != self.height || self.decided {
+        if p.height != self.height
+            || self.decided
+            || p.round > self.round.saturating_add(FUTURE_ROUND_WINDOW)
+        {
             return r;
         }
         if !p.verify(&self.network_id)
@@ -264,7 +281,11 @@ impl Bft {
     pub fn on_vote(&mut self, v: Vote, app: &mut dyn App) -> Reaction {
         let mut r = Reaction::default();
         if v.height == self.height + 1 {
-            if self.future.len() < MAX_FUTURE_MSGS && v.verify(&self.network_id) {
+            if self.future.len() < MAX_FUTURE_MSGS
+                && v.round <= FUTURE_ROUND_WINDOW
+                && self.validators.contains(&v.validator)
+                && v.verify(&self.network_id)
+            {
                 self.future.push(Pending::Vote(v));
                 r.relay = true;
             }
@@ -274,6 +295,9 @@ impl Bft {
             return r;
         }
         if !v.verify(&self.network_id) {
+            return r;
+        }
+        if v.round > self.round && !self.keep_future_vote(&v) {
             return r;
         }
         let set = self.votes.entry((v.round, v.kind)).or_default();
@@ -292,6 +316,49 @@ impl Bft {
         r.relay = true;
         self.process(app, &mut r.outputs);
         r
+    }
+
+    /// Rodadas futuras: guarda só o voto de rodada mais alta de cada
+    /// validador e tipo, o que basta para o salto de rodada (> 1/3 numa
+    /// rodada à frente) e limita a memória a um voto futuro por validador.
+    /// Retorna `false` se já há um voto futuro mais alto (descartar `v`).
+    fn keep_future_vote(&mut self, v: &Vote) -> bool {
+        let current = self.round;
+        let older: Vec<u32> = self
+            .votes
+            .iter()
+            .filter(|((rr, kind), set)| {
+                *rr > current && *kind == v.kind && *rr != v.round && set.contains_key(&v.validator)
+            })
+            .map(|((rr, _), _)| *rr)
+            .collect();
+        if older.iter().any(|rr| *rr > v.round) {
+            return false;
+        }
+        for rr in older {
+            if let Some(set) = self.votes.get_mut(&(rr, v.kind)) {
+                set.remove(&v.validator);
+                if set.is_empty() {
+                    self.votes.remove(&(rr, v.kind));
+                }
+            }
+        }
+        true
+    }
+
+    /// Quantidade de votos guardados (diagnóstico e testes de limite).
+    pub fn stored_votes(&self) -> usize {
+        self.votes.values().map(BTreeMap::len).sum()
+    }
+
+    /// Quantidade de propostas guardadas na altura atual.
+    pub fn stored_proposals(&self) -> usize {
+        self.proposals.len()
+    }
+
+    /// Quantidade de mensagens guardadas para a altura seguinte.
+    pub fn stored_future(&self) -> usize {
+        self.future.len()
     }
 
     /// Mensagens da rodada atual para retransmissão periódica.

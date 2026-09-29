@@ -50,6 +50,18 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * `docs/DEMOCRACIA_ORGANICA.md` incorporado com notas de conformidade (ADR-0013).
 * `THREAT_MODEL.md` v0.4.0.
 
+### Adicionado — preparação para auditoria
+
+* `docs/AUDIT.md`: escopo priorizado, fronteiras de confiança, invariantes a atacar, como reproduzir, dependências criptográficas e resultado da revisão interna.
+* Testes de robustez por mutação sobre todos os tipos de mensagem e transação (`rz-p2p/tests/robustness.rs`): sem pânico, canonicidade, rejeição de mutantes pela verificação de estado, valores extremos assinados, quadros adulterados ou repetidos no canal cifrado.
+
+### Corrigido — revisão interna de segurança
+
+* Temporizadores e intervalo de bloco com limite superior (10 min); prazos somados ao relógio sem estouro (RZ-IR-01).
+* Consenso: mensagens da altura seguinte só de validadores e das primeiras rodadas; janela de rodadas futuras para propostas; um voto futuro por validador (RZ-IR-02, RZ-IR-03).
+* Node: mensagens de consenso marcadas como vistas só após aceitas; fila limitada para a thread de consenso (RZ-IR-04).
+* Blocos limitados a 2 MiB de transações, respeitado na seleção do mempool (RZ-IR-05).
+
 ### Protocolo
 
 * **Incompatível** com DEVNETs anteriores ao Zero-BFT: o cabeçalho troca `slot` por `round`, o Genesis troca tempo/slot/finalidade por `ConsensusParams` e validadores com vínculo, blocos trafegam com certificado e `P2P_VERSION = 3`. Recrie a DEVNET (`rm -rf devnet-data`).

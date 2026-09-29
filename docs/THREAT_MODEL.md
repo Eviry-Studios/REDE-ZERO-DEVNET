@@ -499,7 +499,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 ### THR-CON-005 — Bloco malformado ou excessivo
 
 **Severidade:** MÉDIA
-**Mitigações:** limites de tamanho e de quantidade de transações; validação completa antes de propagação; rejeição (`AT-BLOCK-002`).
+**Mitigações:** limites de tamanho e de quantidade de transações (`MAX_BLOCK_TX_BYTES` = 2 MiB, para que todo bloco válido caiba num quadro P2P); validação completa antes de propagação; rejeição (`AT-BLOCK-002`, `oversized_block_rejected`).
 
 ### THR-CON-006 — Manipulação temporal
 
@@ -543,14 +543,17 @@ Classificação de severidade (inicial, sujeita a revisão):
 * limites de taxa por par;
 * pontuação de comportamento local com desconexão e quarentena (`SPEC §26`);
 * validação barata antes de validação cara (formato → assinatura → estado);
-* testes `AT-P2P-004`, `AT-P2P-005`.
+* mensagens de consenso: só de validadores, rodadas limitadas, repasse só após aceitação, fila limitada (`docs/AUDIT.md` RZ-IR-02..04);
+* testes `AT-P2P-004`, `AT-P2P-005`, limites de memória em `rz-chain bft_tests`.
+
+**Pendente:** dimensionar o limite de taxa por tipo de mensagem conforme o número de validadores (RZ-IR-06).
 
 ### THR-P2P-003 — Mensagens malformadas
 
 **Severidade:** MÉDIA
 **Descrição:** mensagens construídas para explorar o parser (pânico, consumo excessivo, corrupção de memória).
 
-**Mitigações:** linguagem com segurança de memória; parser sem pânico sobre entrada não confiável; fuzzing contínuo; teste `AT-P2P-003`.
+**Mitigações:** linguagem com segurança de memória (`unsafe` proibido); parser sem pânico sobre entrada não confiável; testes de mutação sobre todos os tipos de mensagem, com verificação de canonicidade e de ausência de pânico na validação de estado (`rz-p2p/tests/robustness.rs`); fuzzing contínuo com libFuzzer (**A DEFINIR**); teste `AT-P2P-003`.
 
 ### THR-P2P-004 — Sincronização envenenada
 
@@ -892,7 +895,8 @@ Classificação de severidade (inicial, sujeita a revisão):
 | THR-CON-002 | REQ-005, REQ-015 | SPEC §19, §20, spec/CONSENSUS.md | AT-CON-*, rz-chain bft_tests |
 | THR-CON-007 | REQ-015 | SPEC §22, spec/CONSENSUS.md §1 | rz-chain partition_halts_then_recovers |
 | THR-P2P-001 | REQ-017 | SPEC §29 | — (a definir) |
-| THR-P2P-002 | REQ-053 | SPEC §26 | AT-P2P-004/005 |
+| THR-P2P-002 | REQ-053 | SPEC §26 | AT-P2P-004/005, rz-chain bft_tests (limites) |
+| THR-P2P-003 | REQ-053 | SPEC §8, spec/ENCODING.md | AT-P2P-003, rz-p2p robustness |
 | THR-P2P-004 | REQ-016 | SPEC §28 | AT-SYNC-* |
 | THR-PRIV-001 | REQ-024 | SPEC §31, spec/PRIVACY.md | rz-core private::tests, rz-wallet private_devnet |
 | THR-PRIV-002 | REQ-026 | SPEC §30, spec/P2P.md §4 | rz-node dandelion_stem_then_embargo_fluff |

@@ -56,7 +56,8 @@ O BlockId do "bloco 0" é o hash do Genesis.
 | 3 | `height == pai.height + 1` | `WrongHeight` |
 | 4 | `tx_root` confere | `TxRootMismatch` |
 | 5 | Assinatura do `proposer` válida | `Signature` |
-| 6 | `len(txs) ≤ genesis.max_block_txs` | `TooManyTransactions` |
+| 6 | `len(txs) ≤ max_block_txs` vigente | `TooManyTransactions` |
+| 6a | `Σ len(enc(tx)) ≤ MAX_BLOCK_TX_BYTES` (2 MiB), para que bloco, proposta e certificado caibam num quadro P2P | `TooLarge` |
 | 7 | Toda transação válida, aplicada em ordem | `Transaction { index }` |
 | 8 | Invariante monetária preservada | `State` |
 | 9 | `state_root` igual à raiz do estado resultante | `StateRootMismatch` |

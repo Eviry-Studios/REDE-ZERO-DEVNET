@@ -405,13 +405,13 @@ fn cmd_lock(args: &Args) -> Result<(), String> {
     let (_, _, height) = account(&mut client, keys.address())?;
     let g = governance(&mut client, None)?.params.governance;
     if blocks < g.lock_min_blocks || blocks > g.lock_max_blocks {
-        let slot_s = genesis.consensus.block_interval_ms as f64 / 1000.0;
+        let block_s = genesis.consensus.block_interval_ms as f64 / 1000.0;
         return Err(format!(
             "--blocks deve estar entre {} e {} blocos (~{:.0} a {:.0} dias nesta rede)",
             g.lock_min_blocks,
             g.lock_max_blocks,
-            g.lock_min_blocks as f64 * slot_s / 86_400.0,
-            g.lock_max_blocks as f64 * slot_s / 86_400.0
+            g.lock_min_blocks as f64 * block_s / 86_400.0,
+            g.lock_max_blocks as f64 * block_s / 86_400.0
         ));
     }
     let fee = fee(args, &genesis)?;
