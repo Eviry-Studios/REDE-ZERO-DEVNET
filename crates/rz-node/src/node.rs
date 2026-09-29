@@ -373,7 +373,7 @@ impl Shared {
                 }
                 if let ImportOutcome::NewTip { reorg } = outcome {
                     let state = chain.state();
-                    mempool.prune(&state, &ExecParams::from_genesis(chain.genesis()));
+                    mempool.prune(&state, &ExecParams::at(chain.genesis(), chain.height() + 1));
                     if reorg {
                         self.info(format!(
                             "reorganização: nova ponta {} na altura {}",
@@ -410,10 +410,10 @@ impl Shared {
                     continue;
                 }
                 let state = c.chain.state();
-                let params = ExecParams::from_genesis(&self.genesis);
+                let params = ExecParams::at(&self.genesis, c.chain.height() + 1);
                 let txs = c
                     .mempool
-                    .select(&state, &params, self.genesis.max_block_txs as usize);
+                    .select(&state, &params, state.params().max_block_txs as usize);
                 Block::build(
                     &self.genesis,
                     c.chain.tip(),
@@ -856,13 +856,42 @@ impl Shared {
                 Flow::Continue
             }
             Message::StemTransaction(tx) => self.handle_stem(ctx, tx),
+            Message::GetGovernance { address } => {
+                let msg = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let mut proposals: Vec<_> = state.proposals().collect();
+                    proposals.sort_by_key(|p| std::cmp::Reverse(p.submitted_at));
+                    Message::Governance {
+                        height: c.chain.height(),
+                        params: state.params().clone(),
+                        proposals: proposals
+                            .into_iter()
+                            .take(rz_p2p::MAX_PROPOSALS_PER_MSG)
+                            .map(|p| rz_core::governance::ProposalSummary(p.clone()))
+                            .collect(),
+                        locks: state
+                            .locks()
+                            .filter(|(_, l)| Some(l.owner) == address)
+                            .take(rz_p2p::MAX_LOCKS_PER_MSG)
+                            .map(|(id, l)| rz_core::governance::LockEntry {
+                                id: *id,
+                                lock: l.clone(),
+                            })
+                            .collect(),
+                    }
+                };
+                self.send_to(ctx.id, msg);
+                Flow::Continue
+            }
             Message::Reject(_) => Flow::Disconnect,
             // Respostas não solicitadas são ignoradas.
             Message::Account { .. }
             | Message::TxResult { .. }
             | Message::Status { .. }
             | Message::Outputs { .. }
-            | Message::KeyImages { .. } => Flow::Continue,
+            | Message::KeyImages { .. }
+            | Message::Governance { .. } => Flow::Continue,
         }
     }
 
@@ -944,7 +973,7 @@ impl Shared {
         }
         c.chain
             .state()
-            .check_transaction(tx, &ExecParams::from_genesis(&self.genesis))
+            .check_transaction(tx, &ExecParams::at(&self.genesis, c.chain.height() + 1))
             .map_err(MempoolError::Invalid)
     }
 
@@ -1007,7 +1036,8 @@ impl Shared {
             let mut guard = lock(&self.core);
             let Core { chain, mempool, .. } = &mut *guard;
             let state = chain.state();
-            mempool.insert(tx.clone(), &state, &ExecParams::from_genesis(&self.genesis))?;
+            let params = ExecParams::at(&self.genesis, chain.height() + 1);
+            mempool.insert(tx.clone(), &state, &params)?;
         }
         self.debug(format!("transação {id} difundida"));
         self.broadcast(&Message::Transaction(tx), except);

@@ -4,6 +4,7 @@ use std::fmt;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 use rz_codec::{Decode, DecodeError, Decoder, Encode, Encoder};
+use rz_core::governance::{LockEntry, ProposalSummary, ProtocolParams};
 use rz_core::limits::MAX_NETWORK_ID_LEN;
 use rz_core::{Block, BlockId, Transaction, TxId};
 use rz_crypto::{Address, Hash32};
@@ -19,6 +20,10 @@ pub const MAX_PEERS_PER_MSG: usize = 32;
 pub const MAX_OUTPUTS_PER_MSG: usize = 4096;
 /// Máximo de imagens de chave em uma resposta `KeyImages`.
 pub const MAX_KEY_IMAGES_PER_MSG: usize = 8192;
+/// Máximo de propostas em uma resposta `Governance`.
+pub const MAX_PROPOSALS_PER_MSG: usize = 256;
+/// Máximo de bloqueios em uma resposta `Governance`.
+pub const MAX_LOCKS_PER_MSG: usize = 1024;
 const MAX_REASON_LEN: usize = 256;
 
 /// Endereço de par: IPv6 (IPv4 mapeado) de 16 bytes + porta.
@@ -183,6 +188,15 @@ pub enum Message {
     KeyImages { start: u64, images: Vec<[u8; 32]> },
     /// `0x13` — transação em fase de haste (Dandelion++, `spec/P2P.md §4`).
     StemTransaction(Transaction),
+    /// `0x14` — consulta de governança; `address` filtra os bloqueios.
+    GetGovernance { address: Option<Address> },
+    /// `0x15`
+    Governance {
+        height: u64,
+        params: ProtocolParams,
+        proposals: Vec<ProposalSummary>,
+        locks: Vec<LockEntry>,
+    },
 }
 
 impl Encode for Message {
@@ -272,6 +286,21 @@ impl Encode for Message {
             Message::StemTransaction(tx) => {
                 e.u8(0x13).put(tx);
             }
+            Message::GetGovernance { address } => {
+                e.u8(0x14).option(address);
+            }
+            Message::Governance {
+                height,
+                params,
+                proposals,
+                locks,
+            } => {
+                e.u8(0x15)
+                    .u64(*height)
+                    .put(params)
+                    .list(proposals)
+                    .list(locks);
+            }
         }
     }
 }
@@ -329,6 +358,15 @@ impl Decode for Message {
                 images: d.list(MAX_KEY_IMAGES_PER_MSG)?,
             },
             0x13 => Message::StemTransaction(d.get()?),
+            0x14 => Message::GetGovernance {
+                address: d.option()?,
+            },
+            0x15 => Message::Governance {
+                height: d.u64()?,
+                params: d.get()?,
+                proposals: d.list(MAX_PROPOSALS_PER_MSG)?,
+                locks: d.list(MAX_LOCKS_PER_MSG)?,
+            },
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }
@@ -358,6 +396,8 @@ impl Message {
             Message::GetKeyImages { .. } => "GET_KEY_IMAGES",
             Message::KeyImages { .. } => "KEY_IMAGES",
             Message::StemTransaction(_) => "STEM_TRANSACTION",
+            Message::GetGovernance { .. } => "GET_GOVERNANCE",
+            Message::Governance { .. } => "GOVERNANCE",
         }
     }
 }

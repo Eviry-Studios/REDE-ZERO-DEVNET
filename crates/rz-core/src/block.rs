@@ -93,6 +93,43 @@ impl BlockHeader {
     }
 }
 
+/// Cabeçalho com a assinatura do produtor — suficiente para provar, sem o
+/// corpo do bloco, que o produtor assinou aquele cabeçalho.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedHeader {
+    pub header: BlockHeader,
+    pub signature: Signature,
+}
+
+impl SignedHeader {
+    pub fn verify(&self, network_id: &str) -> bool {
+        self.header
+            .proposer
+            .verify(
+                context::BLOCK_SIGNATURE,
+                network_id,
+                &self.header.to_canonical_bytes(),
+                &self.signature,
+            )
+            .is_ok()
+    }
+}
+
+impl Encode for SignedHeader {
+    fn encode(&self, e: &mut Encoder) {
+        e.put(&self.header).put(&self.signature);
+    }
+}
+
+impl Decode for SignedHeader {
+    fn decode(d: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        Ok(Self {
+            header: d.get()?,
+            signature: d.get()?,
+        })
+    }
+}
+
 /// Bloco assinado pelo produtor.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block {
@@ -144,7 +181,7 @@ impl Block {
         key: &SecretKey,
     ) -> Result<(Block, State), BlockError> {
         let proposer = key.public_key();
-        let state = execute(genesis, parent_state, &proposer, &txs)?;
+        let state = execute(genesis, parent_state, &proposer, &txs, parent_height + 1)?;
         let header = BlockHeader {
             version: BLOCK_VERSION,
             height: parent_height + 1,
@@ -169,6 +206,13 @@ impl Block {
         ))
     }
 
+    pub fn signed_header(&self) -> SignedHeader {
+        SignedHeader {
+            header: self.header.clone(),
+            signature: self.signature,
+        }
+    }
+
     pub fn verify_signature(&self, network_id: &str) -> Result<(), BlockError> {
         self.header
             .proposer
@@ -182,17 +226,19 @@ impl Block {
     }
 }
 
-/// Executa transações e distribui taxas de forma determinística.
+/// Executa transações, distribui taxas e aplica as regras de fim de bloco
+/// (contribuição e governança), de forma determinística.
 fn execute(
     genesis: &Genesis,
     parent_state: &State,
     proposer: &PublicKey,
     txs: &[Transaction],
+    height: u64,
 ) -> Result<State, BlockError> {
-    if txs.len() > genesis.max_block_txs as usize {
+    if txs.len() > parent_state.params().max_block_txs as usize {
         return Err(BlockError::TooManyTransactions(txs.len()));
     }
-    let params = ExecParams::from_genesis(genesis);
+    let params = ExecParams::at(genesis, height);
     let mut state = parent_state.clone();
     let mut fees: u64 = 0;
     for (index, tx) in txs.iter().enumerate() {
@@ -203,6 +249,9 @@ fn execute(
     }
     state
         .credit_fees(proposer.address(), fees)
+        .map_err(BlockError::State)?;
+    state
+        .end_block(proposer, height)
         .map_err(BlockError::State)?;
     // Defesa em profundidade: nenhum bloco pode alterar a oferta (INV-003).
     state.check_supply().map_err(BlockError::State)?;
@@ -243,7 +292,7 @@ pub fn apply_block(
         return Err(BlockError::TxRootMismatch);
     }
     block.verify_signature(&genesis.network_id)?;
-    let state = execute(genesis, parent_state, &h.proposer, &block.txs)?;
+    let state = execute(genesis, parent_state, &h.proposer, &block.txs, h.height)?;
     if state.root() != h.state_root {
         return Err(BlockError::StateRootMismatch);
     }
@@ -460,8 +509,10 @@ mod tests {
 
     #[test]
     fn too_many_transactions() {
-        let (mut g, s, gid) = setup();
+        let (mut g, _, _) = setup();
         g.max_block_txs = 1;
+        let s = State::from_genesis(&g).unwrap();
+        let gid = BlockId(g.hash());
         let err =
             Block::build(&g, gid, 0, &s, 1, vec![tx(0, 1), tx(1, 1)], &validator()).unwrap_err();
         assert_eq!(err, BlockError::TooManyTransactions(2));

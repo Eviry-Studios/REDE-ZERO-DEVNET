@@ -7,14 +7,20 @@
 pub mod amount;
 pub mod block;
 pub mod genesis;
+pub mod governance;
+#[cfg(test)]
+mod governance_tests;
 pub mod limits;
 pub mod private;
 pub mod state;
 pub mod tx;
 
 pub use amount::{format_zero, parse_zero, UNITS_PER_ZERO};
-pub use block::{apply_block, Block, BlockError, BlockHeader, BlockId};
+pub use block::{apply_block, Block, BlockError, BlockHeader, BlockId, SignedHeader};
 pub use genesis::{Allocation, Genesis, GenesisError, NetworkKind};
+pub use governance::{
+    Category, Choice, GovernanceParams, ParamChange, ProposalStatus, ProtocolParams,
+};
 pub use private::{PrivateTx, RingInput, ShieldedOutput, Unshield};
 pub use state::{Account, State, StateError};
 pub use tx::{AccountTx, Transaction, TxBody, TxError, TxId, TxKind};

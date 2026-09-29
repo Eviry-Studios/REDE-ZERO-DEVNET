@@ -16,6 +16,6 @@ entrada → operação → saída esperada → regra de validação → casos de
 | [CONSENSUS.md](CONSENSUS.md) | DEVNET v0.1.0 (provisório) | `crates/rz-chain` |
 | [P2P.md](P2P.md) | DEVNET v0.1.0 | `crates/rz-p2p`, `crates/rz-node` |
 | [PRIVACY.md](PRIVACY.md) | DEVNET v0.1.0 | `crates/rz-privacy`, `crates/rz-core` |
-| [GOVERNANCE.md](GOVERNANCE.md) | **Proposta** v0.1.0 | — |
+| [GOVERNANCE.md](GOVERNANCE.md) | DEVNET v0.1.0 | `crates/rz-core` |
 
 Todas as especificações deste diretório estão em estado **DEVNET** — não congeladas (`SPECIFICATIONS.md §74`). Em caso de divergência entre código e especificação, a divergência é um defeito a ser resolvido por processo formal.

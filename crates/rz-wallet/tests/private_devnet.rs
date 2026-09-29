@@ -43,6 +43,7 @@ fn genesis() -> Genesis {
             address: faucet().address(),
             amount: 1_000_000,
         }],
+        governance: rz_core::GovernanceParams::default(),
     }
 }
 

@@ -45,6 +45,7 @@ fn genesis(n: u8) -> Genesis {
             address: faucet().public_key().address(),
             amount: 1_000_000_000,
         }],
+        governance: rz_core::GovernanceParams::default(),
     }
 }
 

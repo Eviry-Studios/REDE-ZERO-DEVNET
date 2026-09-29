@@ -1,6 +1,6 @@
 # ADR-0008 — Governança bicameral com compromisso temporal
 
-**Estado:** Proposta
+**Estado:** Aceita (aprovada em 2026-09-29) — implementada na DEVNET
 **Escopo:** DEVNET → candidata a TESTNET
 **Data:** 2026-09-29
 **Relacionamento:** REQ-040..045, REQ-080, REQ-092..095, `ARCHITECTURE.md §31–32`, `SPECIFICATIONS.md §43–47`, THR-GOV-001..006
@@ -96,8 +96,14 @@ Propostas, bloqueios e votos são transações assinadas registradas no estado. 
 * Baixa participação — mitigada por quórum, mas não eliminada.
 * Coerção de votantes enquanto os votos forem públicos.
 
-## Condições para aceitação
+## Implementação
 
-1. Revisão pública desta proposta.
+`crates/rz-core/src/governance.rs` (regras e apuração), `state.rs` (efeitos e fim de bloco), `governance_tests.rs` (AT-GOV-001..005 e propriedades), `crates/rz-wallet/tests/governance_devnet.rs` (ponta a ponta).
+
+A evidência de equivocação passou a ser uma transação (`ReportEquivocation`): dois cabeçalhos assinados pelo mesmo produtor para o mesmo slot zeram seus pontos de contribuição — penalização objetiva com evidência verificável (`SPEC §49`).
+
+## Condições antes da TESTNET
+
+1. Revisão pública desta decisão.
 2. Simulação dos parâmetros (quórum, `m(d)`, meia-vida) com cenários adversariais.
 3. Implementação com testes de aceitação `AT-GOV-001..005` e testes de propriedade da apuração.

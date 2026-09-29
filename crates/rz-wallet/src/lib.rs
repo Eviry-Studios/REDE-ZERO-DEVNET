@@ -274,3 +274,56 @@ pub fn send_private(
     .map_err(|e| e.to_string())?;
     submit(client, Transaction::Private(tx))
 }
+
+// ------------------------------------------------------------- governança
+
+/// Visão de governança obtida de um Node.
+pub struct GovernanceView {
+    pub height: u64,
+    pub params: rz_core::ProtocolParams,
+    pub proposals: Vec<rz_core::governance::Proposal>,
+    pub locks: Vec<rz_core::governance::LockEntry>,
+}
+
+/// Contexto do hash do texto de uma proposta.
+pub const PROPOSAL_CONTENT: &str = "rede-zero/proposal-content/v1";
+
+pub fn governance(client: &mut Client, address: Option<Address>) -> Result<GovernanceView, String> {
+    client
+        .request(&Message::GetGovernance { address }, |m| match m {
+            Message::Governance {
+                height,
+                params,
+                proposals,
+                locks,
+            } => Some(GovernanceView {
+                height,
+                params,
+                proposals: proposals.into_iter().map(|p| p.0).collect(),
+                locks,
+            }),
+            _ => None,
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// Monta, assina localmente e envia uma transação de conta.
+pub fn send_account(
+    client: &mut Client,
+    genesis: &Genesis,
+    keys: &Keys,
+    kind: TxKind,
+    fee: u64,
+) -> Result<TxId, String> {
+    let (_, nonce, _) = account(client, keys.address())?;
+    let tx = TxBody {
+        version: rz_core::tx::TX_VERSION,
+        sender: keys.transparent.public_key(),
+        nonce,
+        fee,
+        kind,
+    }
+    .sign(&keys.transparent, &genesis.network_id)
+    .map_err(|e| e.to_string())?;
+    submit(client, tx)
+}

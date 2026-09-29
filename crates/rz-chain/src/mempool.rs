@@ -103,7 +103,7 @@ impl Mempool {
         }
         match &tx {
             Transaction::Account(a) => {
-                a.check_stateless(params.min_fee)
+                a.check_stateless(state.params().min_fee)
                     .map_err(MempoolError::Invalid)?;
                 a.verify_signature(params.network_id)
                     .map_err(MempoolError::Invalid)?;
@@ -219,6 +219,7 @@ mod tests {
                 address: rich().public_key().address(),
                 amount: 1_000,
             }],
+            governance: rz_core::GovernanceParams::default(),
         }
     }
 

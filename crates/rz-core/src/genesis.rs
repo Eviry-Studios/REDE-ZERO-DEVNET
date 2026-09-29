@@ -6,6 +6,7 @@ use std::fmt;
 use rz_codec::{Decode, DecodeError, Decoder, Encode, Encoder};
 use rz_crypto::{context, hash, Address, Hash32, PublicKey};
 
+use crate::governance::GovernanceParams;
 use crate::limits::{MAX_ALLOCATIONS, MAX_NETWORK_ID_LEN, MAX_VALIDATORS};
 use crate::PROTOCOL_VERSION;
 
@@ -77,6 +78,8 @@ pub struct Genesis {
     pub validators: Vec<PublicKey>,
     /// Estado monetário inicial, ordenado por endereço e sem repetições.
     pub allocations: Vec<Allocation>,
+    /// Parâmetros iniciais de governança (ADR-0008).
+    pub governance: GovernanceParams,
 }
 
 impl Encode for Genesis {
@@ -90,7 +93,8 @@ impl Encode for Genesis {
             .u64(self.min_fee)
             .u32(self.max_block_txs)
             .list(&self.validators)
-            .list(&self.allocations);
+            .list(&self.allocations)
+            .put(&self.governance);
     }
 }
 
@@ -107,6 +111,7 @@ impl Decode for Genesis {
             max_block_txs: d.u32()?,
             validators: d.list(MAX_VALIDATORS)?,
             allocations: d.list(MAX_ALLOCATIONS)?,
+            governance: d.get()?,
         })
     }
 }
@@ -215,6 +220,9 @@ impl Genesis {
             return Err(GenesisError::ZeroAllocation);
         }
         self.total_supply()?;
+        self.governance
+            .validate()
+            .map_err(GenesisError::InvalidParameter)?;
         Ok(())
     }
 
@@ -270,6 +278,16 @@ pub(crate) mod tests {
             max_block_txs: 100,
             validators: vec![v],
             allocations,
+            governance: GovernanceParams {
+                deposit: 1_000,
+                analysis_blocks: 2,
+                voting_blocks: 3,
+                ordinary_delay_blocks: 2,
+                constitutional_delay_blocks: 4,
+                lock_min_blocks: 5,
+                lock_max_blocks: 105,
+                contribution_half_life_blocks: 16,
+            },
         }
     }
 

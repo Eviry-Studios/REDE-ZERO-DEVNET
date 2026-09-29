@@ -170,6 +170,20 @@ fn init_devnet(args: &Args) -> Result<(), String> {
     let faucet = SecretKey::generate();
     keyfile::save(&out.join("faucet.key"), &faucet).map_err(|e| e.to_string())?;
 
+    // Cada validador recebe uma pequena alocação para pagar taxas de
+    // participação na governança (voto na câmara de contribuição).
+    let mut allocations: Vec<Allocation> = validators
+        .iter()
+        .map(|v| Allocation {
+            address: v.address(),
+            amount: 1_000 * rz_core::UNITS_PER_ZERO,
+        })
+        .collect();
+    allocations.push(Allocation {
+        address: faucet.public_key().address(),
+        amount: faucet_amount,
+    });
+    allocations.sort_by_key(|a| a.address);
     let genesis = Genesis {
         protocol_version: PROTOCOL_VERSION,
         kind: NetworkKind::Devnet,
@@ -180,10 +194,8 @@ fn init_devnet(args: &Args) -> Result<(), String> {
         min_fee,
         max_block_txs: 1_000,
         validators,
-        allocations: vec![Allocation {
-            address: faucet.public_key().address(),
-            amount: faucet_amount,
-        }],
+        allocations,
+        governance: rz_core::GovernanceParams::for_slot_ms(slot_ms),
     };
     genesis.validate().map_err(|e| e.to_string())?;
     let genesis_path = out.join("genesis.bin");

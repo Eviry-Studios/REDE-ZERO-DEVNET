@@ -6,6 +6,8 @@ use rz_codec::{Decode, DecodeError, Decoder, Encode, Encoder};
 use rz_crypto::{context, hash, Address, CryptoError, Hash32, PublicKey, SecretKey, Signature};
 use rz_privacy::excess::ExcessProof;
 
+use crate::block::SignedHeader;
+use crate::governance::{Category, Choice, ParamChange, MAX_PARAM_CHANGES};
 use crate::private::{PrivateTx, ShieldedOutput, MAX_OUTPUTS};
 
 /// Versão atual do formato de transação.
@@ -57,6 +59,28 @@ pub enum TxKind {
         outputs: Vec<ShieldedOutput>,
         excess: ExcessProof,
     },
+    /// Tag `0x10` — bloqueia ZERO para a câmara econômica da governança.
+    LockStake { amount: u64, unlock_height: u64 },
+    /// Tag `0x11` — devolve um bloqueio vencido.
+    Unlock { lock_id: u64 },
+    /// Tag `0x12` — submete proposta; debita `deposit` (≥ depósito vigente).
+    Propose {
+        category: Category,
+        /// Hash do texto completo, armazenado fora da cadeia.
+        content_hash: Hash32,
+        params: Vec<ParamChange>,
+        /// Identificador de versão/especificação/implementação/testes (`SPEC §63`).
+        release_id: Option<Hash32>,
+        deposit: u64,
+    },
+    /// Tag `0x13` — registra ou substitui o voto do remetente.
+    Vote { proposal: Hash32, choice: Choice },
+    /// Tag `0x14` — denuncia equivocação: dois cabeçalhos distintos assinados
+    /// pelo mesmo produtor para o mesmo slot (`SPEC §49`, THR-CON-004).
+    ReportEquivocation {
+        first: Box<SignedHeader>,
+        second: Box<SignedHeader>,
+    },
 }
 
 impl Encode for TxKind {
@@ -71,6 +95,35 @@ impl Encode for TxKind {
                 excess,
             } => {
                 e.u8(0x01).u64(*amount).list(outputs).put(excess);
+            }
+            TxKind::LockStake {
+                amount,
+                unlock_height,
+            } => {
+                e.u8(0x10).u64(*amount).u64(*unlock_height);
+            }
+            TxKind::Unlock { lock_id } => {
+                e.u8(0x11).u64(*lock_id);
+            }
+            TxKind::Propose {
+                category,
+                content_hash,
+                params,
+                release_id,
+                deposit,
+            } => {
+                e.u8(0x12)
+                    .put(category)
+                    .put(content_hash)
+                    .list(params)
+                    .option(release_id)
+                    .u64(*deposit);
+            }
+            TxKind::Vote { proposal, choice } => {
+                e.u8(0x13).put(proposal).put(choice);
+            }
+            TxKind::ReportEquivocation { first, second } => {
+                e.u8(0x14).put(first.as_ref()).put(second.as_ref());
             }
         }
     }
@@ -87,6 +140,26 @@ impl Decode for TxKind {
                 amount: d.u64()?,
                 outputs: d.list(MAX_OUTPUTS)?,
                 excess: d.get()?,
+            }),
+            0x10 => Ok(TxKind::LockStake {
+                amount: d.u64()?,
+                unlock_height: d.u64()?,
+            }),
+            0x11 => Ok(TxKind::Unlock { lock_id: d.u64()? }),
+            0x12 => Ok(TxKind::Propose {
+                category: d.get()?,
+                content_hash: d.get()?,
+                params: d.list(MAX_PARAM_CHANGES)?,
+                release_id: d.option()?,
+                deposit: d.u64()?,
+            }),
+            0x13 => Ok(TxKind::Vote {
+                proposal: d.get()?,
+                choice: d.get()?,
+            }),
+            0x14 => Ok(TxKind::ReportEquivocation {
+                first: Box::new(d.get()?),
+                second: Box::new(d.get()?),
             }),
             t => Err(DecodeError::InvalidTag(t)),
         }
@@ -265,6 +338,14 @@ impl AccountTx {
                     return Err(TxError::InvalidPrivate("blindagem sem saídas"));
                 }
             }
+            TxKind::LockStake { amount, .. } if *amount == 0 => {
+                return Err(TxError::ZeroAmount);
+            }
+            TxKind::LockStake { .. }
+            | TxKind::Unlock { .. }
+            | TxKind::Propose { .. }
+            | TxKind::Vote { .. }
+            | TxKind::ReportEquivocation { .. } => {}
         }
         if self.body.fee < min_fee {
             return Err(TxError::FeeTooLow {
@@ -322,6 +403,15 @@ pub enum TxError {
     KeyImageSpent,
     /// A oferta privada ficaria negativa — defesa contra inflação oculta.
     ShieldedSupplyUnderflow,
+    /// Regra de governança violada.
+    Governance(&'static str),
+    /// Depósito de proposta abaixo do vigente.
+    DepositTooLow {
+        deposit: u64,
+        min: u64,
+    },
+    /// Evidência de equivocação inválida.
+    InvalidEvidence(&'static str),
 }
 
 impl fmt::Display for TxError {
@@ -345,6 +435,11 @@ impl fmt::Display for TxError {
             Self::Balance => write!(f, "entradas e saídas não se equilibram"),
             Self::KeyImageSpent => write!(f, "nota já gasta"),
             Self::ShieldedSupplyUnderflow => write!(f, "oferta privada ficaria negativa"),
+            Self::Governance(w) => write!(f, "governança: {w}"),
+            Self::DepositTooLow { deposit, min } => {
+                write!(f, "depósito {deposit} abaixo do mínimo {min}")
+            }
+            Self::InvalidEvidence(w) => write!(f, "evidência inválida: {w}"),
         }
     }
 }

@@ -22,6 +22,10 @@ use rz_privacy::note::OutputData;
 use rz_privacy::{balance_holds, commitment, decode_point, excess};
 
 use crate::genesis::{Genesis, GenesisError};
+use crate::governance::{
+    check_proposal_shape, decide, lock_weight, Category, ChamberTally, Contribution, Lock,
+    Proposal, ProposalStatus, ProtocolParams, Tally, Vote, SCALE,
+};
 use crate::private::{
     accumulate, context as pctx, min_ring_size, shield_message, PrivateTx, ShieldedOutput,
     PRIVATE_TX_VERSION, RING_SIZE,
@@ -35,21 +39,32 @@ pub struct Account {
     pub nonce: u64,
 }
 
-/// Parâmetros de execução derivados do Genesis.
+/// Contexto de execução: rede e altura do bloco em que a transação entra.
+///
+/// Parâmetros ajustáveis (taxa mínima, limites, governança) vêm do **estado**
+/// ([`State::params`]), pois podem mudar por governança.
 #[derive(Clone, Debug)]
 pub struct ExecParams<'a> {
     pub network_id: &'a str,
-    pub min_fee: u64,
+    pub height: u64,
 }
 
 impl<'a> ExecParams<'a> {
+    /// Contexto na altura 1 (primeiro bloco após o Genesis).
     pub fn from_genesis(g: &'a Genesis) -> Self {
+        Self::at(g, 1)
+    }
+
+    pub fn at(g: &'a Genesis, height: u64) -> Self {
         Self {
             network_id: &g.network_id,
-            min_fee: g.min_fee,
+            height,
         }
     }
 }
+
+/// Contexto do hash da parte de governança do estado.
+pub const GOVERNANCE_ROOT: &str = "rede-zero/governance-root/v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StateError {
@@ -90,6 +105,21 @@ pub struct State {
     key_images: BTreeSet<[u8; 32]>,
     key_image_log: Vec<[u8; 32]>,
     key_image_acc: Hash32,
+    params: ProtocolParams,
+    locks: BTreeMap<u64, Lock>,
+    next_lock_id: u64,
+    proposals: BTreeMap<Hash32, Proposal>,
+    contributions: BTreeMap<rz_crypto::PublicKey, Contribution>,
+    approved_communities: BTreeSet<Hash32>,
+}
+
+/// Alteração de governança produzida por uma transação.
+enum GovEffect {
+    Lock(u64, Lock),
+    Unlock(u64),
+    Propose(Box<Proposal>),
+    Vote(Hash32, Address, Vote),
+    Slash(rz_crypto::PublicKey),
 }
 
 /// Efeito calculado de uma transação, aplicado só após todas as verificações.
@@ -99,6 +129,7 @@ struct Effect {
     spent: Vec<[u8; 32]>,
     shielded_supply: u64,
     fee: u64,
+    gov: Option<GovEffect>,
 }
 
 impl State {
@@ -128,7 +159,80 @@ impl State {
             key_images: BTreeSet::new(),
             key_image_log: Vec::new(),
             key_image_acc: Hash32::ZERO,
+            params: ProtocolParams {
+                min_fee: genesis.min_fee,
+                max_block_txs: genesis.max_block_txs,
+                governance: genesis.governance.clone(),
+            },
+            locks: BTreeMap::new(),
+            next_lock_id: 0,
+            proposals: BTreeMap::new(),
+            contributions: BTreeMap::new(),
+            approved_communities: BTreeSet::new(),
         })
+    }
+
+    /// Parâmetros vigentes (iniciados pelo Genesis, alterados por governança).
+    pub fn params(&self) -> &ProtocolParams {
+        &self.params
+    }
+
+    pub fn locks(&self) -> impl Iterator<Item = (&u64, &Lock)> {
+        self.locks.iter()
+    }
+
+    pub fn proposals(&self) -> impl Iterator<Item = &Proposal> {
+        self.proposals.values()
+    }
+
+    pub fn proposal(&self, id: &Hash32) -> Option<&Proposal> {
+        self.proposals.get(id)
+    }
+
+    /// Pontos de contribuição (escala [`SCALE`]) de uma identidade na altura.
+    pub fn contribution(&self, key: &rz_crypto::PublicKey, height: u64) -> u64 {
+        self.contributions.get(key).map_or(0, |c| {
+            c.at(height, self.params.governance.contribution_half_life_blocks)
+        })
+    }
+
+    /// Comunidades aprovadas por governança (hash do conteúdo publicado).
+    pub fn approved_communities(&self) -> impl Iterator<Item = &Hash32> {
+        self.approved_communities.iter()
+    }
+
+    fn locked_total(&self) -> u128 {
+        self.locks.values().map(|l| l.amount as u128).sum()
+    }
+
+    fn deposits_held(&self) -> u128 {
+        self.proposals
+            .values()
+            .filter(|p| p.status == ProposalStatus::Pending)
+            .map(|p| p.deposit as u128)
+            .sum()
+    }
+
+    fn governance_root(&self) -> Hash32 {
+        let mut e = Encoder::new();
+        e.put(&self.params).u64(self.next_lock_id);
+        e.u64(self.locks.len() as u64);
+        for (id, l) in &self.locks {
+            e.u64(*id).put(l);
+        }
+        e.u64(self.proposals.len() as u64);
+        for p in self.proposals.values() {
+            e.put(p);
+        }
+        e.u64(self.contributions.len() as u64);
+        for (k, c) in &self.contributions {
+            e.put(k).put(c);
+        }
+        e.u64(self.approved_communities.len() as u64);
+        for c in &self.approved_communities {
+            e.put(c);
+        }
+        hash(GOVERNANCE_ROOT, &e.into_bytes())
     }
 
     pub fn account(&self, address: &Address) -> Account {
@@ -173,18 +277,22 @@ impl State {
         e.u64(self.outputs.len() as u64)
             .put(&self.output_acc)
             .u64(self.key_image_log.len() as u64)
-            .put(&self.key_image_acc);
+            .put(&self.key_image_acc)
+            .put(&self.governance_root());
         hash(context::STATE_ROOT, &e.into_bytes())
     }
 
-    /// Invariante monetária: `Σ saldos + oferta_privada = oferta_total`.
+    /// Invariante monetária:
+    /// `Σ saldos + oferta_privada + bloqueado + depósitos_retidos = oferta_total`.
     pub fn check_supply(&self) -> Result<(), StateError> {
         let actual: u128 = self
             .accounts
             .values()
             .map(|a| a.balance as u128)
             .sum::<u128>()
-            + self.shielded_supply as u128;
+            + self.shielded_supply as u128
+            + self.locked_total()
+            + self.deposits_held();
         if actual != self.total_supply as u128 {
             return Err(StateError::SupplyMismatch {
                 expected: self.total_supply,
@@ -225,7 +333,136 @@ impl State {
             self.key_image_log.push(ki);
         }
         self.shielded_supply = effect.shielded_supply;
+        match effect.gov {
+            None => {}
+            Some(GovEffect::Lock(id, lock)) => {
+                self.locks.insert(id, lock);
+                self.next_lock_id = id + 1;
+            }
+            Some(GovEffect::Unlock(id)) => {
+                self.locks.remove(&id);
+            }
+            Some(GovEffect::Propose(p)) => {
+                self.proposals.insert(p.id, *p);
+            }
+            Some(GovEffect::Vote(id, voter, vote)) => {
+                if let Some(p) = self.proposals.get_mut(&id) {
+                    p.votes.insert(voter, vote);
+                }
+            }
+            Some(GovEffect::Slash(key)) => {
+                self.contributions.insert(
+                    key,
+                    Contribution {
+                        points: 0,
+                        updated_at: p.height,
+                    },
+                );
+            }
+        }
         Ok(effect.fee)
+    }
+
+    /// Regras de fim de bloco (`spec/GOVERNANCE.md §1`, §5):
+    ///
+    /// 1. o produtor recebe 1 ponto de contribuição;
+    /// 2. votações que encerram nesta altura são apuradas; o depósito é
+    ///    devolvido (com quórum) ou queimado (sem quórum);
+    /// 3. propostas aprovadas cuja ativação é nesta altura são aplicadas.
+    pub(crate) fn end_block(
+        &mut self,
+        proposer: &rz_crypto::PublicKey,
+        height: u64,
+    ) -> Result<(), StateError> {
+        let hl = self.params.governance.contribution_half_life_blocks;
+        let c = self.contributions.entry(*proposer).or_default();
+        c.points = c
+            .at(height, hl)
+            .checked_add(SCALE)
+            .ok_or(StateError::Overflow)?;
+        c.updated_at = height;
+
+        let closing: Vec<Hash32> = self
+            .proposals
+            .values()
+            .filter(|p| p.status == ProposalStatus::Pending && p.voting_end == height)
+            .map(|p| p.id)
+            .collect();
+        for id in closing {
+            let tally = self.tally(&self.proposals[&id], height);
+            let p = self.proposals.get_mut(&id).ok_or(StateError::Overflow)?;
+            let status = decide(p.category, &tally);
+            p.status = status;
+            p.tally = Some(tally);
+            let (deposit, proposer) = (p.deposit, p.proposer);
+            if status == ProposalStatus::NoQuorum {
+                // Queima: ninguém se beneficia de barrar propostas alheias.
+                self.total_supply = self
+                    .total_supply
+                    .checked_sub(deposit)
+                    .ok_or(StateError::Overflow)?;
+            } else {
+                self.credit_fees(proposer, deposit)?;
+            }
+        }
+
+        let activating: Vec<Hash32> = self
+            .proposals
+            .values()
+            .filter(|p| p.status == ProposalStatus::Approved && p.activation_height == height)
+            .map(|p| p.id)
+            .collect();
+        for id in activating {
+            let p = self.proposals.get_mut(&id).ok_or(StateError::Overflow)?;
+            let mut next = self.params.clone();
+            for change in &p.params {
+                change.apply(&mut next);
+            }
+            if next.validate().is_ok() {
+                p.status = ProposalStatus::Activated;
+                if p.category == Category::Community {
+                    self.approved_communities.insert(p.content_hash);
+                }
+                self.params = next;
+            } else {
+                p.status = ProposalStatus::ActivationFailed;
+            }
+        }
+        Ok(())
+    }
+
+    /// Apuração bicameral determinística de uma proposta.
+    fn tally(&self, p: &Proposal, height: u64) -> Tally {
+        let g = &self.params.governance;
+        let mut econ_by_owner: BTreeMap<Address, u128> = BTreeMap::new();
+        let mut econ = ChamberTally::default();
+        for l in self.locks.values() {
+            let w = lock_weight(l, p, g);
+            if w > 0 {
+                *econ_by_owner.entry(l.owner).or_default() += w;
+                econ.eligible += w;
+            }
+        }
+        let mut contrib = ChamberTally::default();
+        for c in self.contributions.values() {
+            contrib.eligible += c.at(height, g.contribution_half_life_blocks) as u128;
+        }
+        for (voter, vote) in &p.votes {
+            let we = econ_by_owner.get(voter).copied().unwrap_or(0);
+            let wc = self.contribution(&vote.key, height) as u128;
+            for (chamber, w) in [(&mut econ, we), (&mut contrib, wc)] {
+                match vote.choice {
+                    crate::governance::Choice::Yes => chamber.yes += w,
+                    crate::governance::Choice::No => chamber.no += w,
+                    crate::governance::Choice::Abstain => chamber.abstain += w,
+                }
+                chamber.largest_voter = chamber.largest_voter.max(w);
+            }
+        }
+        Tally {
+            economic: econ,
+            contribution: contrib,
+        }
     }
 
     /// Credita as taxas coletadas no bloco ao produtor (ADR-0005).
@@ -248,7 +485,7 @@ impl State {
     }
 
     fn plan_account(&self, tx: &AccountTx, p: &ExecParams<'_>) -> Result<Effect, TxError> {
-        tx.check_stateless(p.min_fee)?;
+        tx.check_stateless(self.params.min_fee)?;
         tx.verify_signature(p.network_id)?;
 
         let sender = tx.body.sender_address();
@@ -260,7 +497,11 @@ impl State {
             });
         }
         let amount = match &tx.body.kind {
-            TxKind::Transfer { amount, .. } | TxKind::Shield { amount, .. } => *amount,
+            TxKind::Transfer { amount, .. }
+            | TxKind::Shield { amount, .. }
+            | TxKind::LockStake { amount, .. } => *amount,
+            TxKind::Propose { deposit, .. } => *deposit,
+            TxKind::Unlock { .. } | TxKind::Vote { .. } | TxKind::ReportEquivocation { .. } => 0,
         };
         let required = amount.checked_add(tx.body.fee).ok_or(TxError::Overflow)?;
         if sender_acc.balance < required {
@@ -278,7 +519,9 @@ impl State {
             spent: Vec::new(),
             shielded_supply: self.shielded_supply,
             fee: tx.body.fee,
+            gov: None,
         };
+        let g = &self.params.governance;
 
         match &tx.body.kind {
             TxKind::Transfer { to, amount } => {
@@ -317,6 +560,126 @@ impl State {
                 effect.new_outputs = outputs.iter().map(|o| o.data.clone()).collect();
                 effect.accounts.push((sender, sender_acc));
             }
+            TxKind::LockStake {
+                amount,
+                unlock_height,
+            } => {
+                let min = p.height.saturating_add(g.lock_min_blocks);
+                let max = p.height.saturating_add(g.lock_max_blocks);
+                if *unlock_height < min || *unlock_height > max {
+                    return Err(TxError::Governance("duração do bloqueio fora dos limites"));
+                }
+                effect.gov = Some(GovEffect::Lock(
+                    self.next_lock_id,
+                    Lock {
+                        owner: sender,
+                        amount: *amount,
+                        locked_at: p.height,
+                        unlock_height: *unlock_height,
+                    },
+                ));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::Unlock { lock_id } => {
+                let lock = self
+                    .locks
+                    .get(lock_id)
+                    .ok_or(TxError::Governance("bloqueio inexistente"))?;
+                if lock.owner != sender {
+                    return Err(TxError::Governance("bloqueio pertence a outra conta"));
+                }
+                if p.height < lock.unlock_height {
+                    return Err(TxError::Governance("bloqueio ainda não venceu"));
+                }
+                sender_acc.balance = sender_acc
+                    .balance
+                    .checked_add(lock.amount)
+                    .ok_or(TxError::Overflow)?;
+                effect.gov = Some(GovEffect::Unlock(*lock_id));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::Propose {
+                category,
+                content_hash,
+                params,
+                release_id,
+                deposit,
+            } => {
+                if *deposit < g.deposit {
+                    return Err(TxError::DepositTooLow {
+                        deposit: *deposit,
+                        min: g.deposit,
+                    });
+                }
+                check_proposal_shape(*category, params, &self.params)
+                    .map_err(TxError::Governance)?;
+                let id = tx.id().0;
+                if self.proposals.contains_key(&id) {
+                    return Err(TxError::Governance("proposta já existe"));
+                }
+                let voting_start = p.height.saturating_add(g.analysis_blocks);
+                let voting_end = voting_start.saturating_add(g.voting_blocks);
+                let delay = match category {
+                    Category::Ordinary => g.ordinary_delay_blocks,
+                    Category::Community => 0,
+                    Category::Constitutional => g.constitutional_delay_blocks,
+                };
+                effect.gov = Some(GovEffect::Propose(Box::new(Proposal {
+                    id,
+                    proposer: sender,
+                    category: *category,
+                    content_hash: *content_hash,
+                    params: params.clone(),
+                    release_id: *release_id,
+                    deposit: *deposit,
+                    submitted_at: p.height,
+                    voting_start,
+                    voting_end,
+                    activation_height: voting_end.saturating_add(delay),
+                    status: ProposalStatus::Pending,
+                    votes: BTreeMap::new(),
+                    tally: None,
+                })));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::Vote { proposal, choice } => {
+                let prop = self
+                    .proposals
+                    .get(proposal)
+                    .ok_or(TxError::Governance("proposta inexistente"))?;
+                if prop.status != ProposalStatus::Pending
+                    || p.height < prop.voting_start
+                    || p.height >= prop.voting_end
+                {
+                    return Err(TxError::Governance("fora do período de votação"));
+                }
+                effect.gov = Some(GovEffect::Vote(
+                    *proposal,
+                    sender,
+                    Vote {
+                        key: tx.body.sender,
+                        choice: *choice,
+                    },
+                ));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::ReportEquivocation { first, second } => {
+                let (a, b) = (&first.header, &second.header);
+                if a.proposer != b.proposer {
+                    return Err(TxError::InvalidEvidence("produtores diferentes"));
+                }
+                if a.slot != b.slot {
+                    return Err(TxError::InvalidEvidence("slots diferentes"));
+                }
+                if a.id() == b.id() {
+                    return Err(TxError::InvalidEvidence("cabeçalhos idênticos"));
+                }
+                if !first.verify(p.network_id) || !second.verify(p.network_id) {
+                    return Err(TxError::InvalidEvidence("assinatura inválida"));
+                }
+                effect.gov = Some(GovEffect::Slash(a.proposer));
+                effect.accounts.push((sender, sender_acc));
+            }
         }
         Ok(effect)
     }
@@ -326,10 +689,10 @@ impl State {
         if tx.version != PRIVATE_TX_VERSION {
             return Err(TxError::UnsupportedVersion(tx.version));
         }
-        if tx.fee < p.min_fee {
+        if tx.fee < self.params.min_fee {
             return Err(TxError::FeeTooLow {
                 fee: tx.fee,
-                min: p.min_fee,
+                min: self.params.min_fee,
             });
         }
         if tx.inputs.is_empty() {
@@ -407,6 +770,7 @@ impl State {
             spent: tx.inputs.iter().map(|i| i.key_image).collect(),
             shielded_supply,
             fee: tx.fee,
+            gov: None,
         })
     }
 }

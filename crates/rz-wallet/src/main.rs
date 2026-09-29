@@ -11,12 +11,16 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use rz_codec::Decode;
+use rz_core::governance::{Category, Choice, ParamChange};
+use rz_core::TxKind;
 use rz_core::{format_zero, parse_zero, Genesis};
+use rz_crypto::Hash32;
 use rz_crypto::{keyfile, Address, SecretKey};
 use rz_p2p::{Client, Message};
 use rz_privacy::keys::ShieldedAddress;
 use rz_wallet::{
-    account, connect, private_view, send_private, send_transparent, shield, Destination, Keys,
+    account, connect, governance, private_view, send_account, send_private, send_transparent,
+    shield, Destination, Keys, PROPOSAL_CONTENT,
 };
 
 const USAGE: &str = "\
@@ -30,6 +34,16 @@ USO:
   zero-wallet send    --genesis FILE --node ADDR --key FILE --to (zs…|HEX) --amount ZERO [--fee ZERO]
   zero-wallet unshield --genesis FILE --node ADDR --key FILE --to HEX --amount ZERO [--fee ZERO]
   zero-wallet status  --genesis FILE --node ADDR
+
+Governança (ADR-0008) — operações transparentes, por natureza públicas:
+  zero-wallet governance --genesis FILE --node ADDR [--key FILE]
+  zero-wallet lock    --genesis FILE --node ADDR --key FILE --amount ZERO --blocks N
+  zero-wallet unlock  --genesis FILE --node ADDR --key FILE --id N
+  zero-wallet propose --genesis FILE --node ADDR --key FILE --category (ordinaria|comunidade|constitucional)
+                      (--content ARQUIVO | --content-hash HEX) [--params nome=valor,…] [--release HEX]
+  zero-wallet vote    --genesis FILE --node ADDR --key FILE --proposal HEX --choice (sim|nao|abstencao)
+
+Validadores votam na câmara de contribuição usando a própria chave de validador.
 
 Endereços:
   zs…  endereço PRIVADO (padrão recomendado): remetente, destinatário e valor ocultos
@@ -88,6 +102,11 @@ fn main() -> ExitCode {
         "send" => send(&args),
         "unshield" => unshield(&args),
         "status" => status(&args),
+        "governance" => cmd_governance(&args),
+        "lock" => cmd_lock(&args),
+        "unlock" => cmd_unlock(&args),
+        "propose" => cmd_propose(&args),
+        "vote" => cmd_vote(&args),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             Ok(())
@@ -250,5 +269,212 @@ fn status(args: &Args) -> Result<(), String> {
     println!("finalizado:  {}", s.2);
     println!("pares:       {}", s.3);
     println!("mempool:     {}", s.4);
+    Ok(())
+}
+
+fn cmd_governance(args: &Args) -> Result<(), String> {
+    let keys = match args.get("key") {
+        Some(_) => Some(load_keys(args)?),
+        None => None,
+    };
+    let (mut client, _) = open(args)?;
+    let v = governance(&mut client, keys.as_ref().map(Keys::address))?;
+    let g = &v.params.governance;
+    println!("altura: {}", v.height);
+    println!("parâmetros vigentes:");
+    println!(
+        "  min_fee                       {} ZERO",
+        format_zero(v.params.min_fee)
+    );
+    println!("  max_block_txs                 {}", v.params.max_block_txs);
+    println!(
+        "  gov_deposit                   {} ZERO",
+        format_zero(g.deposit)
+    );
+    println!("  analysis_blocks               {}", g.analysis_blocks);
+    println!("  voting_blocks                 {}", g.voting_blocks);
+    println!(
+        "  ordinary_delay_blocks         {}",
+        g.ordinary_delay_blocks
+    );
+    println!(
+        "  constitutional_delay_blocks   {}",
+        g.constitutional_delay_blocks
+    );
+    println!("  lock_min_blocks               {}", g.lock_min_blocks);
+    println!("  lock_max_blocks               {}", g.lock_max_blocks);
+    println!(
+        "  contribution_half_life_blocks {}",
+        g.contribution_half_life_blocks
+    );
+    println!("propostas ({}):", v.proposals.len());
+    for p in &v.proposals {
+        let phase = if p.status != rz_core::ProposalStatus::Pending {
+            p.status.name().to_string()
+        } else if v.height < p.voting_start {
+            format!("em análise até {}", p.voting_start)
+        } else {
+            format!("em votação até {}", p.voting_end)
+        };
+        println!("  {} [{}] {}", p.id, p.category.name(), phase);
+        for c in &p.params {
+            println!("      {} = {}", c.name(), c.value());
+        }
+        println!(
+            "      conteúdo {} | ativação na altura {}",
+            p.content_hash, p.activation_height
+        );
+        if let Some(t) = &p.tally {
+            println!(
+                "      econômica  sim {} não {} abst {} de {}",
+                t.economic.yes, t.economic.no, t.economic.abstain, t.economic.eligible
+            );
+            println!(
+                "      contribuição sim {} não {} abst {} de {}",
+                t.contribution.yes,
+                t.contribution.no,
+                t.contribution.abstain,
+                t.contribution.eligible
+            );
+        }
+    }
+    if keys.is_some() {
+        println!("seus bloqueios ({}):", v.locks.len());
+        for l in &v.locks {
+            println!(
+                "  #{} {} ZERO, desbloqueio na altura {}",
+                l.id,
+                format_zero(l.lock.amount),
+                l.lock.unlock_height
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_lock(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let amount = args.amount("amount")?;
+    let blocks: u64 = args
+        .req("blocks")?
+        .parse()
+        .map_err(|_| "--blocks: número inválido")?;
+    let (mut client, genesis) = open(args)?;
+    let (_, _, height) = account(&mut client, keys.address())?;
+    let fee = fee(args, &genesis)?;
+    // A transação entra, no mínimo, na altura seguinte.
+    let unlock_height = height + 1 + blocks;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::LockStake {
+            amount,
+            unlock_height,
+        },
+        fee,
+    )?;
+    eprintln!("aviso: bloqueios de governança são públicos (valor e conta)");
+    println!(
+        "bloqueando {} ZERO até a altura {unlock_height}",
+        format_zero(amount)
+    );
+    println!("transação: {id} — aceita, aguardando inclusão em bloco");
+    Ok(())
+}
+
+fn cmd_unlock(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let lock_id: u64 = args
+        .req("id")?
+        .parse()
+        .map_err(|_| "--id: número inválido")?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::Unlock { lock_id },
+        fee,
+    )?;
+    println!("transação: {id} — aceita, aguardando inclusão em bloco");
+    Ok(())
+}
+
+fn cmd_propose(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let category = match args.req("category")? {
+        "ordinaria" | "ordinária" => Category::Ordinary,
+        "comunidade" => Category::Community,
+        "constitucional" => Category::Constitutional,
+        other => return Err(format!("--category: categoria desconhecida '{other}'")),
+    };
+    let content_hash = match (args.get("content"), args.get("content-hash")) {
+        (Some(path), _) => {
+            let bytes = fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+            rz_crypto::hash(PROPOSAL_CONTENT, &bytes)
+        }
+        (None, Some(h)) => Hash32::from_hex(h).ok_or("--content-hash: hash inválido")?,
+        (None, None) => return Err("informe --content ou --content-hash".into()),
+    };
+    let mut params = Vec::new();
+    if let Some(list) = args.get("params") {
+        for item in list.split(',').filter(|s| !s.is_empty()) {
+            let (name, value) = item
+                .split_once('=')
+                .ok_or_else(|| format!("--params: esperado nome=valor em '{item}'"))?;
+            params.push(
+                ParamChange::parse(name.trim(), value.trim())
+                    .ok_or_else(|| format!("--params: parâmetro inválido '{item}'"))?,
+            );
+        }
+    }
+    let release_id = match args.get("release") {
+        Some(h) => Some(Hash32::from_hex(h).ok_or("--release: hash inválido")?),
+        None => None,
+    };
+    let (mut client, genesis) = open(args)?;
+    let deposit = governance(&mut client, None)?.params.governance.deposit;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::Propose {
+            category,
+            content_hash,
+            params,
+            release_id,
+            deposit,
+        },
+        fee,
+    )?;
+    println!(
+        "proposta {} [{}] — depósito de {} ZERO",
+        id.0,
+        category.name(),
+        format_zero(deposit)
+    );
+    println!("conteúdo: {content_hash}");
+    println!("o depósito é devolvido se a proposta atingir quórum nas duas câmaras");
+    Ok(())
+}
+
+fn cmd_vote(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let proposal = Hash32::from_hex(args.req("proposal")?).ok_or("--proposal: id inválido")?;
+    let choice = Choice::parse(args.req("choice")?).ok_or("--choice: use sim, nao ou abstencao")?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::Vote { proposal, choice },
+        fee,
+    )?;
+    eprintln!("aviso: votos são públicos nesta versão (ADR-0008)");
+    println!("voto registrado: {id} — aguardando inclusão em bloco");
     Ok(())
 }
