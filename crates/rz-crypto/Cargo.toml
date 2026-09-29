@@ -3,7 +3,6 @@ name = "rz-crypto"
 description = "Primitivas criptográficas da Rede Zero (spec/CRYPTOGRAPHY.md)"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 repository.workspace = true
 
 [dependencies]

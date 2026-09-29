@@ -3,7 +3,6 @@ name = "rz-chain"
 description = "Consenso, escolha de fork, finalidade e mempool da Rede Zero (DEVNET)"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 repository.workspace = true
 
 [dependencies]

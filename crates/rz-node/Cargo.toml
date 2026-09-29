@@ -3,7 +3,6 @@ name = "rz-node"
 description = "Node da DEVNET da Rede Zero"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 repository.workspace = true
 
 [dependencies]
