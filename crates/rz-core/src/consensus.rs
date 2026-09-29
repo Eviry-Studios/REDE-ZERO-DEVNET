@@ -461,6 +461,79 @@ impl Decode for Proposal {
     }
 }
 
+/// Conteúdo assinado de uma proposta, sem o bloco: evidência compacta de
+/// equivocação do proponente (`ReportDoubleProposal`, `docs/AUDIT.md`
+/// RZ-IR-07).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedProposal {
+    pub height: u64,
+    pub round: u32,
+    pub pol_round: Option<u32>,
+    pub block: BlockId,
+    pub proposer: PublicKey,
+    pub signature: Signature,
+}
+
+impl SignedProposal {
+    pub fn verify(&self, network_id: &str) -> bool {
+        self.proposer
+            .verify(
+                context::PROPOSAL,
+                network_id,
+                &proposal_payload(self.height, self.round, self.pol_round, &self.block),
+                &self.signature,
+            )
+            .is_ok()
+    }
+
+    /// Mesmo proponente, altura e rodada, com conteúdo diferente: o
+    /// proponente de uma rodada assina exatamente uma proposta.
+    pub fn conflicts_with(&self, other: &SignedProposal) -> bool {
+        self.proposer == other.proposer
+            && self.height == other.height
+            && self.round == other.round
+            && (self.block != other.block || self.pol_round != other.pol_round)
+    }
+}
+
+impl Proposal {
+    /// Conteúdo assinado (sem o bloco), para evidência.
+    pub fn signed(&self) -> SignedProposal {
+        SignedProposal {
+            height: self.height,
+            round: self.round,
+            pol_round: self.pol_round,
+            block: self.block.id(),
+            proposer: self.proposer,
+            signature: self.signature,
+        }
+    }
+}
+
+impl Encode for SignedProposal {
+    fn encode(&self, e: &mut Encoder) {
+        e.u64(self.height)
+            .u32(self.round)
+            .option(&self.pol_round)
+            .put(&self.block)
+            .put(&self.proposer)
+            .put(&self.signature);
+    }
+}
+
+impl Decode for SignedProposal {
+    fn decode(d: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        Ok(Self {
+            height: d.u64()?,
+            round: d.u32()?,
+            pol_round: d.option()?,
+            block: d.get()?,
+            proposer: d.get()?,
+            signature: d.get()?,
+        })
+    }
+}
+
 // ------------------------------------------------------------- commit
 
 #[derive(Clone, Debug, PartialEq, Eq)]

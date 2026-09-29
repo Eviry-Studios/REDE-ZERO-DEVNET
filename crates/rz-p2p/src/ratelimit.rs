@@ -20,6 +20,14 @@ impl TokenBucket {
         }
     }
 
+    /// Altera capacidade e recarga (ex.: quando o conjunto de validadores
+    /// muda de tamanho), preservando o saldo até a nova capacidade.
+    pub fn set_rate(&mut self, capacity: u32, refill_per_sec: u32) {
+        self.capacity = capacity.into();
+        self.refill_per_sec = refill_per_sec.into();
+        self.tokens = self.tokens.min(self.capacity);
+    }
+
     /// Consome `cost` fichas; retorna `false` se não houver saldo.
     pub fn try_take(&mut self, cost: u32) -> bool {
         self.try_take_at(cost, Instant::now())

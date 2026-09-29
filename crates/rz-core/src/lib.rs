@@ -19,7 +19,8 @@ pub mod tx;
 pub use amount::{format_zero, parse_zero, UNITS_PER_ZERO};
 pub use block::{apply_block, Block, BlockError, BlockHeader, BlockId, SignedHeader};
 pub use consensus::{
-    Commit, CommittedBlock, ConsensusParams, Proposal, Validator, ValidatorSet, Vote, VoteType,
+    Commit, CommittedBlock, ConsensusParams, Proposal, SignedProposal, Validator, ValidatorSet,
+    Vote, VoteType,
 };
 pub use genesis::{Allocation, Genesis, GenesisError, GenesisValidator, NetworkKind};
 pub use governance::{

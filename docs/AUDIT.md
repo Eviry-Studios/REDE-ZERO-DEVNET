@@ -1,6 +1,6 @@
 # AUDIT.md — Preparação para auditoria independente
 
-**Versão:** 0.1.0
+**Versão:** 0.2.0
 **Estado:** pronto para auditoria da DEVNET; nenhuma auditoria externa foi realizada
 **Relacionamento:** `THREAT_MODEL.md §11` (aceitações temporárias), ADR-0009, ADR-0011, ADR-0012, `SECURITY.md`
 
@@ -79,6 +79,7 @@ Cada invariante lista onde é aplicada e os testes que a exercitam. Uma violaç�
 | INV-10 | A transição de estado é determinística | sem relógio, aleatoriedade ou ordem indefinida | AT-DET-* |
 | INV-11 | Mensagens de consenso hostis não crescem a memória sem limite nem são amplificadas | `FUTURE_ROUND_WINDOW`, `keep_future_vote`, fila limitada | `bft_tests` (limites de memória) |
 | INV-12 | Todo bloco válido cabe num quadro P2P | `MAX_BLOCK_TX_BYTES` | `oversized_block_rejected` |
+| INV-13 | Com < 1/3 do poder bizantino, a rede volta a finalizar blocos após a estabilização | `bft.rs` (votos conflitantes, gossip da prova de trava) | `randomized_adversarial_*` |
 
 ## 5. Como reproduzir
 
@@ -91,6 +92,9 @@ cargo run --locked -p rz-crypto --example vectors     # vetores publicados
 
 # Robustez por mutação com mais iterações e outras sementes
 RZ_FUZZ_ITERS=20000 RZ_FUZZ_SEED=7 cargo test --release -p rz-p2p --test robustness
+
+# Simulação adversarial do consenso com mais sementes
+RZ_BFT_SEEDS=400 cargo test --release -p rz-chain randomized
 
 # DEVNET local com 4 validadores (tolera 1 falha)
 scripts/devnet.sh 4
@@ -128,18 +132,20 @@ Feita antes da auditoria, com foco em negação de serviço, aritmética com ent
 | RZ-IR-03 | Média | `bft.rs` | Um validador bizantino podia assinar votos e propostas para rodadas arbitrárias; cada um ficava em memória e era repassado. | Propostas até `rodada + FUTURE_ROUND_WINDOW`; para rodadas futuras, só o voto mais alto de cada validador e tipo (preserva o salto de rodada com > 1/3) |
 | RZ-IR-04 | Média | `node.rs` | A deduplicação marcava mensagens como vistas antes de o consenso aceitá-las. Uma mensagem descartada nunca era reconsiderada, nem quando retransmitida. A fila para a thread de consenso não tinha limite. | Marcadas só quando aceitas; fila limitada (8 192) com descarte; altura avança também por verificação periódica da cadeia |
 | RZ-IR-05 | Média | `block.rs`, `mempool.rs` | Sem limite de bytes por bloco: um bloco com muitas transações privadas passava de 4 MiB e não podia ser proposto nem sincronizado. | Regra de consenso `MAX_BLOCK_TX_BYTES` (2 MiB); a seleção do mempool respeita o limite |
+| RZ-IR-06 | Média | `rz-node` | O limite de taxa por conexão (400/200 msg/s) não escalava com o número de validadores: Nodes honestos podiam ser banidos por repassar votos. | Balde próprio para propostas e votos, `max(50, 8·n)`/s e rajada `max(200, 32·n)`; excedente descartado antes da verificação, **sem banimento** (`consensus_flood_dropped_without_ban`) |
+| RZ-IR-07 | Baixa | `bft.rs`, `tx.rs` | Equivocação de proposta era reportada como dois cabeçalhos; numa re-proposta o bloco é de outro proponente, e a evidência não era aceita. | `ReportDoubleProposal` (0x23) com dois `SignedProposal` compactos; mesmo identificador de infração da evidência de cabeçalho (sem punição dupla) |
+| RZ-IR-13 | **Alta** | `bft.rs` | **Vivacidade:** o voto conflitante de um bizantino era descartado. Enviando votos diferentes a cada metade da rede, um único bizantino impedia que metade dos honestos completasse a prova de > 2/3 de um bloco travado, e a rede parava para sempre, mesmo após a estabilização. Encontrado pela simulação adversarial (RZ-IR-12). | Até dois votos distintos por validador, rodada e tipo, cada um contando para o seu bloco (a contagem "qualquer voto" conta o validador uma vez). Segurança preservada pela interseção de quóruns |
+| RZ-IR-14 | Média | `bft.rs` | **Vivacidade:** a retransmissão só reenviava votos da rodada atual. Pré-votos da rodada de trava perdidos antes da estabilização nunca eram recuperados, e a re-proposta com `pol_round` não era aceita. | A retransmissão inclui os pré-votos que provam o bloco válido (≤ n votos), como o gossip do Tendermint |
 
 ### 7.2 Achados abertos ou aceitos
 
 | ID | Severidade | Componente | Achado | Situação |
 | --- | --- | --- | --- | --- |
-| RZ-IR-06 | Média | `rz-p2p` | O limite de taxa por conexão (balde de 400, 200 msg/s) não escala com o número de validadores. Com ~100 validadores, votos repassados se aproximam do limite, e Nodes honestos podem ser penalizados. | **Aberto** — dimensionar por tipo de mensagem antes da TESTNET |
-| RZ-IR-07 | Baixa | `bft.rs`, `tx.rs` | A equivocação de proposta é reportada como dois cabeçalhos de bloco. Numa re-proposta (`pol_round`), o bloco é assinado pelo proponente original, então duas propostas conflitantes do mesmo proponente de rodada podem não formar evidência aceita por `ReportEquivocation`. | **Aberto** — evidência própria com duas `Proposal` assinadas (`h, r, pol_round, block_id`) |
-| RZ-IR-08 | Média | Consenso | Ataque de longo alcance com chaves já desvinculadas: um Node novo não distingue histórico alternativo. | **Aceito** na DEVNET (THR-CON-001) — checkpoints verificáveis A DEFINIR |
+| RZ-IR-08 | Média | Consenso | Ataque de longo alcance com chaves já desvinculadas: um Node novo não distingue histórico alternativo. | **Mitigado** — pontos de verificação do operador (`--checkpoint ALTURA:ID`, subjetividade fraca): o Node recusa cadeias divergentes. O protocolo não embute checkpoints (sem autoridade central, REQ-005); a distribuição social deles fica com as Comunidades |
 | RZ-IR-09 | Baixa | Consenso | Evidência só é punível enquanto houver vínculo ou desvinculação pendente. | **Por projeto** — o período de desvinculação (≈ 21 dias) define a janela |
 | RZ-IR-10 | Média | Governança, consenso | Votos, bloqueios e vínculos são públicos e ligados a contas transparentes. | **Aceito** (ADR-0008, ADR-0012) — votação privada é pesquisa futura |
 | RZ-IR-11 | Informativa | `rz-crypto/keyfile` | Chaves em arquivo sem cifragem (permissão `0600`). | **Aceito** na DEVNET |
-| RZ-IR-12 | Informativa | Consenso | A máquina de estados foi verificada por simulação, não por prova formal nem verificação de modelo. | **Aberto** — modelo TLA+/Apalache recomendado |
+| RZ-IR-12 | Informativa | Consenso | A máquina de estados não tem prova formal nem verificação de modelo. | **Parcial** — simulação adversarial aleatória (rede assíncrona com reordenação e perdas até a estabilização; bizantinos que equivocam propostas e votos para metades da rede). Com 800 cenários, segurança e vivacidade pós-estabilização se mantiveram; a simulação encontrou RZ-IR-13 e RZ-IR-14. Modelo TLA+/Apalache ainda recomendado |
 
 ## 8. Perguntas para a auditoria
 
@@ -147,7 +153,7 @@ Feita antes da auditoria, com foco em negação de serviço, aritmética com ent
 2. **Oferta privada:** existe sequência de `Shield`, transferências privadas e retiradas que crie valor ou deixe `shielded_supply` inconsistente?
 3. **Bulletproofs:** os geradores e a transcrição (`merlin`) estão separados por domínio do resto do protocolo? Há reutilização de geradores Pedersen entre compromissos e provas que permita falsificação?
 4. **Canal cifrado:** o handshake (responder autenticado, iniciador anônimo) resiste a interceptação quando a identidade é fixada (`--node-id`)? A contagem de nonces e o preenchimento de 256 bytes estão corretos?
-5. **Zero-BFT:** as regras de trava/`pol_round` em `bft.rs` preservam segurança com a janela de rodadas futuras (RZ-IR-03)? A recomputação do conjunto na época e a punição imediata podem ser combinadas para quebrar INV-6?
+5. **Zero-BFT:** as regras de trava/`pol_round` em `bft.rs` preservam segurança com a janela de rodadas futuras (RZ-IR-03) e com a contagem de votos conflitantes (RZ-IR-13)? A recomputação do conjunto na época e a punição imediata podem ser combinadas para quebrar INV-6?
 6. **Determinismo:** algum caminho da transição de estado depende de ordem de `HashMap` ou de arredondamento?
 
 ## 9. Contato

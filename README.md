@@ -71,6 +71,13 @@ target/release/rede-zero-node run --genesis $G --data devnet-data/node-extra \
 $W unbond --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key --amount 5000
 ```
 
+Para um Node novo se proteger de histórico alternativo forjado com chaves antigas (ataque de longo alcance), fixe pontos de verificação obtidos de fontes em que confia:
+
+```bash
+target/release/rede-zero-node run --genesis $G --data devnet-data/node-novo \
+    --listen 127.0.0.1:7120 --peer 127.0.0.1:7100 --checkpoint ALTURA:ID_DO_BLOCO
+```
+
 Todo bloco é final assim que recebe pré-compromissos de mais de 2/3 do poder de voto. Não há reorganização. Votar duas vezes na mesma rodada queima parte do vínculo e exclui o validador (`spec/CONSENSUS.md §6`).
 
 ### Privacidade do seu IP

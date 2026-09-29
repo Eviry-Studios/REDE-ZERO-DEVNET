@@ -454,7 +454,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 * encadeamento criptográfico (`SPEC §16`);
 * finalidade explícita e imediata: todo bloco aceito carrega certificado de > 2/3 do poder de voto (ADR-0012, `spec/CONSENSUS.md §4.3`), e não há reorganização;
-* checkpoints verificáveis contra ataque de longo alcance com chaves desvinculadas (**A DEFINIR**);
+* pontos de verificação do operador contra ataque de longo alcance com chaves desvinculadas (`--checkpoint`, subjetividade fraca; sem checkpoints embutidos no protocolo, REQ-005). A distribuição social desses pontos pelas Comunidades fica **A DEFINIR**;
 * testes `AT-BLOCK-003`, `AT-BLOCK-004`.
 
 ### THR-CON-002 — Captura do consenso
@@ -546,7 +546,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 * mensagens de consenso: só de validadores, rodadas limitadas, repasse só após aceitação, fila limitada (`docs/AUDIT.md` RZ-IR-02..04);
 * testes `AT-P2P-004`, `AT-P2P-005`, limites de memória em `rz-chain bft_tests`.
 
-**Pendente:** dimensionar o limite de taxa por tipo de mensagem conforme o número de validadores (RZ-IR-06).
+* balde de consenso por conexão proporcional ao número de validadores; excedente descartado sem banir pares honestos (RZ-IR-06).
 
 ### THR-P2P-003 — Mensagens malformadas
 
@@ -893,7 +893,8 @@ Classificação de severidade (inicial, sujeita a revisão):
 | THR-TX-005 | REQ-004, REQ-016 | SPEC §68 | AT-DET-* |
 | THR-CON-001 | REQ-016 | SPEC §16 | AT-BLOCK-003/004 |
 | THR-CON-002 | REQ-005, REQ-015 | SPEC §19, §20, spec/CONSENSUS.md | AT-CON-*, rz-chain bft_tests |
-| THR-CON-007 | REQ-015 | SPEC §22, spec/CONSENSUS.md §1 | rz-chain partition_halts_then_recovers |
+| THR-CON-007 | REQ-015 | SPEC §22, spec/CONSENSUS.md §1 | rz-chain partition_halts_then_recovers, randomized_adversarial_* |
+| THR-CON-001 | REQ-016 | spec/CONSENSUS.md §9 | rz-chain checkpoint_rejects_alternative_history |
 | THR-P2P-001 | REQ-017 | SPEC §29 | — (a definir) |
 | THR-P2P-002 | REQ-053 | SPEC §26 | AT-P2P-004/005, rz-chain bft_tests (limites) |
 | THR-P2P-003 | REQ-053 | SPEC §8, spec/ENCODING.md | AT-P2P-003, rz-p2p robustness |
@@ -902,7 +903,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 | THR-PRIV-002 | REQ-026 | SPEC §30, spec/P2P.md §4 | rz-node dandelion_stem_then_embargo_fluff |
 | THR-GOV-001 | REQ-044 | SPEC §47, spec/GOVERNANCE.md | rz-core governance_tests (neutralidade a Sybil), rz-wallet governance_devnet |
 | THR-P2P-005 | — | SPEC §30, spec/P2P.md §1.1 | rz-p2p secure::tests |
-| THR-CON-004 | REQ-049 | SPEC §49, spec/CONSENSUS.md §6 | rz-core equivocation_report_slashes_contribution, double_vote_slashes_bond_and_jails |
+| THR-CON-004 | REQ-049 | SPEC §49, spec/CONSENSUS.md §6 | rz-core equivocation_report_slashes_contribution, double_vote_slashes_bond_and_jails, double_proposal_slashes_even_for_reproposal |
 | THR-POOL-001 | REQ-037, REQ-038 | SPEC §39, §40 | AT-POOL-002 |
 | THR-DEF-001 | REQ-058, REQ-059 | SPEC §53, §54 | — (a definir) |
 | THR-DEV-001 | REQ-084 | — | CI |
@@ -927,7 +928,7 @@ Ameaças aceitas **temporariamente** na DEVNET, com registro explícito:
 
 | Ameaça | Aceitação temporária | Condição para sair da DEVNET |
 | --- | --- | --- |
-| THR-CON-001/002 | Zero-BFT (ADR-0012) implementado **sem auditoria** nem prova formal; sem checkpoints contra longo alcance; poder inicial definido no Genesis | Auditoria independente; checkpoints verificáveis; distribuição inicial avaliada |
+| THR-CON-001/002 | Zero-BFT (ADR-0012) implementado **sem auditoria** nem prova formal (verificado por simulação adversarial); checkpoints só por configuração do operador; poder inicial definido no Genesis | Auditoria independente; distribuição social de checkpoints; distribuição inicial avaliada |
 | THR-PRIV-001 | RingCT implementado **sem auditoria**; anel de 11 | Auditoria independente da implementação (ADR-0009) |
 | THR-PRIV-002 | Dandelion++, canal cifrado e Tor opcional **não auditados** | Auditoria do canal; avaliação de tráfego de cobertura (ADR-0011) |
 | THR-P2P-005 | Canal cifrado sem fixação obrigatória de identidade | Distribuição verificável de identidades de Nodes ou uso de serviços onion |

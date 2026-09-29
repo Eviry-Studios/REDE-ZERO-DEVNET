@@ -6,6 +6,7 @@
 //! (`SPEC §21`), e dados apresentados por outro Node só são aceitos se
 //! verificáveis (AC-CON-002).
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -28,6 +29,10 @@ pub enum ChainError {
     WrongProposer,
     Commit(CommitError),
     Block(BlockError),
+    /// O bloco diverge de um ponto de verificação configurado pelo operador.
+    Checkpoint {
+        height: u64,
+    },
 }
 
 impl fmt::Display for ChainError {
@@ -44,6 +49,12 @@ impl fmt::Display for ChainError {
             Self::WrongProposer => write!(f, "proponente incorreto"),
             Self::Commit(e) => write!(f, "certificado: {e}"),
             Self::Block(e) => write!(f, "bloco: {e}"),
+            Self::Checkpoint { height } => {
+                write!(
+                    f,
+                    "bloco diverge do ponto de verificação na altura {height}"
+                )
+            }
         }
     }
 }
@@ -56,6 +67,11 @@ pub struct Chain {
     genesis_id: BlockId,
     blocks: Vec<CommittedBlock>,
     state: Arc<State>,
+    /// Pontos de verificação (altura → bloco), defesa contra ataque de longo
+    /// alcance com chaves já desvinculadas (THR-CON-001, `docs/AUDIT.md`
+    /// RZ-IR-08). Fornecidos pelo operador a partir de fontes em que confia;
+    /// o protocolo não embute nenhum.
+    checkpoints: BTreeMap<u64, BlockId>,
 }
 
 impl Chain {
@@ -66,7 +82,26 @@ impl Chain {
             genesis,
             blocks: Vec::new(),
             state: Arc::new(state),
+            checkpoints: BTreeMap::new(),
         })
+    }
+
+    /// Define pontos de verificação. Falha se a cadeia local já divergir de
+    /// algum deles.
+    pub fn set_checkpoints(
+        &mut self,
+        checkpoints: impl IntoIterator<Item = (u64, BlockId)>,
+    ) -> Result<(), ChainError> {
+        let checkpoints: BTreeMap<u64, BlockId> = checkpoints.into_iter().collect();
+        for (h, id) in &checkpoints {
+            if let Some(b) = self.block_at(*h) {
+                if b.id() != *id {
+                    return Err(ChainError::Checkpoint { height: *h });
+                }
+            }
+        }
+        self.checkpoints = checkpoints;
+        Ok(())
     }
 
     pub fn genesis(&self) -> &Genesis {
@@ -131,6 +166,10 @@ impl Chain {
     /// Acrescenta um bloco finalizado, verificando o certificado.
     pub fn commit(&mut self, cb: CommittedBlock) -> Result<(), ChainError> {
         let id = cb.block.id();
+        let h = cb.block.header.height;
+        if self.checkpoints.get(&h).is_some_and(|c| *c != id) {
+            return Err(ChainError::Checkpoint { height: h });
+        }
         cb.commit
             .verify(
                 cb.block.header.height,
@@ -324,6 +363,34 @@ mod tests {
             Err(ChainError::Commit(CommitError::WrongBlock))
         );
         c.commit(good).unwrap();
+    }
+
+    // RZ-IR-08 — ponto de verificação: uma cadeia alternativa, mesmo com
+    // certificados válidos (chaves antigas), é recusada na altura fixada.
+    #[test]
+    fn checkpoint_rejects_alternative_history() {
+        let ks = validators();
+        let mut honest = Chain::new(genesis()).unwrap();
+        let a = next_block(&honest, &ks, vec![transfer(0, 50)]);
+        honest.commit(a.clone()).unwrap();
+
+        let mut fresh = Chain::new(genesis()).unwrap();
+        fresh.set_checkpoints([(1, a.block.id())]).unwrap();
+        let alternative = next_block(&fresh, &ks, vec![transfer(0, 51)]);
+        assert_eq!(
+            fresh.commit(alternative),
+            Err(ChainError::Checkpoint { height: 1 })
+        );
+        fresh.commit(a).unwrap();
+
+        // Uma cadeia local que já diverge é detectada ao configurar.
+        let mut other = Chain::new(genesis()).unwrap();
+        let b = next_block(&other, &ks, vec![transfer(0, 52)]);
+        other.commit(b).unwrap();
+        assert_eq!(
+            other.set_checkpoints([(1, honest.tip())]),
+            Err(ChainError::Checkpoint { height: 1 })
+        );
     }
 
     // Finalidade: um bloco final não pode ser substituído (sem reorganização).

@@ -10,7 +10,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io;
 use std::net::{IpAddr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
@@ -40,6 +40,18 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const DIAL_TIMEOUT: Duration = Duration::from_secs(3);
 const BAN_DURATION: Duration = Duration::from_secs(600);
 const SEND_QUEUE: usize = 1024;
+/// Balde geral por conexão (todas as mensagens exceto as de consenso).
+const GENERAL_BURST: u32 = 400;
+const GENERAL_PER_SEC: u32 = 200;
+
+/// Balde de consenso por conexão para `n` validadores: cada validador emite
+/// até dois votos por rodada, repassados uma vez por conexão, mais a
+/// retransmissão periódica. Retorna `(rajada, recarga por segundo)`.
+fn consensus_rate(n: usize) -> (u32, u32) {
+    let n = u32::try_from(n).unwrap_or(u32::MAX);
+    (n.saturating_mul(32).max(200), n.saturating_mul(8).max(50))
+}
+
 /// Capacidade da fila de propostas e votos para a thread de consenso.
 const CONSENSUS_QUEUE: usize = 8_192;
 const MAX_BLOCKS_RESPONSE_BYTES: usize = 3 * 1024 * 1024;
@@ -83,6 +95,9 @@ pub struct NodeConfig {
     pub max_inbound_per_ip: usize,
     pub mempool_capacity: usize,
     pub log: LogLevel,
+    /// Pontos de verificação (altura, bloco) obtidos pelo operador de fontes
+    /// em que confia (subjetividade fraca, THR-CON-001).
+    pub checkpoints: Vec<(u64, BlockId)>,
 }
 
 impl NodeConfig {
@@ -101,6 +116,7 @@ impl NodeConfig {
             max_inbound_per_ip: 8,
             mempool_capacity: 10_000,
             log: LogLevel::Info,
+            checkpoints: Vec::new(),
         }
     }
 }
@@ -203,6 +219,9 @@ struct Shared {
     stem: Mutex<Stem>,
     consensus_tx: mpsc::SyncSender<ConsensusEvent>,
     seen: Mutex<Seen>,
+    /// Tamanho do conjunto de validadores vigente (dimensiona o limite de
+    /// taxa de mensagens de consenso por conexão).
+    validator_count: AtomicUsize,
 }
 
 /// Estado local do Dandelion++.
@@ -235,6 +254,11 @@ impl Node {
     pub fn start(cfg: NodeConfig) -> io::Result<Node> {
         let genesis_hash = cfg.genesis.hash();
         let mut chain = Chain::new(cfg.genesis.clone())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+        // Antes do reprocessamento: blocos gravados que divergem de um ponto
+        // de verificação são descartados.
+        chain
+            .set_checkpoints(cfg.checkpoints.iter().copied())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
         // Reprocessa blocos persistidos, verificando cada certificado e cada
@@ -269,6 +293,7 @@ impl Node {
         // Fila limitada: sob inundação, mensagens excedentes são descartadas
         // (a retransmissão periódica as recupera).
         let (consensus_tx, consensus_rx) = mpsc::sync_channel::<ConsensusEvent>(CONSENSUS_QUEUE);
+        let validator_count = chain.state().validators().validators().len();
         let shared = Arc::new(Shared {
             genesis_hash,
             key: cfg.validator_key,
@@ -295,6 +320,7 @@ impl Node {
             }),
             consensus_tx,
             seen: Mutex::new(Seen::default()),
+            validator_count: AtomicUsize::new(validator_count),
             genesis: cfg.genesis,
         });
 
@@ -407,6 +433,11 @@ struct ConnCtx {
     relay: bool,
     score: PeerScore,
     bucket: TokenBucket,
+    /// Balde próprio para propostas e votos, proporcional ao número de
+    /// validadores (RZ-IR-06). Excedente é descartado sem penalidade.
+    consensus_bucket: TokenBucket,
+    /// Tamanho do conjunto usado para dimensionar `consensus_bucket`.
+    consensus_sized_for: usize,
     peer_height: u64,
     last_request_from: Option<u64>,
 }
@@ -491,6 +522,8 @@ impl Shared {
         }
         let state = chain.state();
         mempool.prune(&state, &ExecParams::at(chain.genesis(), chain.height() + 1));
+        self.validator_count
+            .store(state.validators().validators().len(), Ordering::Relaxed);
         Ok(true)
     }
 
@@ -668,7 +701,7 @@ impl Shared {
                 }
                 Output::ProposalEvidence(a, b) => {
                     self.info("propostas conflitantes detectadas");
-                    self.report(TxKind::ReportEquivocation {
+                    self.report(TxKind::ReportDoubleProposal {
                         first: a,
                         second: b,
                     });
@@ -964,7 +997,12 @@ impl Shared {
             id,
             relay,
             score: PeerScore::default(),
-            bucket: TokenBucket::new(400, 200),
+            bucket: TokenBucket::new(GENERAL_BURST, GENERAL_PER_SEC),
+            consensus_bucket: {
+                let (burst, rate) = consensus_rate(0);
+                TokenBucket::new(burst, rate)
+            },
+            consensus_sized_for: 0,
             peer_height: hello.height,
             last_request_from: None,
         };
@@ -998,6 +1036,22 @@ impl Shared {
     fn read_loop(&self, reader: &mut SecureReader<TcpStream>, ctx: &mut ConnCtx) -> bool {
         while self.running() {
             let flow = match reader.read_message() {
+                Ok(msg @ (Message::ConsensusProposal(_) | Message::ConsensusVote(_))) => {
+                    let n = self.validator_count.load(Ordering::Relaxed);
+                    if n != ctx.consensus_sized_for {
+                        let (burst, rate) = consensus_rate(n);
+                        ctx.consensus_bucket.set_rate(burst, rate);
+                        ctx.consensus_sized_for = n;
+                    }
+                    // Acima do orçamento: descarta antes de qualquer
+                    // verificação, sem penalizar (rajadas honestas existem e
+                    // a retransmissão recupera o que se perder).
+                    if ctx.consensus_bucket.try_take(1) {
+                        self.handle(ctx, msg)
+                    } else {
+                        Flow::Continue
+                    }
+                }
                 Ok(msg) => {
                     if !ctx.bucket.try_take(1) {
                         Flow::Penalize(Offense::RateLimited)

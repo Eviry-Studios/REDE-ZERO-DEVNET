@@ -47,6 +47,8 @@ USO:
       --advertise ADDR    endereço público anunciado (ex.: seu serviço nome.onion:porta)
       --max-inbound-per-ip N  conexões de entrada por IP (padrão 8)
       --validator-key F   chave do validador (omitir para node não validador)
+      --checkpoint H:ID   ponto de verificação: o bloco da altura H deve ter o id
+                          ID (obtenha de fontes em que confia; pode repetir)
       --verbose           registros detalhados (endereços de pares; nunca de clientes)
       --quiet             sem registros
 
@@ -288,6 +290,17 @@ fn run(args: &Args) -> Result<(), String> {
             p.parse()
                 .map_err(|_| format!("--peer: endereço inválido '{p}'"))?,
         );
+    }
+    for c in args.all("checkpoint") {
+        let (h, id) = c
+            .split_once(':')
+            .ok_or_else(|| format!("--checkpoint: use ALTURA:ID, recebido '{c}'"))?;
+        let h: u64 = h
+            .parse()
+            .map_err(|_| format!("--checkpoint: altura inválida '{h}'"))?;
+        let id = rz_crypto::Hash32::from_hex(id)
+            .ok_or_else(|| format!("--checkpoint: id inválido '{id}'"))?;
+        cfg.checkpoints.push((h, rz_core::BlockId(id)));
     }
     if let Some(k) = args.get("validator-key") {
         let key = keyfile::load(Path::new(k)).map_err(|e| format!("{k}: {e}"))?;

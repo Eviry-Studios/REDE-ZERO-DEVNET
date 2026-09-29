@@ -108,6 +108,8 @@ payload = u8(kind) ‖ u64(height) ‖ u32(round) ‖ option(block)
 
 Votos de quem não pertence ao conjunto vigente são descartados.
 
+**Votos conflitantes.** Para cada validador, rodada e tipo, guardam-se até dois votos distintos: o primeiro e um conflitante (que também gera evidência, §6.2). Na contagem de poder para um bloco `B`, o validador conta se algum dos seus votos é para `B`; na contagem de "votos quaisquer", conta uma única vez. Sem isso, um bizantino que envia votos diferentes a cada metade da rede impede que honestos completem a prova de > 2/3 (`docs/AUDIT.md` RZ-IR-13). A segurança é preservada: dois quóruns de > 2/3 se cruzam em > 1/3 do poder, que sempre contém um honesto, e honestos votam uma única vez.
+
 ### 4.3 Certificado de finalização
 
 ```text
@@ -168,7 +170,7 @@ Temporizadores crescem com a rodada: `timeout_x(r) = timeout_x_ms + r · timeout
 
 **Validade de bloco** (`App::validate_block`) é a mesma do import (`Chain::check_next`): altura e pai corretos, proponente sorteado para (`height`, `header.round`) e todas as regras de `spec/BLOCKS.md` e `spec/STATE.md`.
 
-**Retransmissão.** Periodicamente, cada Node reenvia a proposta da rodada corrente e os próprios votos da rodada corrente. Isso recupera mensagens perdidas durante partições sem aumentar a superfície de ataque, porque só retransmite o que ele mesmo assinou ou já validou.
+**Retransmissão.** Periodicamente, cada Node reenvia a proposta da rodada corrente, os próprios votos da rodada corrente e, se tiver um bloco válido de rodada anterior, os pré-votos (> 2/3) que o provam. Sem esses pré-votos, quem os perdeu não aceitaria a re-proposta com `pol_round`, e Nodes travados votariam nulo para sempre (`docs/AUDIT.md` RZ-IR-14). Isso recupera mensagens perdidas durante partições sem aumentar a superfície de ataque, porque só retransmite o que ele mesmo assinou ou já validou.
 
 **Mensagens futuras e limites de memória** (`FUTURE_ROUND_WINDOW = 2`, `docs/AUDIT.md` RZ-IR-02/03):
 
@@ -190,6 +192,7 @@ Mensagens descartadas não são repassadas nem marcadas como vistas; a retransmi
 | `Bond { amount }` | 0x20 | debita `amount` e soma ao vínculo; exige `vínculo total ≥ min_bond` e remetente fora de `jailed` |
 | `Unbond { amount }` | 0x21 | retira `amount` do vínculo (`amount ≤ vínculo`, restante `= 0` ou `≥ min_bond`) e cria `Unbonding { owner, amount, release_height = h + unbonding_blocks }` |
 | `ReportDoubleVote { first, second }` | 0x22 | evidência de voto duplo; pune o validador (§6.2) |
+| `ReportDoubleProposal { first, second }` | 0x23 | evidência de proposta dupla: dois `SignedProposal { height, round, pol_round, block_id, proposer, signature }` do mesmo proponente, altura e rodada, com bloco ou `pol_round` diferentes; pune o proponente (§6.2) |
 
 `amount = 0` é inválido. Uma desvinculação continua **punível** até ser liberada; ao atingir `release_height`, o valor volta ao saldo transparente do dono no fim do bloco.
 
@@ -201,7 +204,7 @@ Dois votos formam evidência se forem do mesmo validador, tipo, altura e rodada,
 evidence_id = H("rede-zero/evidence/v1", validador ‖ u64(h) ‖ u32(r) ‖ u8(tipo))
 ```
 
-O mesmo vale para dois cabeçalhos distintos assinados pelo mesmo proponente para a mesma altura e rodada (`ReportEquivocation`, `spec/GOVERNANCE.md`).
+O mesmo vale para duas propostas diferentes do proponente de uma rodada (`ReportDoubleProposal`) e para dois cabeçalhos distintos assinados pelo mesmo proponente para a mesma altura e rodada (`ReportEquivocation`, `spec/GOVERNANCE.md`). As duas formas de equivocação de proposta usam o mesmo identificador (tipo 0), para que a infração seja punida uma única vez.
 
 A punição, aplicada **uma única vez** por `evidence_id`:
 
@@ -241,11 +244,11 @@ CommittedBlock recebido
 ## 9. Limitações conhecidas
 
 * **anti-Sybil econômico**: a entrada no conjunto depende de ZERO vinculado; a distribuição inicial define o poder inicial (THR-CON-001).
-* **ataque de longo alcance**: um Node novo confia no Genesis e na cadeia de certificados; chaves antigas desvinculadas podem forjar histórico alternativo. Mitigação prevista: pontos de verificação sociais (*weak subjectivity*) — **A DEFINIR**.
+* **ataque de longo alcance**: um Node novo confia no Genesis e na cadeia de certificados; chaves antigas desvinculadas podem forjar histórico alternativo. Mitigação: pontos de verificação do operador (`--checkpoint ALTURA:ID`, subjetividade fraca). O Node recusa blocos que divergem deles e descarta, ao iniciar, blocos gravados divergentes. O protocolo não embute checkpoints, para não criar autoridade central (REQ-005); cada operador os obtém de fontes em que confia.
 * **censura pelo proponente**: um proponente pode omitir transações, mas só por uma rodada; a rotação ponderada limita o efeito.
 * sem recompensa de bloco além das taxas (`SPEC §40`, A DEFINIR).
 * sem punição por inatividade.
-* a máquina de consenso foi verificada por simulação (`crates/rz-chain/src/bft_tests.rs`), não por prova formal.
+* a máquina de consenso foi verificada por simulação, incluindo simulação adversarial aleatória com rede assíncrona e bizantinos (`crates/rz-chain/src/bft_tests.rs`), não por prova formal.
 
 ## 10. Testes de aceitação cobertos
 

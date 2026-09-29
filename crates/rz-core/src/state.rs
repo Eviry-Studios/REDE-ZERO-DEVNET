@@ -688,7 +688,8 @@ impl State {
             | TxKind::Vote { .. }
             | TxKind::ReportEquivocation { .. }
             | TxKind::Unbond { .. }
-            | TxKind::ReportDoubleVote { .. } => 0,
+            | TxKind::ReportDoubleVote { .. }
+            | TxKind::ReportDoubleProposal { .. } => 0,
         };
         let required = amount.checked_add(tx.body.fee).ok_or(TxError::Overflow)?;
         if sender_acc.balance < required {
@@ -869,6 +870,28 @@ impl State {
                     return Err(TxError::InvalidEvidence("infração já punida"));
                 }
                 effect.gov = Some(GovEffect::Slash(a.proposer, evidence));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::ReportDoubleProposal { first, second } => {
+                if !first.conflicts_with(second) {
+                    return Err(TxError::InvalidEvidence("propostas não conflitantes"));
+                }
+                if !first.verify(p.network_id) || !second.verify(p.network_id) {
+                    return Err(TxError::InvalidEvidence("assinatura inválida"));
+                }
+                let key = first.proposer;
+                if self.bond_of(&key) == 0
+                    && !self.unbonding.iter().any(|u| u.owner == key.address())
+                {
+                    return Err(TxError::InvalidEvidence("não é validador"));
+                }
+                // Mesmo identificador da equivocação de cabeçalho (tipo 0):
+                // a mesma infração não é punida duas vezes.
+                let evidence = evidence_id(&key, first.height, first.round, 0);
+                if self.punished.contains(&evidence) {
+                    return Err(TxError::InvalidEvidence("infração já punida"));
+                }
+                effect.gov = Some(GovEffect::Slash(key, evidence));
                 effect.accounts.push((sender, sender_acc));
             }
             TxKind::Bond { amount } => {

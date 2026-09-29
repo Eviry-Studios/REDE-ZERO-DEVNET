@@ -50,6 +50,15 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * `docs/DEMOCRACIA_ORGANICA.md` incorporado com notas de conformidade (ADR-0013).
 * `THREAT_MODEL.md` v0.4.0.
 
+### Corrigido — achados abertos da auditoria interna
+
+* Limite de taxa próprio para mensagens de consenso, proporcional ao número de validadores; excedente descartado sem banir (RZ-IR-06).
+* `ReportDoubleProposal` (0x23): evidência compacta de proposta dupla, válida também para re-propostas (RZ-IR-07).
+* Pontos de verificação do operador (`--checkpoint ALTURA:ID`) contra ataque de longo alcance (RZ-IR-08).
+* Simulação adversarial aleatória do consenso (rede assíncrona, perdas, bizantinos que equivocam para metades da rede) (RZ-IR-12). Ela encontrou e levou à correção de duas falhas de vivacidade:
+  * votos conflitantes de bizantinos eram descartados, e metade dos honestos não completava a prova de > 2/3 (RZ-IR-13);
+  * a retransmissão não incluía a prova do bloco travado (RZ-IR-14).
+
 ### Adicionado — preparação para auditoria
 
 * `docs/AUDIT.md`: escopo priorizado, fronteiras de confiança, invariantes a atacar, como reproduzir, dependências criptográficas e resultado da revisão interna.

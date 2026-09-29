@@ -680,3 +680,86 @@ fn double_vote_slashes_bond_and_jails() {
     sim.advance_to(3 * epoch);
     assert!(!sim.state.validators().contains(&rk));
 }
+
+// RZ-IR-07 — propostas conflitantes do mesmo proponente de rodada, inclusive
+// numa re-proposta (bloco assinado por outro validador).
+#[test]
+fn double_proposal_slashes_even_for_reproposal() {
+    let mut sim = Sim::new();
+    let rk = rich().public_key();
+    let epoch = sim.state.params().consensus.epoch_blocks;
+    bond(&mut sim, &rich(), 5_000);
+    sim.advance_to(epoch);
+    let net = sim.g.network_id.clone();
+    let h = sim.height + 1;
+
+    // Bloco montado por outro validador (rodada 0), reproposto por `rich`
+    // na rodada 3 com dois `pol_round` diferentes.
+    let (block, _) = Block::build(
+        &sim.g,
+        sim.parent,
+        sim.height,
+        &sim.state,
+        0,
+        vec![],
+        &validator(),
+    )
+    .unwrap();
+    let a = crate::Proposal::sign(h, 3, Some(0), block.clone(), &rich(), &net).signed();
+    let b = crate::Proposal::sign(h, 3, Some(1), block.clone(), &rich(), &net).signed();
+    assert_eq!(a.block, b.block);
+
+    let same = sim.tx(
+        &poor(),
+        TxKind::ReportDoubleProposal {
+            first: Box::new(a.clone()),
+            second: Box::new(a.clone()),
+        },
+    );
+    assert!(matches!(sim.check(&same), Err(TxError::InvalidEvidence(_))));
+    let mut forged = b.clone();
+    forged.signature.0[3] ^= 1;
+    let bad = sim.tx(
+        &poor(),
+        TxKind::ReportDoubleProposal {
+            first: Box::new(a.clone()),
+            second: Box::new(forged),
+        },
+    );
+    assert!(matches!(sim.check(&bad), Err(TxError::InvalidEvidence(_))));
+
+    let report = sim.tx(
+        &poor(),
+        TxKind::ReportDoubleProposal {
+            first: Box::new(a),
+            second: Box::new(b),
+        },
+    );
+    sim.block(vec![report]);
+    assert!(sim.state.is_jailed(&rk));
+    assert!(sim.state.bond_of(&rk) < 5_000);
+
+    // A mesma infração (proponente, altura, rodada) denunciada por
+    // cabeçalhos não é punida de novo.
+    let (x, _) = Block::build(&sim.g, sim.parent, h - 1, &sim.state, 3, vec![], &rich()).unwrap();
+    let t = sim.tx(
+        &rich(),
+        TxKind::Transfer {
+            to: poor().public_key().address(),
+            amount: 1,
+        },
+    );
+    let (y, _) = Block::build(&sim.g, sim.parent, h - 1, &sim.state, 3, vec![t], &rich()).unwrap();
+    assert_eq!(x.header.height, h);
+    let again = sim.tx(
+        &poor(),
+        TxKind::ReportEquivocation {
+            first: Box::new(x.signed_header()),
+            second: Box::new(y.signed_header()),
+        },
+    );
+    assert_eq!(
+        sim.check(&again),
+        Err(TxError::InvalidEvidence("infração já punida"))
+    );
+}

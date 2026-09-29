@@ -346,6 +346,14 @@ fn corpus() -> Corpus {
         block: block.clone(),
     };
     let proposal = Proposal::sign(1, 0, None, block.clone(), &validator(), NET);
+    let reproposal = Proposal::sign(1, 0, Some(0), block.clone(), &validator(), NET);
+    txs.push(account_tx(
+        n,
+        TxKind::ReportDoubleProposal {
+            first: Box::new(proposal.signed()),
+            second: Box::new(reproposal.signed()),
+        },
+    ));
 
     let mut messages = vec![
         Message::Hello(Hello {

@@ -139,7 +139,8 @@ Um par que envia blocos inválidos é penalizado (seção 6) — nenhum estado �
 | Mecanismo | Valor padrão |
 | --- | --- |
 | Tamanho máximo de mensagem | 4 MiB |
-| Limite de taxa por conexão | balde de 400 mensagens, recarga de 200/s |
+| Limite de taxa por conexão | balde de 400 mensagens, recarga de 200/s (exceto consenso) |
+| Limite de consenso por conexão (`n` validadores) | balde de `max(200, 32·n)`, recarga de `max(50, 8·n)`/s; excedente descartado sem penalidade |
 | Conexões de entrada | 32 |
 | Conexões de saída | 8 |
 | Quarentena após banimento | 10 minutos |

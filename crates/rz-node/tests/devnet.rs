@@ -326,6 +326,30 @@ fn flooding_peer_banned() {
         .is_banned("127.0.0.1".parse().unwrap())));
 }
 
+// RZ-IR-06 — rajadas de mensagens de consenso não banem o par (o excedente
+// é descartado sem verificação) e não atrapalham o consenso local.
+#[test]
+fn consensus_flood_dropped_without_ban() {
+    let g = genesis(1);
+    let v = validators(1).remove(0);
+    let n = start(&g, data_dir("cflood"), Some(v), vec![]);
+    assert!(wait_until(Duration::from_secs(10), || n.status().height >= 1));
+    let mut c = client(&n);
+    let outsider = SecretKey::from_seed([77; 32]);
+    let start_height = n.status().height;
+    for i in 0..5_000u32 {
+        let vote = Vote::sign(VoteType::Prevote, 1_000_000, i, None, &outsider, NET);
+        if c.send(&Message::ConsensusVote(vote)).is_err() {
+            break;
+        }
+    }
+    // Depois da rajada, a mesma conexão continua útil para mensagens gerais.
+    c.send(&Message::Ping(1)).unwrap();
+    assert!(wait_until(Duration::from_secs(10), || n.status().height
+        >= start_height + 3));
+    assert!(!n.is_banned("127.0.0.1".parse().unwrap()));
+}
+
 // AT-P2P-004 — mensagem acima do limite encerra a conexão.
 #[test]
 fn oversized_frame_disconnects() {

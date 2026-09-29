@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use rz_core::{
-    Block, BlockId, Commit, ConsensusParams, Proposal, SignedHeader, ValidatorSet, Vote, VoteType,
+    Block, BlockId, Commit, ConsensusParams, Proposal, SignedProposal, ValidatorSet, Vote, VoteType,
 };
 use rz_crypto::{PublicKey, SecretKey};
 
@@ -48,7 +48,7 @@ pub enum Output {
     VoteEvidence(Box<Vote>, Box<Vote>),
     /// Duas propostas distintas do mesmo proponente para a mesma rodada
     /// (evidência para `ReportEquivocation`).
-    ProposalEvidence(Box<SignedHeader>, Box<SignedHeader>),
+    ProposalEvidence(Box<SignedProposal>, Box<SignedProposal>),
 }
 
 /// Serviços que o Node fornece à máquina de consenso.
@@ -77,6 +77,27 @@ const MAX_FUTURE_MSGS: usize = 4_096;
 /// ocupar assinando mensagens para rodadas arbitrárias.
 pub const FUTURE_ROUND_WINDOW: u32 = 2;
 
+/// Votos de um validador numa rodada e tipo: o primeiro recebido e, se
+/// houver, um conflitante. Guardar o conflitante permite completar a prova
+/// de > 2/3 para qualquer bloco em que um bizantino votou (ele conta para
+/// cada lado). Isso não afeta a segurança: dois quóruns de > 2/3 se cruzam
+/// em > 1/3 do poder, que sempre inclui um honesto, e honestos votam uma vez.
+#[derive(Clone, Debug)]
+struct VoteSlot {
+    first: Vote,
+    conflict: Option<Vote>,
+}
+
+impl VoteSlot {
+    fn iter(&self) -> impl Iterator<Item = &Vote> {
+        std::iter::once(&self.first).chain(self.conflict.as_ref())
+    }
+
+    fn voted_for(&self, block: Option<BlockId>) -> bool {
+        self.iter().any(|v| v.block == block)
+    }
+}
+
 enum Pending {
     Proposal(Box<Proposal>),
     Vote(Vote),
@@ -97,7 +118,7 @@ pub struct Bft {
     decided: bool,
 
     proposals: BTreeMap<u32, Proposal>,
-    votes: HashMap<(u32, VoteType), BTreeMap<PublicKey, Vote>>,
+    votes: HashMap<(u32, VoteType), BTreeMap<PublicKey, VoteSlot>>,
     prevote_timeout_set: BTreeSet<u32>,
     precommit_timeout_set: BTreeSet<u32>,
     polka_handled: BTreeSet<u32>,
@@ -260,12 +281,13 @@ impl Bft {
             return r;
         }
         match self.proposals.get(&p.round) {
-            Some(existing) if existing.block.id() == p.block.id() => return r,
+            Some(existing) if existing.signed() == p.signed() => return r,
             Some(existing) => {
-                // Proponente assinou dois blocos para a mesma rodada.
+                // Proponente assinou duas propostas diferentes (bloco ou
+                // `pol_round`) para a mesma rodada.
                 r.outputs.push(Output::ProposalEvidence(
-                    Box::new(existing.block.signed_header()),
-                    Box::new(p.block.signed_header()),
+                    Box::new(existing.signed()),
+                    Box::new(p.signed()),
                 ));
                 return r;
             }
@@ -301,18 +323,29 @@ impl Bft {
             return r;
         }
         let set = self.votes.entry((v.round, v.kind)).or_default();
-        match set.get(&v.validator) {
-            Some(existing) if existing.block == v.block => return r,
-            Some(existing) => {
+        match set.get_mut(&v.validator) {
+            Some(slot) if slot.voted_for(v.block) => return r,
+            Some(slot) if slot.conflict.is_none() => {
+                // Dupla assinatura: evidência, e o voto conflitante também é
+                // guardado e repassado (ver `VoteSlot`).
                 r.outputs.push(Output::VoteEvidence(
-                    Box::new(existing.clone()),
-                    Box::new(v),
+                    Box::new(slot.first.clone()),
+                    Box::new(v.clone()),
                 ));
-                return r;
+                slot.conflict = Some(v);
             }
-            None => {}
+            // Terceiro voto distinto: nada a acrescentar.
+            Some(_) => return r,
+            None => {
+                set.insert(
+                    v.validator,
+                    VoteSlot {
+                        first: v,
+                        conflict: None,
+                    },
+                );
+            }
         }
-        set.insert(v.validator, v);
         r.relay = true;
         self.process(app, &mut r.outputs);
         r
@@ -346,9 +379,54 @@ impl Bft {
         true
     }
 
+    /// Resumo do estado interno (diagnóstico em testes).
+    #[cfg(test)]
+    pub(crate) fn debug_state(&self) -> String {
+        let short = |b: &Block| format!("{}", b.id().0).chars().take(6).collect::<String>();
+        let props: Vec<String> = self
+            .proposals
+            .iter()
+            .map(|(r, p)| {
+                format!(
+                    "r{r}:{}{}",
+                    short(&p.block),
+                    p.pol_round.map(|v| format!("/pol{v}")).unwrap_or_default()
+                )
+            })
+            .collect();
+        let pv: Vec<String> = self
+            .votes
+            .iter()
+            .filter(|((r, _), _)| *r + 3 >= self.round)
+            .map(|((r, k), set)| {
+                let blocks: Vec<String> = set
+                    .values()
+                    .flat_map(VoteSlot::iter)
+                    .map(|v| {
+                        v.block
+                            .map(|b| format!("{}", b.0).chars().take(6).collect())
+                            .unwrap_or("nil".into())
+                    })
+                    .collect();
+                format!("r{r}{:?}:{}", k, blocks.join(","))
+            })
+            .collect();
+        format!(
+            "locked={:?} valid={:?} props=[{}] votes=[{}]",
+            self.locked.as_ref().map(|(r, b)| (r, short(b))),
+            self.valid.as_ref().map(|(r, b)| (r, short(b))),
+            props.join(" "),
+            pv.join(" ")
+        )
+    }
+
     /// Quantidade de votos guardados (diagnóstico e testes de limite).
     pub fn stored_votes(&self) -> usize {
-        self.votes.values().map(BTreeMap::len).sum()
+        self.votes
+            .values()
+            .flat_map(BTreeMap::values)
+            .map(|s| s.iter().count())
+            .sum()
     }
 
     /// Quantidade de propostas guardadas na altura atual.
@@ -375,11 +453,28 @@ impl Bft {
         if let Some(p) = self.proposals.get(&self.round) {
             out.push(Output::BroadcastProposal(Box::new(p.clone())));
         }
-        // Somente os próprios votos: cada validador retransmite os seus.
+        // Os próprios votos da rodada atual: cada validador retransmite os seus.
         if let Some(me) = self.me() {
             for kind in [VoteType::Prevote, VoteType::Precommit] {
-                if let Some(v) = self.votes.get(&(self.round, kind)).and_then(|s| s.get(&me)) {
-                    out.push(Output::BroadcastVote(v.clone()));
+                if let Some(slot) = self.votes.get(&(self.round, kind)).and_then(|s| s.get(&me)) {
+                    out.push(Output::BroadcastVote(slot.first.clone()));
+                }
+            }
+        }
+        // Prova do bloco válido: os pré-votos (> 2/3) da rodada em que ele foi
+        // validado. Sem eles, quem os perdeu não aceita a re-proposta com
+        // `pol_round` e Nodes travados nesse bloco votariam nulo para sempre
+        // (gossip de votos da rodada de trava, como no Tendermint).
+        if let Some((vr, block)) = &self.valid {
+            if *vr != self.round {
+                let id = block.id();
+                if let Some(set) = self.votes.get(&(*vr, VoteType::Prevote)) {
+                    out.extend(
+                        set.values()
+                            .flat_map(VoteSlot::iter)
+                            .filter(|v| v.block == Some(id))
+                            .map(|v| Output::BroadcastVote(v.clone())),
+                    );
                 }
             }
         }
@@ -415,18 +510,23 @@ impl Bft {
             return;
         };
         let v = Vote::sign(kind, self.height, self.round, block, key, &self.network_id);
-        self.votes
-            .entry((self.round, kind))
-            .or_default()
-            .insert(v.validator, v.clone());
+        self.votes.entry((self.round, kind)).or_default().insert(
+            v.validator,
+            VoteSlot {
+                first: v.clone(),
+                conflict: None,
+            },
+        );
         out.push(Output::BroadcastVote(v));
     }
 
     fn power(&self, round: u32, kind: VoteType, block: Option<Option<BlockId>>) -> u128 {
+        // Cada validador conta no máximo uma vez por bloco (e uma vez no
+        // total, quando `block` é `None`).
         self.votes.get(&(round, kind)).map_or(0, |set| {
-            set.values()
-                .filter(|v| block.is_none_or(|b| v.block == b))
-                .map(|v| self.validators.power_of(&v.validator) as u128)
+            set.iter()
+                .filter(|(_, slot)| block.is_none_or(|b| slot.voted_for(b)))
+                .map(|(k, _)| self.validators.power_of(k) as u128)
                 .sum()
         })
     }
@@ -477,7 +577,12 @@ impl Bft {
                 let votes: Vec<&Vote> = self
                     .votes
                     .get(&(rr, VoteType::Precommit))
-                    .map(|s| s.values().filter(|v| v.block == Some(id)).collect())
+                    .map(|s| {
+                        s.values()
+                            .flat_map(VoteSlot::iter)
+                            .filter(|v| v.block == Some(id))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 if let Some(commit) = Commit::from_votes(votes) {
                     self.decided = true;

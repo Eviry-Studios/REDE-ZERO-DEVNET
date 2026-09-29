@@ -92,6 +92,12 @@ pub enum TxKind {
         first: Box<crate::consensus::Vote>,
         second: Box<crate::consensus::Vote>,
     },
+    /// Tag `0x23` — denuncia duas propostas diferentes assinadas pelo mesmo
+    /// proponente para a mesma altura e rodada.
+    ReportDoubleProposal {
+        first: Box<crate::consensus::SignedProposal>,
+        second: Box<crate::consensus::SignedProposal>,
+    },
 }
 
 impl Encode for TxKind {
@@ -145,6 +151,9 @@ impl Encode for TxKind {
             TxKind::ReportDoubleVote { first, second } => {
                 e.u8(0x22).put(first.as_ref()).put(second.as_ref());
             }
+            TxKind::ReportDoubleProposal { first, second } => {
+                e.u8(0x23).put(first.as_ref()).put(second.as_ref());
+            }
         }
     }
 }
@@ -184,6 +193,10 @@ impl Decode for TxKind {
             0x20 => Ok(TxKind::Bond { amount: d.u64()? }),
             0x21 => Ok(TxKind::Unbond { amount: d.u64()? }),
             0x22 => Ok(TxKind::ReportDoubleVote {
+                first: Box::new(d.get()?),
+                second: Box::new(d.get()?),
+            }),
+            0x23 => Ok(TxKind::ReportDoubleProposal {
                 first: Box::new(d.get()?),
                 second: Box::new(d.get()?),
             }),
@@ -378,7 +391,8 @@ impl AccountTx {
             | TxKind::ReportEquivocation { .. }
             | TxKind::Bond { .. }
             | TxKind::Unbond { .. }
-            | TxKind::ReportDoubleVote { .. } => {}
+            | TxKind::ReportDoubleVote { .. }
+            | TxKind::ReportDoubleProposal { .. } => {}
         }
         if self.body.fee < min_fee {
             return Err(TxError::FeeTooLow {
