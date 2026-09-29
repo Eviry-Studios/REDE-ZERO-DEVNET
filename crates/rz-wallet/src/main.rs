@@ -9,25 +9,37 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::ExitCode;
-use std::time::Duration;
 
 use rz_codec::Decode;
-use rz_core::{format_zero, parse_zero, Genesis, TxBody, TxKind};
+use rz_core::{format_zero, parse_zero, Genesis};
 use rz_crypto::{keyfile, Address, SecretKey};
 use rz_p2p::{Client, Message};
+use rz_privacy::keys::ShieldedAddress;
+use rz_wallet::{
+    account, connect, private_view, send_private, send_transparent, shield, Destination, Keys,
+};
 
 const USAGE: &str = "\
 zero-wallet — Wallet da DEVNET da Rede Zero
 
 USO:
-  zero-wallet new --key FILE
+  zero-wallet new     --key FILE
   zero-wallet address --key FILE
   zero-wallet balance --genesis FILE --node ADDR (--key FILE | --address HEX)
-  zero-wallet send --genesis FILE --node ADDR --key FILE --to HEX --amount ZERO [--fee ZERO]
-  zero-wallet status --genesis FILE --node ADDR
+  zero-wallet shield  --genesis FILE --node ADDR --key FILE --amount ZERO [--to zs…] [--fee ZERO]
+  zero-wallet send    --genesis FILE --node ADDR --key FILE --to (zs…|HEX) --amount ZERO [--fee ZERO]
+  zero-wallet unshield --genesis FILE --node ADDR --key FILE --to HEX --amount ZERO [--fee ZERO]
+  zero-wallet status  --genesis FILE --node ADDR
 
-A Wallet verifica que o Node pertence à rede do Genesis informado antes de
-assinar qualquer coisa. AVISO: DEVNET — o ZERO desta rede não possui valor.
+Endereços:
+  zs…  endereço PRIVADO (padrão recomendado): remetente, destinatário e valor ocultos
+  HEX  endereço transparente: tudo público (necessário para taxas e validadores)
+
+send para zs… gasta saldo privado. send para HEX gasta saldo transparente.
+shield move saldo transparente para privado; unshield faz o inverso.
+
+A privacidade é probabilística e não constitui anonimato absoluto.
+AVISO: DEVNET — o ZERO desta rede não possui valor econômico.
 ";
 
 struct Args(HashMap<String, String>);
@@ -56,6 +68,10 @@ impl Args {
         self.get(name)
             .ok_or_else(|| format!("--{name} é obrigatório"))
     }
+
+    fn amount(&self, name: &str) -> Result<u64, String> {
+        parse_zero(self.req(name)?).ok_or_else(|| format!("--{name}: valor inválido"))
+    }
 }
 
 fn main() -> ExitCode {
@@ -68,7 +84,9 @@ fn main() -> ExitCode {
         "new" => new(&args),
         "address" => address(&args),
         "balance" => balance(&args),
+        "shield" => cmd_shield(&args),
         "send" => send(&args),
+        "unshield" => unshield(&args),
         "status" => status(&args),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
@@ -85,12 +103,14 @@ fn main() -> ExitCode {
     }
 }
 
-fn load_key(args: &Args) -> Result<SecretKey, String> {
+fn load_keys(args: &Args) -> Result<Keys, String> {
     let path = args.req("key")?;
-    keyfile::load(Path::new(path)).map_err(|e| format!("{path}: {e}"))
+    keyfile::load(Path::new(path))
+        .map(Keys::from_secret)
+        .map_err(|e| format!("{path}: {e}"))
 }
 
-fn connect(args: &Args) -> Result<(Client, Genesis), String> {
+fn open(args: &Args) -> Result<(Client, Genesis), String> {
     let path = args.req("genesis")?;
     let bytes = fs::read(path).map_err(|e| format!("{path}: {e}"))?;
     let genesis =
@@ -99,104 +119,119 @@ fn connect(args: &Args) -> Result<(Client, Genesis), String> {
         .req("node")?
         .parse()
         .map_err(|_| "--node: endereço inválido")?;
-    let client = Client::connect(
-        node,
-        &genesis.network_id,
-        genesis.hash(),
-        Duration::from_secs(10),
-    )
-    .map_err(|e| e.to_string())?;
-    Ok((client, genesis))
+    Ok((connect(node, &genesis)?, genesis))
 }
 
-fn account(client: &mut Client, address: Address) -> Result<(u64, u64, u64), String> {
-    client
-        .request(&Message::GetAccount(address), |m| match m {
-            Message::Account {
-                address: a,
-                balance,
-                nonce,
-                height,
-            } if a == address => Some((balance, nonce, height)),
-            _ => None,
-        })
-        .map_err(|e| e.to_string())
+fn fee(args: &Args, genesis: &Genesis) -> Result<u64, String> {
+    match args.get("fee") {
+        Some(f) => parse_zero(f).ok_or_else(|| "--fee: valor inválido".into()),
+        None => Ok(genesis.min_fee),
+    }
 }
 
 fn new(args: &Args) -> Result<(), String> {
     let path = args.req("key")?;
-    let key = SecretKey::generate();
-    keyfile::save(Path::new(path), &key).map_err(|e| format!("{path}: {e}"))?;
+    let sk = SecretKey::generate();
+    keyfile::save(Path::new(path), &sk).map_err(|e| format!("{path}: {e}"))?;
+    let keys = Keys::from_secret(sk);
     println!("chave criada em {path} (não compartilhe nem versione este arquivo)");
-    println!("endereço: {}", key.public_key().address());
+    println!("endereço privado:      {}", keys.shielded_address());
+    println!("endereço transparente: {}", keys.address());
     Ok(())
 }
 
 fn address(args: &Args) -> Result<(), String> {
-    println!("{}", load_key(args)?.public_key().address());
+    let keys = load_keys(args)?;
+    println!("privado:      {}", keys.shielded_address());
+    println!("transparente: {}", keys.address());
     Ok(())
 }
 
 fn balance(args: &Args) -> Result<(), String> {
-    let addr = match args.get("address") {
-        Some(h) => Address::from_hex(h).ok_or("--address: endereço inválido")?,
-        None => load_key(args)?.public_key().address(),
+    if let Some(h) = args.get("address") {
+        let addr = Address::from_hex(h).ok_or("--address: endereço transparente inválido")?;
+        let (mut client, _) = open(args)?;
+        let (bal, nonce, height) = account(&mut client, addr)?;
+        println!("endereço:     {addr}");
+        println!("transparente: {} ZERO (nonce {nonce})", format_zero(bal));
+        println!("altura:       {height}");
+        return Ok(());
+    }
+    let keys = load_keys(args)?;
+    let (mut client, _) = open(args)?;
+    let (bal, nonce, height) = account(&mut client, keys.address())?;
+    let (_, notes) = private_view(&mut client, &keys)?;
+    let private: u64 = notes.iter().map(|n| n.note.amount).sum();
+    println!(
+        "privado:      {} ZERO ({} notas)",
+        format_zero(private),
+        notes.len()
+    );
+    println!("transparente: {} ZERO (nonce {nonce})", format_zero(bal));
+    println!("altura:       {height}");
+    Ok(())
+}
+
+fn cmd_shield(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let amount = args.amount("amount")?;
+    let to = match args.get("to") {
+        Some(s) => ShieldedAddress::decode(s).ok_or("--to: endereço privado inválido")?,
+        None => keys.shielded_address(),
     };
-    let (mut client, _) = connect(args)?;
-    let (balance, nonce, height) = account(&mut client, addr)?;
-    println!("endereço: {addr}");
-    println!("saldo:    {} ZERO", format_zero(balance));
-    println!("nonce:    {nonce}");
-    println!("altura:   {height}");
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = shield(&mut client, &genesis, &keys, &to, amount, fee)?;
+    println!(
+        "blindando {} ZERO (valor público nesta etapa; gastos futuros serão privados)",
+        format_zero(amount)
+    );
+    println!("transação: {id} — aceita, aguardando inclusão em bloco");
     Ok(())
 }
 
 fn send(args: &Args) -> Result<(), String> {
-    let key = load_key(args)?;
-    let to = Address::from_hex(args.req("to")?).ok_or("--to: endereço inválido")?;
-    let amount = parse_zero(args.req("amount")?).ok_or("--amount: valor inválido")?;
-    let (mut client, genesis) = connect(args)?;
-    let fee = match args.get("fee") {
-        Some(f) => parse_zero(f).ok_or("--fee: valor inválido")?,
-        None => genesis.min_fee,
+    let keys = load_keys(args)?;
+    let amount = args.amount("amount")?;
+    let to = Destination::parse(args.req("to")?).ok_or("--to: endereço inválido")?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = match to {
+        Destination::Shielded(_) => {
+            let id = send_private(&mut client, &genesis, &keys, to, amount, fee)?;
+            println!("envio PRIVADO de {} ZERO", format_zero(amount));
+            id
+        }
+        Destination::Transparent(a) => {
+            eprintln!("aviso: envio transparente — remetente, destinatário e valor ficam públicos");
+            send_transparent(&mut client, &genesis, &keys, a, amount, fee)?
+        }
     };
-    let (_, nonce, _) = account(&mut client, key.public_key().address())?;
+    println!("transação: {id} — aceita, aguardando inclusão em bloco");
+    Ok(())
+}
 
-    let tx = TxBody {
-        version: rz_core::tx::TX_VERSION,
-        sender: key.public_key(),
-        nonce,
+fn unshield(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let amount = args.amount("amount")?;
+    let to = Address::from_hex(args.req("to")?).ok_or("--to: endereço transparente inválido")?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_private(
+        &mut client,
+        &genesis,
+        &keys,
+        Destination::Transparent(to),
+        amount,
         fee,
-        kind: TxKind::Transfer { to, amount },
-    }
-    // Assinatura local, vinculada à rede do Genesis informado pelo usuário.
-    .sign(&key, &genesis.network_id)
-    .map_err(|e| e.to_string())?;
-    let id = tx.id();
-
-    println!("enviando {} ZERO para {to}", format_zero(amount));
-    println!("taxa:      {} ZERO", format_zero(fee));
-    println!("transação: {id}");
-    let (accepted, reason) = client
-        .request(&Message::Transaction(tx), |m| match m {
-            Message::TxResult {
-                id: rid,
-                accepted,
-                reason,
-            } if rid == id => Some((accepted, reason)),
-            _ => None,
-        })
-        .map_err(|e| e.to_string())?;
-    if accepted {
-        println!("aceita pelo node — aguardando inclusão em bloco");
-        Ok(())
-    } else {
-        Err(format!("rejeitada: {reason}"))
-    }
+    )?;
+    eprintln!("aviso: o valor retirado e o destino ficam públicos; a origem permanece oculta");
+    println!("transação: {id} — aceita, aguardando inclusão em bloco");
+    Ok(())
 }
 
 fn status(args: &Args) -> Result<(), String> {
-    let (mut client, genesis) = connect(args)?;
+    let (mut client, genesis) = open(args)?;
     let s = client
         .request(&Message::GetStatus, |m| match m {
             Message::Status {

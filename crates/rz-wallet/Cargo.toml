@@ -12,6 +12,13 @@ rz-codec.workspace = true
 rz-crypto.workspace = true
 rz-core.workspace = true
 rz-p2p.workspace = true
+rz-privacy.workspace = true
+
+[dev-dependencies]
+rz-node.workspace = true
+
+[lib]
+path = "src/lib.rs"
 
 [[bin]]
 name = "zero-wallet"

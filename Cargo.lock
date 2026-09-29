@@ -433,7 +433,9 @@ dependencies = [
  "rz-codec",
  "rz-core",
  "rz-crypto",
+ "rz-node",
  "rz-p2p",
+ "rz-privacy",
 ]
 
 [[package]]
