@@ -1,0 +1,6 @@
+/target/
+# Dados locais de nodes e chaves da DEVNET — nunca versionar
+/devnet-data/
+*.key
+*.secret
+.env

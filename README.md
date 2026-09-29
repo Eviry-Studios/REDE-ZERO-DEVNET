@@ -13,3 +13,9 @@ Documentação do projeto **Rede Zero / Exonet**.
 | [SPECIFICATIONS.md](docs/SPECIFICATIONS.md) | Especificação técnica e protocolar (v0.1.0) |
 | [ACCEPTANCE_CRITERIA.md](docs/ACCEPTANCE_CRITERIA.md) | Critérios de aceitação (v0.1.0) |
 | [ACCEPTANCE_TESTS.md](docs/ACCEPTANCE_TESTS.md) | Suíte de testes de aceitação (v0.1.0) |
+
+## Decisões e contribuição
+
+* [Registros de decisão (ADR)](docs/adr/) — escolhas técnicas da DEVNET e seus escopos
+* [CONTRIBUTING.md](CONTRIBUTING.md) — como contribuir
+* [SECURITY.md](SECURITY.md) — como reportar vulnerabilidades
