@@ -66,11 +66,17 @@ ParamChange (tag u8): 0 min_fee u64 | 1 max_block_txs u32 | 2 gov_deposit | 3 an
                       | 14 slash_bps | 15 block_interval_ms | 16 timeout_propose_ms
                       | 17 timeout_prevote_ms | 18 timeout_precommit_ms | 19 timeout_delta_ms
                       | 20 market_fee_bps | 21 market_order_lifetime_blocks
+                      | 22 name_fee | 23 community_declaration_ttl_blocks
                                                                      (u64, exceto tag 1)
 
 Tags 0 e 1 são da categoria ordinária; as demais, constitucional. Os parâmetros
 resultantes são validados antes de a proposta ser aceita (tags 10..19:
-spec/CONSENSUS.md §2; tags 20..21: spec/MARKET.md §6).
+spec/CONSENSUS.md §2; tags 20..21: spec/MARKET.md §6; tags 22..23:
+spec/COMMUNITIES.md §8).
+
+Uma proposta da categoria Comunidade só é aceita se `content_hash` for o id
+de uma declaração de Comunidade pendente (validação técnica, N-7); na
+ativação, a Comunidade passa a reconhecida (`spec/COMMUNITIES.md §4`).
 ```
 
 `h` é a altura do bloco em que a transação é incluída. O identificador da proposta é o `TxId` da transação `Propose`.

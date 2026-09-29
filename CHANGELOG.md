@@ -50,6 +50,17 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * `docs/DEMOCRACIA_ORGANICA.md` incorporado com notas de conformidade (ADR-0013).
 * `THREAT_MODEL.md` v0.4.0.
 
+### Adicionado — Comunidades e nomes `zero://`
+
+* ADR-0015, `spec/COMMUNITIES.md` e `spec/NAMING.md`, conforme as notas N-1..N-8 da Democracia Orgânica:
+  * declaração de Comunidade com manifesto e regra de decisão (limiar de chaves); membros não são registrados;
+  * reconhecimento por proposta de categoria Comunidade que aponta para a declaração (validação técnica);
+  * posição comunitária verificável, registrada e não vinculante;
+  * atualização versionada aprovada pela regra vigente, com histórico;
+  * nomes `zero://nome.tipo` com sintaxe objetiva, nomes reservados e rejeição de nomes confundíveis; `.comunidade` só para Comunidades reconhecidas; taxa de nome para o Pool.
+* Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
+* Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
+
 ### Adicionado — Grande Mercado e Pool permanente
 
 * ADR-0014 e `spec/MARKET.md`:

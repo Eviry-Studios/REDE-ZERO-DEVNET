@@ -38,7 +38,7 @@ ZERO continua em `Account.balance`. Saldos de ativos externos ficam em `balances
 
 `amount = 0` e `price = 0` são inválidos sem consultar o estado.
 
-**Não existe** operação que retire ativos do Pool (AT-POOL-002). As tags de `TxKind` são exatamente `0x00, 0x01, 0x10–0x14, 0x20–0x23, 0x30–0x33`; qualquer outra é `InvalidTag`.
+**Não existe** operação que retire ativos do Pool (AT-POOL-002). As tags de `TxKind` são exatamente `0x00, 0x01, 0x10–0x14, 0x20–0x23, 0x30–0x33, 0x40–0x44`; qualquer outra é `InvalidTag`. Das operações de Comunidades e nomes (`0x40–0x44`), só `RegisterName` toca o Pool, e para aumentá-lo (taxa de nome).
 
 ## 3. Ordens
 

@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use rz_core::private::{build_private_tx, build_shield, SpendableNote, Unshield};
 use rz_core::{Genesis, Transaction, TxBody, TxId, TxKind};
-use rz_crypto::{Address, SecretKey};
+use rz_crypto::{Address, Hash32, SecretKey};
 use rz_p2p::{
     Client, ConnectOptions, Message, PeerAddr, MAX_KEY_IMAGES_PER_MSG, MAX_OUTPUTS_PER_MSG,
 };
@@ -391,6 +391,47 @@ pub fn market(
             }),
             _ => None,
         })
+        .map_err(|e| e.to_string())
+}
+
+// ------------------------------------------------------ Comunidades e nomes
+
+/// Comunidade pelo nome (reconhecida ou pendente).
+pub fn community(
+    client: &mut Client,
+    name: &str,
+) -> Result<(u64, Option<rz_core::community::Community>), String> {
+    client
+        .request(&Message::GetCommunity { name: name.into() }, |m| match m {
+            Message::Community { height, community } => Some((height, community.map(|c| *c))),
+            _ => None,
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// Resolve `zero://nome.tipo`: `(alvo, dono)`.
+pub fn resolve(
+    client: &mut Client,
+    name: &str,
+    kind: rz_core::community::NameKind,
+) -> Result<(Option<Hash32>, Option<Address>), String> {
+    client
+        .request(
+            &Message::Resolve {
+                name: name.into(),
+                kind,
+            },
+            |m| match m {
+                Message::Resolved {
+                    name: n,
+                    kind: k,
+                    target,
+                    owner,
+                    ..
+                } if n == name && k == kind => Some((target, owner)),
+                _ => None,
+            },
+        )
         .map_err(|e| e.to_string())
 }
 

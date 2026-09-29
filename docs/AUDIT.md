@@ -31,7 +31,8 @@ A revisão interna (§7) **não substitui** a auditoria externa.
 | 5 | Codificação canônica | `crates/rz-codec`, `Decode` de todos os tipos | ~400 | unicidade de codificação, limites antes de alocar |
 | 6 | Superfície de negação de serviço do Node | `crates/rz-node/src/node.rs`, `rz-p2p/src/ratelimit.rs`, `score.rs`, `rz-chain/src/mempool.rs` | ~2 300 | limites de fila, mempool, Dandelion++, sincronização |
 | 7 | Grande Mercado e Pool | `crates/rz-core/src/market.rs`, partes de mercado em `state.rs` | ~1 300 | leilão (preço, prioridade, arredondamento, poeira), reservas e reembolsos, conservação por ativo, Pool monotônico, limites do livro |
-| 8 | Wallet | `crates/rz-wallet` | ~1 200 | seleção de notas, recusa de conexão direta, manuseio de chaves, unidades e preços do mercado |
+| 8 | Comunidades e nomes | `crates/rz-core/src/community.rs`, partes em `state.rs` | ~900 | verificação de aprovações por limiar, reconhecimento via governança, isolamento, esqueletos de nomes |
+| 9 | Wallet | `crates/rz-wallet` | ~1 200 | seleção de notas, recusa de conexão direta, manuseio de chaves, unidades e preços do mercado |
 
 ¹ Aproximado, incluindo testes internos aos arquivos.
 
@@ -84,6 +85,8 @@ Cada invariante lista onde é aplicada e os testes que a exercitam. Uma violaç�
 | INV-14 | O Pool nunca diminui; não existe operação de saída | `state.rs` (`add_to_pool` é o único ponto de escrita) | AT-POOL-002/003, `randomized_market_invariants` |
 | INV-15 | Cada ativo externo se conserva: saldos + reservas de venda + Pool = oferta | `MarketState::check_assets` | `randomized_market_invariants` |
 | INV-16 | O resultado do leilão não depende da ordem das transações no bloco | `market::clear` | `block_order_does_not_change_market_outcome`, `result_independent_of_input_order` |
+| INV-17 | Manifestações de Comunidade exigem o limiar da regra declarada; nenhuma operação de Comunidade altera consenso, saldos de terceiros ou outras Comunidades | `DecisionRule::verify`, `state.rs` | AT-COM-003, `decision_rule_threshold` |
+| INV-18 | A posição comunitária não altera a apuração oficial | `tally` ignora `positions` | `community_position_verifiable_and_non_binding` |
 
 ## 5. Como reproduzir
 

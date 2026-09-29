@@ -1,6 +1,6 @@
 # spec/P2P.md — Protocolo P2P da DEVNET
 
-**Versão:** 0.4.0 (DEVNET), `P2P_VERSION = 4`
+**Versão:** 0.5.0 (DEVNET), `P2P_VERSION = 5`
 **Relacionamento:** `SPECIFICATIONS.md §23–§30`, ADR-0007, ADR-0010, ADR-0011, THR-P2P-001..006, THR-PRIV-002..004
 **Implementação de referência:** `crates/rz-p2p` (mensagens) e `crates/rz-node` (orquestração)
 
@@ -69,6 +69,10 @@ m = enc(Message)
 | `0x19` | `ASSETS` | `u64 height, u64 pool_zero, list<AssetView>` (≤64) (`spec/MARKET.md §9`) |
 | `0x1a` | `GET_MARKET` | `AssetId, option<Address>` (inclui as ordens desse endereço) |
 | `0x1b` | `MARKET` | `u64 height, AssetId, option<u64> last_price, list<BookLevel> bids (≤256), list<BookLevel> asks (≤256), list<Order> own (≤256)` |
+| `0x1c` | `GET_COMMUNITY` | `string name` |
+| `0x1d` | `COMMUNITY` | `u64 height, option<Community>` (`spec/COMMUNITIES.md §1`) |
+| `0x1e` | `RESOLVE` | `string name, u8 kind` |
+| `0x1f` | `RESOLVED` | `u64 height, string name, u8 kind, option<fixed[32]> target, option<Address> owner` (`spec/NAMING.md §5`) |
 
 `PeerAddr` (tag `u8`):
 

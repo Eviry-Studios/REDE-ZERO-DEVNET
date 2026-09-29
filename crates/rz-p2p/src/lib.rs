@@ -23,4 +23,4 @@ pub use ratelimit::TokenBucket;
 pub use score::{Offense, PeerScore, BAN_THRESHOLD};
 
 /// Versão do protocolo P2P.
-pub const P2P_VERSION: u16 = 4;
+pub const P2P_VERSION: u16 = 5;

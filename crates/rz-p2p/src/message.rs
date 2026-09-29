@@ -4,6 +4,7 @@ use std::fmt;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 use rz_codec::{Decode, DecodeError, Decoder, Encode, Encoder};
+use rz_core::community::{Community, NameKind, MAX_NAME_LEN};
 use rz_core::governance::{LockEntry, ProposalSummary, ProtocolParams};
 use rz_core::limits::MAX_NETWORK_ID_LEN;
 use rz_core::market::{AssetId, AssetView, BookLevel, Order, MAX_ASSETS};
@@ -335,6 +336,23 @@ pub enum Message {
         asks: Vec<BookLevel>,
         own: Vec<Order>,
     },
+    /// `0x1c` — consulta uma Comunidade pelo nome.
+    GetCommunity { name: String },
+    /// `0x1d`
+    Community {
+        height: u64,
+        community: Option<Box<Community>>,
+    },
+    /// `0x1e` — resolve `zero://name.kind`.
+    Resolve { name: String, kind: NameKind },
+    /// `0x1f`
+    Resolved {
+        height: u64,
+        name: String,
+        kind: NameKind,
+        target: Option<Hash32>,
+        owner: Option<Address>,
+    },
 }
 
 impl Encode for Message {
@@ -474,6 +492,31 @@ impl Encode for Message {
                     .list(asks)
                     .list(own);
             }
+            Message::GetCommunity { name } => {
+                e.u8(0x1c).str(name);
+            }
+            Message::Community { height, community } => {
+                e.u8(0x1d)
+                    .u64(*height)
+                    .option(&community.as_deref().cloned());
+            }
+            Message::Resolve { name, kind } => {
+                e.u8(0x1e).str(name).put(kind);
+            }
+            Message::Resolved {
+                height,
+                name,
+                kind,
+                target,
+                owner,
+            } => {
+                e.u8(0x1f)
+                    .u64(*height)
+                    .str(name)
+                    .put(kind)
+                    .option(target)
+                    .option(owner);
+            }
         }
     }
 }
@@ -562,6 +605,24 @@ impl Decode for Message {
                 asks: d.list(MAX_BOOK_LEVELS)?,
                 own: d.list(MAX_OWN_ORDERS)?,
             },
+            0x1c => Message::GetCommunity {
+                name: d.str(MAX_NAME_LEN)?,
+            },
+            0x1d => Message::Community {
+                height: d.u64()?,
+                community: d.option::<Community>()?.map(Box::new),
+            },
+            0x1e => Message::Resolve {
+                name: d.str(MAX_NAME_LEN)?,
+                kind: d.get()?,
+            },
+            0x1f => Message::Resolved {
+                height: d.u64()?,
+                name: d.str(MAX_NAME_LEN)?,
+                kind: d.get()?,
+                target: d.option()?,
+                owner: d.option()?,
+            },
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }
@@ -599,6 +660,10 @@ impl Message {
             Message::Assets { .. } => "ASSETS",
             Message::GetMarket { .. } => "GET_MARKET",
             Message::Market { .. } => "MARKET",
+            Message::GetCommunity { .. } => "GET_COMMUNITY",
+            Message::Community { .. } => "COMMUNITY",
+            Message::Resolve { .. } => "RESOLVE",
+            Message::Resolved { .. } => "RESOLVED",
         }
     }
 }

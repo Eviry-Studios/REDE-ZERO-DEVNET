@@ -741,6 +741,6 @@ As seções 1, 3 (autonomia dentro do protocolo), 5, 7, 9, 10, 12 e 13 estão em
 
 ### Próximas especificações derivadas
 
-* `spec/COMMUNITIES.md`: registro, declaração do mecanismo de decisão, manifestação de posição (N-1, N-5, N-6, N-7).
-* `spec/NAMING.md`: nomes `zero://nome.tipo` e tipos registrados (N-3, N-4).
+* `spec/COMMUNITIES.md`: registro, declaração do mecanismo de decisão, manifestação de posição (N-1, N-5, N-6, N-7). **Publicada** (ADR-0015).
+* `spec/NAMING.md`: nomes `zero://nome.tipo` e tipos registrados (N-3, N-4). **Publicada** (ADR-0015).
 * `spec/RUNTIME.md`: Exonet Runtime e *sandbox* (seções 9, 12, 13).

@@ -101,6 +101,24 @@ $W pool-deposit --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key 
 
 As ordens que cruzam num bloco executam todas ao mesmo preço (leilão por bloco): a ordem das transações no bloco não dá vantagem a ninguém. Ordens e depósitos são públicos.
 
+### Comunidades e nomes `zero://`
+
+```bash
+# Declara zero://cientistas.comunidade com regra de decisão 2 de 3 chaves
+$W community-declare --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key \
+    --name cientistas --manifest manifesto.txt --keys HEX1,HEX2,HEX3 --threshold 2
+# Reconhecimento: proposta de categoria comunidade apontando para o id da declaração
+$W propose --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key \
+    --category comunidade --content-hash ID_DA_COMUNIDADE
+$W community --genesis $G --node 127.0.0.1:7100 --name cientistas
+# Nomes para outras publicações
+$W name-register --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key \
+    --name zero://laboratorio.app --target HASH_DA_APLICACAO
+$W resolve --genesis $G --node 127.0.0.1:7100 --name zero://laboratorio.app
+```
+
+A Rede Zero não conhece os membros de uma Comunidade: ela só verifica que suas manifestações foram aprovadas pelo limiar de chaves declarado. A posição de uma Comunidade numa votação fica registrada, mas não altera o resultado oficial.
+
 ### Privacidade do seu IP
 
 Por padrão a Wallet só conecta a nodes **locais**. Para usar um node remoto sem expor seu IP, use Tor:
@@ -173,7 +191,8 @@ Seguindo a ordem recomendada em `SPECIFICATIONS.md §73`:
 | Privacidade de rede (Dandelion++) | ✅ DEVNET | teste de haste/embargo em `rz-node` |
 | Proteção do IP (canal cifrado, Tor, node privado) | ✅ DEVNET — auditoria pendente | `rz-p2p`, `rz-wallet/tests/network_privacy.rs` |
 | Governança bicameral | ✅ DEVNET ([ADR-0008](docs/adr/0008-governanca-bicameral.md)) | AT-GOV-001..005 + propriedades |
-| Exonet, Comunidades, Navegador Zero | ⏳ | — |
+| Comunidades (declaração, reconhecimento, posição, versões) e nomes `zero://` | ✅ DEVNET ([ADR-0015](docs/adr/0015-comunidades-e-nomes.md)) | AT-COM-001..004 |
+| Exonet Runtime, Navegador Zero | ⏳ | — |
 | Grande Mercado (leilão por bloco) e Pool permanente | ✅ DEVNET ([ADR-0014](docs/adr/0014-grande-mercado-e-pool.md)); ponte de ativos externos A DEFINIR | AT-MKT-001..004, AT-POOL-001..004, propriedades |
 | Defesa | ⏳ | — |
 

@@ -7,6 +7,7 @@ use rz_crypto::{context, hash, Address, CryptoError, Hash32, PublicKey, SecretKe
 use rz_privacy::excess::ExcessProof;
 
 use crate::block::SignedHeader;
+use crate::community::{Approval, DecisionRule, NameKind, MAX_CONTROLLERS, MAX_NAME_LEN};
 use crate::governance::{Category, Choice, ParamChange, MAX_PARAM_CHANGES};
 use crate::market::{AssetId, Side};
 use crate::private::{PrivateTx, ShieldedOutput, MAX_OUTPUTS};
@@ -121,6 +122,46 @@ pub enum TxKind {
     },
     /// Tag `0x33` — cancela uma ordem própria e devolve o valor reservado.
     CancelOrder { order: Hash32 },
+    /// Tag `0x40` — declara uma Comunidade (nome, manifesto e regra de
+    /// decisão). O reconhecimento vem por proposta de categoria Comunidade
+    /// que aponta para esta declaração (ADR-0015, N-7).
+    DeclareCommunity {
+        name: String,
+        manifest_hash: Hash32,
+        rule: DecisionRule,
+    },
+    /// Tag `0x41` — posição de uma Comunidade reconhecida sobre uma proposta,
+    /// aprovada pela regra de decisão declarada. Registrada, não vinculante
+    /// (N-1, N-6).
+    CommunityPosition {
+        community: Hash32,
+        proposal: Hash32,
+        choice: Choice,
+        approvals: Vec<Approval>,
+    },
+    /// Tag `0x42` — nova versão de uma Comunidade reconhecida (e,
+    /// opcionalmente, nova regra de decisão), aprovada pela regra vigente.
+    UpdateCommunity {
+        community: Hash32,
+        manifest_hash: Hash32,
+        version: u32,
+        rule: Option<DecisionRule>,
+        approvals: Vec<Approval>,
+    },
+    /// Tag `0x43` — registra `zero://name.kind` apontando para `target`. A
+    /// taxa de nome vai para o Pool permanente.
+    RegisterName {
+        name: String,
+        kind: NameKind,
+        target: Hash32,
+    },
+    /// Tag `0x44` — o dono altera o alvo e/ou transfere o nome.
+    UpdateName {
+        name: String,
+        kind: NameKind,
+        target: Hash32,
+        new_owner: Option<Address>,
+    },
 }
 
 impl Encode for TxKind {
@@ -200,6 +241,50 @@ impl Encode for TxKind {
             TxKind::CancelOrder { order } => {
                 e.u8(0x33).put(order);
             }
+            TxKind::DeclareCommunity {
+                name,
+                manifest_hash,
+                rule,
+            } => {
+                e.u8(0x40).str(name).put(manifest_hash).put(rule);
+            }
+            TxKind::CommunityPosition {
+                community,
+                proposal,
+                choice,
+                approvals,
+            } => {
+                e.u8(0x41)
+                    .put(community)
+                    .put(proposal)
+                    .put(choice)
+                    .list(approvals);
+            }
+            TxKind::UpdateCommunity {
+                community,
+                manifest_hash,
+                version,
+                rule,
+                approvals,
+            } => {
+                e.u8(0x42)
+                    .put(community)
+                    .put(manifest_hash)
+                    .u32(*version)
+                    .option(rule)
+                    .list(approvals);
+            }
+            TxKind::RegisterName { name, kind, target } => {
+                e.u8(0x43).str(name).put(kind).put(target);
+            }
+            TxKind::UpdateName {
+                name,
+                kind,
+                target,
+                new_owner,
+            } => {
+                e.u8(0x44).str(name).put(kind).put(target).option(new_owner);
+            }
         }
     }
 }
@@ -263,6 +348,35 @@ impl Decode for TxKind {
                 expires_at: d.u64()?,
             }),
             0x33 => Ok(TxKind::CancelOrder { order: d.get()? }),
+            0x40 => Ok(TxKind::DeclareCommunity {
+                name: d.str(MAX_NAME_LEN)?,
+                manifest_hash: d.get()?,
+                rule: d.get()?,
+            }),
+            0x41 => Ok(TxKind::CommunityPosition {
+                community: d.get()?,
+                proposal: d.get()?,
+                choice: d.get()?,
+                approvals: d.list(MAX_CONTROLLERS)?,
+            }),
+            0x42 => Ok(TxKind::UpdateCommunity {
+                community: d.get()?,
+                manifest_hash: d.get()?,
+                version: d.u32()?,
+                rule: d.option()?,
+                approvals: d.list(MAX_CONTROLLERS)?,
+            }),
+            0x43 => Ok(TxKind::RegisterName {
+                name: d.str(MAX_NAME_LEN)?,
+                kind: d.get()?,
+                target: d.get()?,
+            }),
+            0x44 => Ok(TxKind::UpdateName {
+                name: d.str(MAX_NAME_LEN)?,
+                kind: d.get()?,
+                target: d.get()?,
+                new_owner: d.option()?,
+            }),
             t => Err(DecodeError::InvalidTag(t)),
         }
     }
@@ -461,7 +575,26 @@ impl AccountTx {
             | TxKind::ReportDoubleProposal { .. }
             | TxKind::TransferAsset { .. }
             | TxKind::PoolDeposit { .. }
-            | TxKind::CancelOrder { .. } => {}
+            | TxKind::CancelOrder { .. }
+            | TxKind::CommunityPosition { .. }
+            | TxKind::UpdateName { .. } => {}
+            TxKind::DeclareCommunity { name, rule, .. } => {
+                crate::community::check_name(name).map_err(TxError::Community)?;
+                rule.validate().map_err(TxError::Community)?;
+            }
+            TxKind::UpdateCommunity { rule, .. } => {
+                if let Some(r) = rule {
+                    r.validate().map_err(TxError::Community)?;
+                }
+            }
+            TxKind::RegisterName { name, kind, .. } => {
+                crate::community::check_name(name).map_err(TxError::Community)?;
+                if *kind == NameKind::Community {
+                    return Err(TxError::Community(
+                        "nomes .comunidade vêm do reconhecimento de Comunidades",
+                    ));
+                }
+            }
             TxKind::PlaceOrder { price, .. } if *price == 0 => {
                 return Err(TxError::Market("preço nulo"));
             }
@@ -534,6 +667,8 @@ pub enum TxError {
     InvalidEvidence(&'static str),
     /// Regra do Grande Mercado ou do Pool violada.
     Market(&'static str),
+    /// Regra de Comunidades ou de nomes violada.
+    Community(&'static str),
     /// Regra de staking violada.
     Staking(&'static str),
 }
@@ -566,6 +701,7 @@ impl fmt::Display for TxError {
             Self::InvalidEvidence(w) => write!(f, "evidência inválida: {w}"),
             Self::Staking(w) => write!(f, "staking: {w}"),
             Self::Market(w) => write!(f, "mercado: {w}"),
+            Self::Community(w) => write!(f, "comunidade: {w}"),
         }
     }
 }

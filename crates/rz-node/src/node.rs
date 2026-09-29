@@ -1306,6 +1306,39 @@ impl Shared {
                 self.send_to(ctx.id, msg);
                 Flow::Continue
             }
+            Message::GetCommunity { name } => {
+                let msg = {
+                    let c = lock(&self.core);
+                    Message::Community {
+                        height: c.chain.height(),
+                        community: c
+                            .chain
+                            .state()
+                            .communities()
+                            .by_name(&name)
+                            .cloned()
+                            .map(Box::new),
+                    }
+                };
+                self.send_to(ctx.id, msg);
+                Flow::Continue
+            }
+            Message::Resolve { name, kind } => {
+                let msg = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let cs = state.communities();
+                    Message::Resolved {
+                        height: c.chain.height(),
+                        target: cs.resolve(&name, kind),
+                        owner: cs.names.get(&(kind, name.clone())).map(|r| r.owner),
+                        name,
+                        kind,
+                    }
+                };
+                self.send_to(ctx.id, msg);
+                Flow::Continue
+            }
             Message::Reject(_) => Flow::Disconnect,
             // Respostas não solicitadas são ignoradas.
             Message::Account { .. }
@@ -1315,7 +1348,9 @@ impl Shared {
             | Message::KeyImages { .. }
             | Message::Governance { .. }
             | Message::Assets { .. }
-            | Message::Market { .. } => Flow::Continue,
+            | Message::Market { .. }
+            | Message::Community { .. }
+            | Message::Resolved { .. } => Flow::Continue,
         }
     }
 

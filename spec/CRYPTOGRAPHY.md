@@ -41,6 +41,9 @@ Todo hash protocolar **deve** usar um contexto da seção 3. O hash "puro" (sem 
 | `EVIDENCE` | `rede-zero/evidence/v1` | Identificador de infração punida |
 | `ASSET_ID` | `rede-zero/asset/v1` | Identificador de ativo externo (`spec/MARKET.md §1`) |
 | `MARKET_ROOT` | `rede-zero/market-root/v1` | Raiz da parte de mercado e Pool do estado |
+| `COMMUNITY_APPROVAL` | `rede-zero/community/v1` | Aprovações da regra de decisão de uma Comunidade |
+| `COMMUNITY_MANIFEST` | `rede-zero/community-manifest/v1` | Hash do manifesto de uma Comunidade |
+| `COMMUNITY_ROOT` | `rede-zero/community-root/v1` | Raiz da parte de Comunidades e nomes do estado |
 
 Os contextos de consenso estão em `crates/rz-core/src/consensus.rs` (`spec/CONSENSUS.md`). Privacidade, governança e canal P2P usam contextos próprios, listados em `spec/PRIVACY.md`, `spec/GOVERNANCE.md` e `spec/P2P.md`.
 

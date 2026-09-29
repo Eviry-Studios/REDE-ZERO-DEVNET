@@ -114,6 +114,8 @@ pub struct ProtocolParams {
     pub consensus: crate::consensus::ConsensusParams,
     /// Grande Mercado (ADR-0014).
     pub market: crate::market::MarketParams,
+    /// Comunidades e nomes (ADR-0015).
+    pub communities: crate::community::CommunityParams,
 }
 
 impl ProtocolParams {
@@ -123,6 +125,7 @@ impl ProtocolParams {
         }
         self.consensus.validate()?;
         self.market.validate()?;
+        self.communities.validate()?;
         self.governance.validate()
     }
 }
@@ -133,7 +136,8 @@ impl Encode for ProtocolParams {
             .u32(self.max_block_txs)
             .put(&self.governance)
             .put(&self.consensus)
-            .put(&self.market);
+            .put(&self.market)
+            .put(&self.communities);
     }
 }
 
@@ -145,6 +149,7 @@ impl Decode for ProtocolParams {
             governance: d.get()?,
             consensus: d.get()?,
             market: d.get()?,
+            communities: d.get()?,
         })
     }
 }
@@ -251,6 +256,9 @@ pub enum ParamChange {
     // Grande Mercado (ADR-0014); constitucionais.
     MarketFeeBps(u64),
     MarketOrderLifetime(u64),
+    // Comunidades e nomes (ADR-0015); constitucionais.
+    NameFee(u64),
+    DeclarationTtl(u64),
 }
 
 impl ParamChange {
@@ -285,6 +293,8 @@ impl ParamChange {
             ParamChange::TimeoutDelta(_) => 19,
             ParamChange::MarketFeeBps(_) => 20,
             ParamChange::MarketOrderLifetime(_) => 21,
+            ParamChange::NameFee(_) => 22,
+            ParamChange::DeclarationTtl(_) => 23,
         }
     }
 
@@ -312,6 +322,8 @@ impl ParamChange {
             ParamChange::TimeoutDelta(_) => "timeout_delta_ms",
             ParamChange::MarketFeeBps(_) => "market_fee_bps",
             ParamChange::MarketOrderLifetime(_) => "market_order_lifetime_blocks",
+            ParamChange::NameFee(_) => "name_fee",
+            ParamChange::DeclarationTtl(_) => "community_declaration_ttl_blocks",
         }
     }
 
@@ -341,6 +353,8 @@ impl ParamChange {
             "timeout_delta_ms" => ParamChange::TimeoutDelta(v),
             "market_fee_bps" => ParamChange::MarketFeeBps(v),
             "market_order_lifetime_blocks" => ParamChange::MarketOrderLifetime(v),
+            "name_fee" => ParamChange::NameFee(v),
+            "community_declaration_ttl_blocks" => ParamChange::DeclarationTtl(v),
             _ => return None,
         })
     }
@@ -368,7 +382,9 @@ impl ParamChange {
             | ParamChange::TimeoutPrecommit(v)
             | ParamChange::TimeoutDelta(v)
             | ParamChange::MarketFeeBps(v)
-            | ParamChange::MarketOrderLifetime(v) => v,
+            | ParamChange::MarketOrderLifetime(v)
+            | ParamChange::NameFee(v)
+            | ParamChange::DeclarationTtl(v) => v,
         }
     }
 
@@ -400,6 +416,8 @@ impl ParamChange {
             ParamChange::TimeoutDelta(v) => p.consensus.timeout_delta_ms = v,
             ParamChange::MarketFeeBps(v) => p.market.fee_bps = u32::try_from(v).unwrap_or(u32::MAX),
             ParamChange::MarketOrderLifetime(v) => p.market.order_lifetime_blocks = v,
+            ParamChange::NameFee(v) => p.communities.name_fee = v,
+            ParamChange::DeclarationTtl(v) => p.communities.declaration_ttl_blocks = v,
         }
     }
 }
@@ -443,6 +461,8 @@ impl Decode for ParamChange {
             19 => ParamChange::TimeoutDelta(d.u64()?),
             20 => ParamChange::MarketFeeBps(d.u64()?),
             21 => ParamChange::MarketOrderLifetime(d.u64()?),
+            22 => ParamChange::NameFee(d.u64()?),
+            23 => ParamChange::DeclarationTtl(d.u64()?),
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }
@@ -1029,6 +1049,7 @@ mod tests {
             governance: g(),
             consensus: crate::consensus::ConsensusParams::fast(200),
             market: crate::market::MarketParams::default(),
+            communities: crate::community::CommunityParams::default(),
         };
         assert!(check_proposal_shape(Category::Ordinary, &[ParamChange::MinFee(5)], &cur).is_ok());
         // Parâmetro constitucional com categoria ordinária: inválido.

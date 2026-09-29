@@ -21,6 +21,7 @@ use rz_privacy::clsag::{self, RingMember};
 use rz_privacy::note::OutputData;
 use rz_privacy::{balance_holds, commitment, decode_point, excess};
 
+use crate::community::{self, Community, CommunityState, CommunityStatus, NameKind, NameRecord};
 use crate::consensus::{Validator, ValidatorSet};
 use crate::genesis::{Genesis, GenesisError};
 use crate::governance::{
@@ -130,6 +131,8 @@ pub struct State {
     last_validators: ValidatorSet,
     /// Grande Mercado e Pool permanente (ADR-0014).
     market: MarketState,
+    /// Comunidades e nomes `zero://` (ADR-0015).
+    communities: CommunityState,
 }
 
 /// ZERO em período de desvinculação.
@@ -161,6 +164,37 @@ struct Effect {
     fee: u64,
     gov: Option<GovEffect>,
     market: Option<MarketEffect>,
+    community: Option<CommunityEffect>,
+}
+
+/// Alteração de Comunidades ou nomes produzida por uma transação.
+enum CommunityEffect {
+    Declare(Box<Community>),
+    Position {
+        proposal: Hash32,
+        community: Hash32,
+        choice: crate::governance::Choice,
+    },
+    Update {
+        community: Hash32,
+        manifest_hash: Hash32,
+        version: u32,
+        rule: Option<community::DecisionRule>,
+        height: u64,
+    },
+    /// Novo nome; a taxa (já debitada) vai para o Pool.
+    RegisterName {
+        kind: NameKind,
+        name: String,
+        record: NameRecord,
+        fee: u64,
+    },
+    UpdateName {
+        kind: NameKind,
+        name: String,
+        target: Hash32,
+        new_owner: Option<Address>,
+    },
 }
 
 /// Alteração do Grande Mercado ou do Pool produzida por uma transação.
@@ -225,6 +259,7 @@ impl State {
                 governance: genesis.governance.clone(),
                 consensus: genesis.consensus.clone(),
                 market: MarketParams::default(),
+                communities: community::CommunityParams::default(),
             },
             locks: BTreeMap::new(),
             next_lock_id: 0,
@@ -252,6 +287,7 @@ impl State {
                 }
                 m
             },
+            communities: CommunityState::default(),
         })
     }
 
@@ -307,6 +343,11 @@ impl State {
     /// Grande Mercado e Pool permanente.
     pub fn market(&self) -> &MarketState {
         &self.market
+    }
+
+    /// Comunidades e nomes `zero://`.
+    pub fn communities(&self) -> &CommunityState {
+        &self.communities
     }
 
     /// Acesso de teste aos parâmetros (simula uma proposta já ativada).
@@ -440,7 +481,8 @@ impl State {
             .u64(self.key_image_log.len() as u64)
             .put(&self.key_image_acc)
             .put(&self.governance_root())
-            .put(&self.market.root());
+            .put(&self.market.root())
+            .put(&self.communities.root());
         hash(context::STATE_ROOT, &e.into_bytes())
     }
 
@@ -504,6 +546,9 @@ impl State {
         if let Some(m) = effect.market {
             self.apply_market(m).map_err(|_| TxError::Overflow)?;
         }
+        if let Some(c) = effect.community {
+            self.apply_community(c).map_err(|_| TxError::Overflow)?;
+        }
         match effect.gov {
             None => {}
             Some(GovEffect::Lock(id, lock)) => {
@@ -514,6 +559,13 @@ impl State {
                 self.locks.remove(&id);
             }
             Some(GovEffect::Propose(p)) => {
+                // A declaração de uma Comunidade em votação não expira antes
+                // da ativação.
+                if p.category == Category::Community {
+                    if let Some(c) = self.communities.communities.get_mut(&p.content_hash) {
+                        c.expires_at = c.expires_at.max(p.activation_height.saturating_add(1));
+                    }
+                }
                 self.proposals.insert(p.id, *p);
             }
             Some(GovEffect::Vote(id, voter, vote)) => {
@@ -599,6 +651,10 @@ impl State {
     ) -> Result<(), StateError> {
         // Grande Mercado: vencimentos e leilões dos livros que mudaram.
         self.settle_market(height)?;
+        // Declarações de Comunidade vencidas sem reconhecimento liberam o nome.
+        self.communities
+            .communities
+            .retain(|_, c| c.status == CommunityStatus::Recognized || c.expires_at > height);
 
         // Consenso: o conjunto que validou este bloco; nova época recalcula.
         self.last_validators = used_validators;
@@ -667,6 +723,13 @@ impl State {
                 p.status = ProposalStatus::Activated;
                 if p.category == Category::Community {
                     self.approved_communities.insert(p.content_hash);
+                    // Reconhecimento (N-7): a declaração passa a Comunidade
+                    // reconhecida, com nome `.comunidade`.
+                    if let Some(c) = self.communities.communities.get_mut(&p.content_hash) {
+                        if c.status == CommunityStatus::Declared {
+                            c.status = CommunityStatus::Recognized;
+                        }
+                    }
                 }
                 self.params = next;
             } else {
@@ -759,6 +822,11 @@ impl State {
             | TxKind::PlaceOrder { .. }
             | TxKind::TransferAsset { .. }
             | TxKind::CancelOrder { .. } => 0,
+            TxKind::RegisterName { .. } => self.params.communities.name_fee,
+            TxKind::DeclareCommunity { .. }
+            | TxKind::CommunityPosition { .. }
+            | TxKind::UpdateCommunity { .. }
+            | TxKind::UpdateName { .. } => 0,
             TxKind::Unlock { .. }
             | TxKind::Vote { .. }
             | TxKind::ReportEquivocation { .. }
@@ -784,6 +852,7 @@ impl State {
             fee: tx.body.fee,
             gov: None,
             market: None,
+            community: None,
         };
         let g = &self.params.governance;
 
@@ -877,6 +946,20 @@ impl State {
                 }
                 check_proposal_shape(*category, params, &self.params)
                     .map_err(TxError::Governance)?;
+                // Validação técnica (N-7): a proposta de categoria Comunidade
+                // aponta para uma declaração pendente e válida.
+                if *category == Category::Community {
+                    match self.communities.communities.get(content_hash) {
+                        Some(c)
+                            if c.status == CommunityStatus::Declared && c.expires_at > p.height => {
+                        }
+                        _ => {
+                            return Err(TxError::Community(
+                                "proposta de Comunidade sem declaração pendente",
+                            ))
+                        }
+                    }
+                }
                 let id = tx.id().0;
                 if self.proposals.contains_key(&id) {
                     return Err(TxError::Governance("proposta já existe"));
@@ -1055,6 +1138,125 @@ impl State {
                 effect.market = Some(MarketEffect::Cancel(*order));
                 effect.accounts.push((sender, sender_acc));
             }
+            TxKind::DeclareCommunity {
+                name,
+                manifest_hash,
+                rule,
+            } => {
+                let cp = &self.params.communities;
+                if self.communities.pending() >= cp.max_pending as usize {
+                    return Err(TxError::Community("declarações pendentes demais"));
+                }
+                self.communities
+                    .name_available(name, NameKind::Community)
+                    .map_err(TxError::Community)?;
+                effect.community = Some(CommunityEffect::Declare(Box::new(Community {
+                    id: tx.id().0,
+                    name: name.clone(),
+                    declarant: sender,
+                    manifest_hash: *manifest_hash,
+                    version: 1,
+                    rule: rule.clone(),
+                    status: CommunityStatus::Declared,
+                    declared_at: p.height,
+                    expires_at: p.height.saturating_add(cp.declaration_ttl_blocks),
+                    history: vec![(1, *manifest_hash, p.height)],
+                })));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::CommunityPosition {
+                community,
+                proposal,
+                choice,
+                approvals,
+            } => {
+                let c = self.recognized(community)?;
+                let prop = self
+                    .proposals
+                    .get(proposal)
+                    .ok_or(TxError::Governance("proposta inexistente"))?;
+                if prop.status != ProposalStatus::Pending
+                    || p.height < prop.voting_start
+                    || p.height >= prop.voting_end
+                {
+                    return Err(TxError::Governance("fora do período de votação"));
+                }
+                let payload = community::position_payload(community, proposal, *choice);
+                if !c.rule.verify(p.network_id, &payload, approvals) {
+                    return Err(TxError::Community(
+                        "posição sem aprovação válida da regra declarada",
+                    ));
+                }
+                effect.community = Some(CommunityEffect::Position {
+                    proposal: *proposal,
+                    community: *community,
+                    choice: *choice,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::UpdateCommunity {
+                community,
+                manifest_hash,
+                version,
+                rule,
+                approvals,
+            } => {
+                let c = self.recognized(community)?;
+                if *version <= c.version {
+                    return Err(TxError::Community("versão deve aumentar"));
+                }
+                let payload = community::update_payload(community, manifest_hash, *version, rule);
+                if !c.rule.verify(p.network_id, &payload, approvals) {
+                    return Err(TxError::Community(
+                        "atualização sem aprovação válida da regra vigente",
+                    ));
+                }
+                effect.community = Some(CommunityEffect::Update {
+                    community: *community,
+                    manifest_hash: *manifest_hash,
+                    version: *version,
+                    rule: rule.clone(),
+                    height: p.height,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::RegisterName { name, kind, target } => {
+                self.communities
+                    .name_available(name, *kind)
+                    .map_err(TxError::Community)?;
+                effect.community = Some(CommunityEffect::RegisterName {
+                    kind: *kind,
+                    name: name.clone(),
+                    record: NameRecord {
+                        owner: sender,
+                        target: *target,
+                        registered_at: p.height,
+                    },
+                    fee: self.params.communities.name_fee,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::UpdateName {
+                name,
+                kind,
+                target,
+                new_owner,
+            } => {
+                match self.communities.names.get(&(*kind, name.clone())) {
+                    None => return Err(TxError::Community("nome não registrado")),
+                    Some(r) if r.owner != sender => {
+                        return Err(TxError::Community("nome pertence a outra conta"))
+                    }
+                    Some(_) => {}
+                }
+                effect.community = Some(CommunityEffect::UpdateName {
+                    kind: *kind,
+                    name: name.clone(),
+                    target: *target,
+                    new_owner: *new_owner,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
             TxKind::Bond { amount } => {
                 let key = tx.body.sender;
                 if self.jailed.contains(&key) {
@@ -1195,6 +1397,7 @@ impl State {
             fee: tx.fee,
             gov: None,
             market: None,
+            community: None,
         })
     }
 }
@@ -1352,6 +1555,77 @@ impl State {
                 }
             }
             self.market.last_price.insert(asset, price);
+        }
+        Ok(())
+    }
+}
+
+impl State {
+    fn recognized(&self, id: &Hash32) -> Result<&Community, TxError> {
+        match self.communities.communities.get(id) {
+            Some(c) if c.status == CommunityStatus::Recognized => Ok(c),
+            _ => Err(TxError::Community("Comunidade não reconhecida")),
+        }
+    }
+
+    fn apply_community(&mut self, e: CommunityEffect) -> Result<(), StateError> {
+        let cs = &mut self.communities;
+        match e {
+            CommunityEffect::Declare(c) => {
+                cs.communities.insert(c.id, *c);
+            }
+            CommunityEffect::Position {
+                proposal,
+                community,
+                choice,
+            } => {
+                cs.positions.insert((proposal, community), choice);
+            }
+            CommunityEffect::Update {
+                community,
+                manifest_hash,
+                version,
+                rule,
+                height,
+            } => {
+                let c = cs
+                    .communities
+                    .get_mut(&community)
+                    .ok_or(StateError::Overflow)?;
+                c.manifest_hash = manifest_hash;
+                c.version = version;
+                if let Some(r) = rule {
+                    c.rule = r;
+                }
+                c.history.push((version, manifest_hash, height));
+                if c.history.len() > community::MAX_VERSION_HISTORY {
+                    c.history.remove(0);
+                }
+            }
+            CommunityEffect::RegisterName {
+                kind,
+                name,
+                record,
+                fee,
+            } => {
+                cs.names.insert((kind, name), record);
+                self.add_to_pool(AssetId::ZERO, fee)?;
+            }
+            CommunityEffect::UpdateName {
+                kind,
+                name,
+                target,
+                new_owner,
+            } => {
+                let r = cs
+                    .names
+                    .get_mut(&(kind, name))
+                    .ok_or(StateError::Overflow)?;
+                r.target = target;
+                if let Some(o) = new_owner {
+                    r.owner = o;
+                }
+            }
         }
         Ok(())
     }

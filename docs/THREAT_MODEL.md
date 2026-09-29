@@ -716,20 +716,20 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 **Severidade:** ALTA
 **Adversários:** ADV-08
-**Mitigações:** sandbox (`SPEC §62`); menor privilégio; nenhuma autoridade sobre consenso, saldos, regras monetárias ou outras Comunidades (`SPEC §61`); assinatura de operações sempre confirmada pela Wallet, fora do controle da Comunidade.
+**Mitigações:** sandbox (`SPEC §62`; Exonet Runtime A DEFINIR); menor privilégio; nenhuma autoridade sobre consenso, saldos, regras monetárias ou outras Comunidades (`SPEC §61`). Não existe operação de Comunidade sobre esses domínios; testado com chaves de controle comprometidas em `at_com_003_compromised_community_isolated`. A assinatura de operações é sempre confirmada pela Wallet, fora do controle da Comunidade.
 
 ### THR-COM-002 — Atualização maliciosa de Comunidade
 
 **Severidade:** ALTA
 **Descrição:** uma Comunidade legítima publica uma versão hostil.
 
-**Mitigações:** versões identificadas por hash; verificação de origem e versão (`SPEC §60`); possibilidade de o usuário fixar versões.
+**Mitigações:** versões identificadas por hash do manifesto; a versão só aumenta, com aprovação da regra de decisão vigente; histórico de versões no estado permite fixar versões (`spec/COMMUNITIES.md`, ADR-0015).
 
 ### THR-COM-003 — Censura arbitrária de Comunidades
 
 **Severidade:** MÉDIA
 **Adversários:** ADV-12, maiorias de governança
-**Mitigações:** aprovação apenas por regras objetivas (`REQ-073`); conteúdo controverso não é violação técnica (`REQ-074`); aplicações privadas não dependem de aprovação.
+**Mitigações:** aprovação apenas por regras objetivas (`REQ-073`): a validação técnica é verificada pelo protocolo e o reconhecimento é pela governança bicameral; conteúdo controverso não é violação técnica (`REQ-074`); não existe operação unilateral de remoção; aplicações privadas não dependem de aprovação.
 
 ### THR-BRW-001 — Interface maliciosa ou falsificada
 
@@ -743,7 +743,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Severidade:** MÉDIA
 **Descrição:** identificadores visualmente parecidos com `zero://comunidade` legítimos.
 
-**Mitigações:** identificadores derivados de material criptográfico; nomes legíveis como camada adicional (**A DEFINIR**); alertas de similaridade na interface.
+**Mitigações:** identificadores derivados de material criptográfico; nomes `zero://nome.tipo` como camada adicional com sufixo verificado (`spec/NAMING.md`); o protocolo rejeita nomes do mesmo tipo com o mesmo esqueleto visual (`banco`/`banc0`) e nomes parecidos com funções do protocolo; alertas de similaridade entre tipos continuam na interface.
 
 ---
 
@@ -904,6 +904,8 @@ Classificação de severidade (inicial, sujeita a revisão):
 | THR-GOV-001 | REQ-044 | SPEC §47, spec/GOVERNANCE.md | rz-core governance_tests (neutralidade a Sybil), rz-wallet governance_devnet |
 | THR-P2P-005 | — | SPEC §30, spec/P2P.md §1.1 | rz-p2p secure::tests |
 | THR-CON-004 | REQ-049 | SPEC §49, spec/CONSENSUS.md §6 | rz-core equivocation_report_slashes_contribution, double_vote_slashes_bond_and_jails, double_proposal_slashes_even_for_reproposal |
+| THR-COM-001 | REQ-074, SPEC §61 | spec/COMMUNITIES.md §6 | AT-COM-003 |
+| THR-BRW-002 | REQ-067 | spec/NAMING.md §3 | names_registered_resolved_and_protected |
 | THR-POOL-001 | REQ-037, REQ-038 | SPEC §39, §40, spec/MARKET.md §5 | AT-POOL-002, AT-POOL-003, randomized_market_invariants |
 | THR-POOL-003 | REQ-039 | SPEC §41, spec/MARKET.md §1 | AT-POOL-004 |
 | THR-MKT-001 | REQ-035 | spec/MARKET.md §4 | block_order_does_not_change_market_outcome |

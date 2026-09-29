@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::process::ExitCode;
 
-use rz_codec::Decode;
+use rz_codec::{Decode, Encode};
 use rz_core::governance::{Category, Choice, ParamChange};
 use rz_core::TxKind;
 use rz_core::{format_zero, parse_zero, Genesis};
@@ -65,6 +65,26 @@ Grande Mercado e Pool permanente (ADR-0014) — operações transparentes:
   ATIVO: identificador HEX ou rede:ativo (ex.: testnet-externa:ATV). Todo par é cotado em ZERO:
   as ordens de todos que cruzam num bloco executam ao mesmo preço (leilão por bloco).
   O depósito no Pool é IRREVERSÍVEL: não existe operação de retirada.
+
+Comunidades e nomes zero:// (ADR-0015):
+  zero-wallet community-declare --genesis FILE --node ADDR --key FILE --name NOME
+                      (--manifest ARQUIVO | --manifest-hash HEX) --keys HEX,HEX,... --threshold N
+  zero-wallet community --genesis FILE --node ADDR --name NOME
+  zero-wallet community-approve --genesis FILE --key FILE --community HEX
+                      (--proposal HEX --choice (sim|nao|abstencao)
+                       | --manifest-hash HEX --version N [--new-keys HEX,... --new-threshold N])
+  zero-wallet community-position --genesis FILE --node ADDR --key FILE --community HEX
+                      --proposal HEX --choice (sim|nao|abstencao) --approvals HEX,HEX,...
+  zero-wallet community-update --genesis FILE --node ADDR --key FILE --community HEX
+                      --manifest-hash HEX --version N [--new-keys HEX,... --new-threshold N]
+                      --approvals HEX,HEX,...
+  zero-wallet name-register --genesis FILE --node ADDR --key FILE --name zero://NOME.TIPO --target HEX
+  zero-wallet name-update   --genesis FILE --node ADDR --key FILE --name zero://NOME.TIPO --target HEX
+                      [--new-owner HEX]
+  zero-wallet resolve --genesis FILE --node ADDR --name zero://NOME.TIPO
+  O reconhecimento de uma Comunidade é uma proposta de categoria comunidade com
+  --content-hash igual ao id da declaração. A posição de uma Comunidade é
+  registrada, mas não altera o resultado oficial das votações.
 
 Endereços:
   zs…  endereço PRIVADO (padrão recomendado): remetente, destinatário e valor ocultos
@@ -147,6 +167,14 @@ fn main() -> ExitCode {
         "cancel" => cmd_cancel(&args),
         "send-asset" => cmd_send_asset(&args),
         "pool-deposit" => cmd_pool_deposit(&args),
+        "community-declare" => cmd_community_declare(&args),
+        "community" => cmd_community(&args),
+        "community-approve" => cmd_community_approve(&args),
+        "community-position" => cmd_community_position(&args),
+        "community-update" => cmd_community_update(&args),
+        "name-register" => cmd_name(&args, true),
+        "name-update" => cmd_name(&args, false),
+        "resolve" => cmd_resolve(&args),
         "unbond" => cmd_bond(&args, false),
         "propose" => cmd_propose(&args),
         "vote" => cmd_vote(&args),
@@ -690,6 +718,253 @@ fn cmd_pool_deposit(args: &Args) -> Result<(), String> {
         fee,
     )?;
     println!("depósito permanente no Pool enviado: {id}");
+    Ok(())
+}
+
+// ------------------------------------------------------ Comunidades e nomes
+
+fn parse_keys(list: &str) -> Result<Vec<rz_crypto::PublicKey>, String> {
+    list.split(',')
+        .map(|h| {
+            rz_crypto::PublicKey::from_hex(h.trim()).map_err(|_| format!("chave inválida '{h}'"))
+        })
+        .collect()
+}
+
+fn rule_arg(
+    args: &Args,
+    keys: &str,
+    threshold: &str,
+) -> Result<Option<rz_core::community::DecisionRule>, String> {
+    match args.get(keys) {
+        None => Ok(None),
+        Some(list) => {
+            let threshold: u8 = args
+                .req(threshold)?
+                .parse()
+                .map_err(|_| format!("--{threshold}: número inválido"))?;
+            let rule = rz_core::community::DecisionRule {
+                keys: parse_keys(list)?,
+                threshold,
+            };
+            rule.validate()?;
+            Ok(Some(rule))
+        }
+    }
+}
+
+fn hash_arg(args: &Args, name: &str) -> Result<Hash32, String> {
+    Hash32::from_hex(args.req(name)?).ok_or_else(|| format!("--{name}: hash inválido"))
+}
+
+fn approvals_arg(args: &Args) -> Result<Vec<rz_core::community::Approval>, String> {
+    args.req("approvals")?
+        .split(',')
+        .map(|h| {
+            let bytes = rz_crypto::hex::decode(h.trim()).ok_or("aprovação inválida")?;
+            rz_core::community::Approval::from_canonical_bytes(&bytes)
+                .map_err(|e| format!("aprovação inválida: {e}"))
+        })
+        .collect()
+}
+
+fn address_arg(args: &Args) -> Result<(String, rz_core::community::NameKind), String> {
+    let spec = args.req("name")?;
+    rz_core::community::parse_address(spec)
+        .ok_or_else(|| format!("--name: use zero://nome.tipo, recebido '{spec}'"))
+}
+
+fn cmd_community_declare(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let name = args.req("name")?.to_string();
+    rz_core::community::check_name(&name)?;
+    let manifest_hash = match (args.get("manifest"), args.get("manifest-hash")) {
+        (Some(path), _) => {
+            let bytes = fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+            rz_crypto::hash(rz_core::community::COMMUNITY_MANIFEST, &bytes)
+        }
+        (None, Some(_)) => hash_arg(args, "manifest-hash")?,
+        (None, None) => return Err("informe --manifest ou --manifest-hash".into()),
+    };
+    let rule = rule_arg(args, "keys", "threshold")?.ok_or("--keys é obrigatório")?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::DeclareCommunity {
+            name: name.clone(),
+            manifest_hash,
+            rule,
+        },
+        fee,
+    )?;
+    println!("declaração de zero://{name}.comunidade enviada");
+    println!("id da Comunidade: {id}");
+    println!("para o reconhecimento, proponha na categoria comunidade com --content-hash {id}");
+    Ok(())
+}
+
+fn cmd_community(args: &Args) -> Result<(), String> {
+    let (mut client, _) = open(args)?;
+    let name = args.req("name")?;
+    let (height, c) = rz_wallet::community(&mut client, name)?;
+    println!("altura: {height}");
+    let Some(c) = c else {
+        println!("nenhuma Comunidade chamada {name}");
+        return Ok(());
+    };
+    println!("zero://{}.comunidade", c.name);
+    println!("  id:          {}", c.id);
+    println!(
+        "  estado:      {}",
+        match c.status {
+            rz_core::community::CommunityStatus::Declared =>
+                format!("declarada (aguardando reconhecimento até {})", c.expires_at),
+            rz_core::community::CommunityStatus::Recognized => "reconhecida".into(),
+        }
+    );
+    println!("  manifesto:   {} (versão {})", c.manifest_hash, c.version);
+    println!(
+        "  decisão:     {} de {} chaves",
+        c.rule.threshold,
+        c.rule.keys.len()
+    );
+    for k in &c.rule.keys {
+        println!("    {k}");
+    }
+    println!("  histórico:");
+    for (v, h, at) in &c.history {
+        println!("    versão {v}: {h} (altura {at})");
+    }
+    Ok(())
+}
+
+fn cmd_community_approve(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let genesis_path = args.req("genesis")?;
+    let bytes = fs::read(genesis_path).map_err(|e| format!("{genesis_path}: {e}"))?;
+    let genesis =
+        Genesis::from_canonical_bytes(&bytes).map_err(|e| format!("genesis inválido: {e}"))?;
+    let community = hash_arg(args, "community")?;
+    let payload = match args.get("proposal") {
+        Some(_) => {
+            let proposal = hash_arg(args, "proposal")?;
+            let choice =
+                Choice::parse(args.req("choice")?).ok_or("--choice: use sim, nao ou abstencao")?;
+            rz_core::community::position_payload(&community, &proposal, choice)
+        }
+        None => {
+            let manifest = hash_arg(args, "manifest-hash")?;
+            let version: u32 = args
+                .req("version")?
+                .parse()
+                .map_err(|_| "--version: número inválido")?;
+            let rule = rule_arg(args, "new-keys", "new-threshold")?;
+            rz_core::community::update_payload(&community, &manifest, version, &rule)
+        }
+    };
+    let approval = rz_core::community::approve(&keys.transparent, &genesis.network_id, &payload);
+    println!("{}", rz_crypto::hex::encode(&approval.to_canonical_bytes()));
+    Ok(())
+}
+
+fn cmd_community_position(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let community = hash_arg(args, "community")?;
+    let proposal = hash_arg(args, "proposal")?;
+    let choice = Choice::parse(args.req("choice")?).ok_or("--choice: use sim, nao ou abstencao")?;
+    let approvals = approvals_arg(args)?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::CommunityPosition {
+            community,
+            proposal,
+            choice,
+            approvals,
+        },
+        fee,
+    )?;
+    println!("posição enviada: {id} (registrada; não altera o resultado oficial)");
+    Ok(())
+}
+
+fn cmd_community_update(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let community = hash_arg(args, "community")?;
+    let manifest_hash = hash_arg(args, "manifest-hash")?;
+    let version: u32 = args
+        .req("version")?
+        .parse()
+        .map_err(|_| "--version: número inválido")?;
+    let rule = rule_arg(args, "new-keys", "new-threshold")?;
+    let approvals = approvals_arg(args)?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::UpdateCommunity {
+            community,
+            manifest_hash,
+            version,
+            rule,
+            approvals,
+        },
+        fee,
+    )?;
+    println!("atualização enviada: {id}");
+    Ok(())
+}
+
+fn cmd_name(args: &Args, register: bool) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let (name, kind) = address_arg(args)?;
+    let target = hash_arg(args, "target")?;
+    let new_owner = match args.get("new-owner") {
+        Some(h) => Some(Address::from_hex(h).ok_or("--new-owner: endereço inválido")?),
+        None => None,
+    };
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let kind_tx = if register {
+        TxKind::RegisterName { name, kind, target }
+    } else {
+        TxKind::UpdateName {
+            name,
+            kind,
+            target,
+            new_owner,
+        }
+    };
+    let id = send_account(&mut client, &genesis, &keys, kind_tx, fee)?;
+    if register {
+        eprintln!("aviso: a taxa de registro de nome vai para o Pool permanente");
+    }
+    println!("transação: {id} — aceita, aguardando inclusão em bloco");
+    Ok(())
+}
+
+fn cmd_resolve(args: &Args) -> Result<(), String> {
+    let (name, kind) = address_arg(args)?;
+    let (mut client, _) = open(args)?;
+    let (target, owner) = rz_wallet::resolve(&mut client, &name, kind)?;
+    let address = rz_core::community::format_address(&name, kind);
+    match target {
+        Some(t) => {
+            println!("{address} → {t}");
+            if let Some(o) = owner {
+                println!("  dono: {o}");
+            }
+        }
+        None => println!("{address} não está registrado"),
+    }
     Ok(())
 }
 

@@ -6,6 +6,7 @@
 
 pub mod amount;
 pub mod block;
+pub mod community;
 pub mod consensus;
 pub mod genesis;
 pub mod governance;

@@ -538,6 +538,96 @@ fn corpus() -> Corpus {
         messages.push(Message::Transaction(tx.clone()));
     }
     txs.extend(market_txs);
+
+    // Comunidades e nomes (ADR-0015).
+    let ctrl = SecretKey::from_seed([33; 32]);
+    let rule = rz_core::community::DecisionRule {
+        keys: vec![ctrl.public_key(), validator().public_key()],
+        threshold: 1,
+    };
+    let cid = Hash32([0xc1; 32]);
+    let pos = rz_core::community::position_payload(&cid, &Hash32([2; 32]), Choice::Yes);
+    let community_txs = vec![
+        account_tx(
+            n,
+            TxKind::DeclareCommunity {
+                name: "cientistas".into(),
+                manifest_hash: Hash32([5; 32]),
+                rule: rule.clone(),
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::CommunityPosition {
+                community: cid,
+                proposal: Hash32([2; 32]),
+                choice: Choice::Yes,
+                approvals: vec![rz_core::community::approve(&ctrl, NET, &pos)],
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::UpdateCommunity {
+                community: cid,
+                manifest_hash: Hash32([6; 32]),
+                version: 2,
+                rule: Some(rule.clone()),
+                approvals: vec![rz_core::community::approve(&ctrl, NET, &pos)],
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::RegisterName {
+                name: "editorzero".into(),
+                kind: rz_core::community::NameKind::App,
+                target: Hash32([7; 32]),
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::UpdateName {
+                name: "editorzero".into(),
+                kind: rz_core::community::NameKind::App,
+                target: Hash32([8; 32]),
+                new_owner: Some(validator().public_key().address()),
+            },
+        ),
+    ];
+    messages.extend([
+        Message::GetCommunity {
+            name: "cientistas".into(),
+        },
+        Message::Community {
+            height: 4,
+            community: Some(Box::new(rz_core::community::Community {
+                id: cid,
+                name: "cientistas".into(),
+                declarant: rich().public_key().address(),
+                manifest_hash: Hash32([5; 32]),
+                version: 1,
+                rule,
+                status: rz_core::community::CommunityStatus::Recognized,
+                declared_at: 1,
+                expires_at: 99,
+                history: vec![(1, Hash32([5; 32]), 1)],
+            })),
+        },
+        Message::Resolve {
+            name: "editorzero".into(),
+            kind: rz_core::community::NameKind::App,
+        },
+        Message::Resolved {
+            height: 4,
+            name: "editorzero".into(),
+            kind: rz_core::community::NameKind::App,
+            target: Some(Hash32([7; 32])),
+            owner: None,
+        },
+    ]);
+    for tx in &community_txs {
+        messages.push(Message::Transaction(tx.clone()));
+    }
+    txs.extend(community_txs);
     messages.push(Message::StemTransaction(txs[1].clone()));
     txs.extend(shields.into_iter().skip(1).take(2));
 
