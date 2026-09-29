@@ -6,7 +6,7 @@ Implementação de referência e documentação da **Rede Zero / Exonet**, em fa
 
 A Rede Zero é uma rede descentralizada sobreposta à Internet, sem administrador central nem chave-mestra, com moeda nativa única (**ZERO**), privacidade por padrão, governança comunitária e continuidade independente de qualquer pessoa, empresa ou servidor. Veja o [Manifesto](docs/Manifesto_Exonet.pdf).
 
-> ⚠️ **DEVNET** — ambiente de desenvolvimento. O ZERO desta rede **não possui valor econômico**. O consenso definitivo ainda **não** está implementado, e as camadas de privacidade (transações, canal cifrado) ainda **não foram auditadas**; veja [limitações](#limitações-conhecidas-da-devnet).
+> ⚠️ **DEVNET** — ambiente de desenvolvimento. O ZERO desta rede **não possui valor econômico**. O consenso Zero-BFT e as camadas de privacidade (transações, canal cifrado) ainda **não foram auditados**; veja [limitações](#limitações-conhecidas-da-devnet).
 
 ---
 
@@ -18,8 +18,8 @@ Pré-requisito: [Rust](https://rustup.rs) estável.
 # Compila e roda todos os testes
 cargo test --workspace
 
-# Sobe uma DEVNET local com 3 validadores (Ctrl+C encerra)
-scripts/devnet.sh 3
+# Sobe uma DEVNET local com 4 validadores (Ctrl+C encerra)
+scripts/devnet.sh 4
 ```
 
 Em outro terminal:
@@ -59,6 +59,20 @@ $W governance --genesis $G --node 127.0.0.1:7100
 $W vote    --genesis $G --node 127.0.0.1:7100 --key devnet-data/validator-0.key --proposal ID --choice sim
 ```
 
+### Tornar-se validador (Zero-BFT)
+
+```bash
+# Vincule ao menos o mínimo (1000 ZERO na DEVNET); entra no conjunto na próxima época
+$W bond   --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key --amount 5000
+# Rode um node com essa chave como validador
+target/release/rede-zero-node run --genesis $G --data devnet-data/node-extra \
+    --listen 127.0.0.1:7110 --peer 127.0.0.1:7100 --validator-key devnet-data/faucet.key
+# Saída: o valor fica retido (e punível) durante o período de desvinculação
+$W unbond --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key --amount 5000
+```
+
+Todo bloco é final assim que recebe pré-compromissos de mais de 2/3 do poder de voto. Não há reorganização. Votar duas vezes na mesma rodada queima parte do vínculo e exclui o validador (`spec/CONSENSUS.md §6`).
+
 ### Privacidade do seu IP
 
 Por padrão a Wallet só conecta a nodes **locais**. Para usar um node remoto sem expor seu IP, use Tor:
@@ -90,7 +104,7 @@ crates/
   rz-crypto           BLAKE3, Ed25519, identidades, chaves     spec/CRYPTOGRAPHY.md
   rz-privacy          endereços furtivos, Pedersen, Bulletproofs, CLSAG            spec/PRIVACY.md
   rz-core             transações, estado, ZERO, governança, blocos, Genesis      spec/TRANSACTIONS.md, STATE.md, BLOCKS.md, GOVERNANCE.md
-  rz-chain            consenso (interface + DEVNET), forks, finalidade, mempool   spec/CONSENSUS.md
+  rz-chain            consenso Zero-BFT, cadeia finalizada, mempool               spec/CONSENSUS.md
   rz-p2p              canal cifrado, SOCKS5/Tor, mensagens, handshake, limites    spec/P2P.md
   rz-node             node: rede, Dandelion++, sincronização, produção de blocos, disco
   rz-wallet           wallet privada por padrão (biblioteca + CLI, separada do node)
@@ -103,7 +117,7 @@ scripts/devnet.sh     DEVNET local com N validadores
 |---|---|---|
 | [Manifesto Exonet](docs/Manifesto_Exonet.pdf) | Por quê? | inicial |
 | [REQUIREMENTS.md](docs/REQUIREMENTS.md) | O que deve existir? | 0.2.0 |
-| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.3.0 |
+| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.4.0 |
 | [DEMOCRACIA_ORGANICA.md](docs/DEMOCRACIA_ORGANICA.md) | Como indivíduos e Comunidades participam? | 0.1.0 (conceitual) |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Como os componentes se organizam? | 0.1.0 |
 | [SPECIFICATIONS.md](docs/SPECIFICATIONS.md) | Quais são as regras técnicas? | 0.1.0 |
@@ -125,7 +139,7 @@ Seguindo a ordem recomendada em `SPECIFICATIONS.md §73`:
 | Estado, ZERO e taxas | ✅ DEVNET | AT-STATE, AT-MONEY, AT-ZERO, AT-FEE, AT-DS |
 | Blocos e Genesis | ✅ DEVNET | AT-BLOCK-001..005, AT-GEN-001..002 |
 | P2P e sincronização | ✅ DEVNET | AT-P2P-001..005, AT-SYNC-001..003 |
-| Consenso | ⚠️ provisório (DEVNET apenas) | AT-CON-001..003, AT-FORK-001..002 |
+| Consenso Zero-BFT (finalidade imediata, validadores por vínculo, punição) | ✅ DEVNET — auditoria pendente ([ADR-0012](docs/adr/0012-consenso-zero-bft.md)) | AT-CON-001..003, simulação em `rz-chain` |
 | Privacidade transacional (RingCT) | ✅ DEVNET — auditoria pendente | testes em `rz-privacy`, `rz-core`, `rz-wallet` |
 | Privacidade de rede (Dandelion++) | ✅ DEVNET | teste de haste/embargo em `rz-node` |
 | Proteção do IP (canal cifrado, Tor, node privado) | ✅ DEVNET — auditoria pendente | `rz-p2p`, `rz-wallet/tests/network_privacy.rs` |
@@ -138,10 +152,10 @@ Seguindo a ordem recomendada em `SPECIFICATIONS.md §73`:
 
 Aceitas temporariamente e registradas em [`THREAT_MODEL.md §11`](docs/THREAT_MODEL.md):
 
-* **Consenso** por autoridade rotativa com validadores fixos no Genesis ([ADR-0006](docs/adr/0006-consenso-devnet.md)) — não atende `REQ-005`.
+* **Consenso Zero-BFT não auditado** ([ADR-0012](docs/adr/0012-consenso-zero-bft.md)): tolera menos de 1/3 do poder bizantino; com 1/3 ou mais offline a rede para (segurança antes de disponibilidade). Sem checkpoints contra ataque de longo alcance; o poder inicial vem do Genesis.
 * **Privacidade não auditada**: RingCT ([ADR-0009](docs/adr/0009-privacidade-transacional.md)) oferece anonimato probabilístico (anel de 11), não absoluto (`REQ-028`). Blindagens e retiradas são públicas.
 * **Canal cifrado e proteção de IP não auditados** ([ADR-0011](docs/adr/0011-protecao-do-ip.md)). Sem Tor e com `--direct`, o node escolhido vê seu IP.
-* **Governança**: enquanto os validadores forem fixos, eles dominam a câmara de contribuição; votos são públicos nesta versão.
+* **Governança**: a câmara de contribuição só pontua a produção de blocos, o que favorece validadores; votos são públicos nesta versão.
 * **Chaves em arquivo local** sem cifragem (permissão `0600`).
 * Sem emissão após o Genesis; política monetária a definir.
 

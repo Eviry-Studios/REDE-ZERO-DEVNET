@@ -1,7 +1,7 @@
 # spec/BLOCKS.md — Blocos e Genesis
 
-**Versão:** 0.1.0 (DEVNET)
-**Relacionamento:** `SPECIFICATIONS.md §15–§18, §66–§67`, ADR-0006, THR-CON-001, THR-CON-005, THR-CON-006
+**Versão:** 0.2.0 (DEVNET)
+**Relacionamento:** `SPECIFICATIONS.md §15–§18, §66–§67`, ADR-0012, THR-CON-001, THR-CON-005, THR-CON-006
 **Implementação de referência:** `crates/rz-core/src/block.rs`, `crates/rz-core/src/genesis.rs`
 
 ---
@@ -13,7 +13,7 @@ BlockHeader {
   version    : u16         // = 1
   height     : u64
   parent     : fixed[32]   // BlockId do pai (hash do Genesis para height = 1)
-  slot       : u64
+  round      : u64         // rodada Zero-BFT em que o bloco foi montado
   proposer   : fixed[32]   // chave pública do produtor
   tx_root    : fixed[32]
   state_root : fixed[32]
@@ -26,7 +26,16 @@ Block {
 }
 ```
 
-Não há timestamp livre. O instante de um bloco é `genesis_time_ms + slot × slot_duration_ms` (THR-CON-006).
+Não há timestamp nem slot: a ordem é dada pela altura, e o tempo protocolar é medido em blocos (THR-CON-006). O bloco só é aceito na cadeia acompanhado do certificado de finalização:
+
+```text
+CommittedBlock {
+  block  : Block
+  commit : Commit      // pré-compromissos de > 2/3 do poder (spec/CONSENSUS.md §4.3)
+}
+```
+
+É o `CommittedBlock` que é gravado em disco e trocado na sincronização.
 
 ## 2. Identificadores e compromissos
 
@@ -45,15 +54,14 @@ O BlockId do "bloco 0" é o hash do Genesis.
 | 1 | `version == 1` | `UnsupportedVersion` |
 | 2 | `parent` igual ao BlockId do pai | `WrongParent` |
 | 3 | `height == pai.height + 1` | `WrongHeight` |
-| 4 | `slot > pai.slot` (pai diferente do Genesis) | `SlotNotIncreasing` |
-| 5 | `tx_root` confere | `TxRootMismatch` |
-| 6 | Assinatura do `proposer` válida | `Signature` |
-| 7 | `len(txs) ≤ genesis.max_block_txs` | `TooManyTransactions` |
-| 8 | Toda transação válida, aplicada em ordem | `Transaction { index }` |
-| 9 | Invariante monetária preservada | `State` |
-| 10 | `state_root` igual à raiz do estado resultante | `StateRootMismatch` |
+| 4 | `tx_root` confere | `TxRootMismatch` |
+| 5 | Assinatura do `proposer` válida | `Signature` |
+| 6 | `len(txs) ≤ genesis.max_block_txs` | `TooManyTransactions` |
+| 7 | Toda transação válida, aplicada em ordem | `Transaction { index }` |
+| 8 | Invariante monetária preservada | `State` |
+| 9 | `state_root` igual à raiz do estado resultante | `StateRootMismatch` |
 
-Regras de consenso (quem pode produzir cada slot, limites temporais, escolha de fork e finalidade) estão em `spec/CONSENSUS.md`.
+Regras de consenso (proponente sorteado para a altura e rodada, certificado de finalização) estão em `spec/CONSENSUS.md`. Ao fim de cada bloco, o estado executa as regras de participação (liberação de desvinculações, recomputação do conjunto na época) e de governança (`spec/STATE.md`).
 
 ## 4. Encadeamento
 
@@ -66,17 +74,21 @@ Genesis {
   protocol_version : u16           // = 1
   kind             : u8            // 0 DEVNET, 1 TESTNET, 2 STAGING, 3 MAINNET
   network_id       : string        // máx. 64, [a-z0-9-], deve conter o nome do ambiente
-  genesis_time_ms  : u64
-  slot_duration_ms : u64           // > 0
-  finality_depth   : u32           // > 0
+  consensus        : ConsensusParams   // spec/CONSENSUS.md §2
   min_fee          : u64
   max_block_txs    : u32           // 1..=10 000
-  validators       : list<fixed[32]>   // não vazia, sem repetição
+  validators       : list<{ key: fixed[32], stake: u64 }>
+                     // não vazia, sem repetição, ≤ max_validators, stake ≥ min_bond
   allocations      : list<{ address: fixed[32], amount: u64 }>  // ordenada, sem repetição, amount > 0
+  governance       : GovernanceParams  // spec/GOVERNANCE.md
 }
+
+oferta_total = Σ allocations.amount + Σ validators.stake
 
 genesis_hash = H(GENESIS, enc(Genesis))
 ```
+
+Os `stake` do Genesis tornam-se os vínculos iniciais e formam o conjunto de validadores da altura 1.
 
 Um Node só aceita dados cujo `network_id` e `genesis_hash` coincidam com os seus (`SPEC §66`, `AT-GEN-002`).
 

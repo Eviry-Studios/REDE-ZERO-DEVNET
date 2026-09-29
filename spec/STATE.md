@@ -1,6 +1,6 @@
 # spec/STATE.md — Estado e ZERO
 
-**Versão:** 0.1.0 (DEVNET)
+**Versão:** 0.2.0 (DEVNET)
 **Relacionamento:** `SPECIFICATIONS.md §12–§14, §33–§37`, ADR-0005, THR-TX-002, THR-TX-003, THR-TX-005
 **Implementação de referência:** `crates/rz-core/src/state.rs`, `crates/rz-core/src/amount.rs`
 
@@ -40,7 +40,7 @@ state_root = H(STATE_ROOT,
 
 ## 4. Estado inicial
 
-Definido pelo Genesis (`spec/BLOCKS.md §5`): cada alocação cria uma conta com o saldo indicado e `nonce = 0`. `total_supply` é a soma das alocações.
+Definido pelo Genesis (`spec/BLOCKS.md §5`): cada alocação cria uma conta com o saldo indicado e `nonce = 0`; cada validador do Genesis recebe um vínculo igual ao seu `stake`. `total_supply` é a soma das alocações e dos `stake`.
 
 ## 5. Emissão
 
@@ -57,8 +57,12 @@ As taxas de todas as transações de um bloco são somadas e creditadas ao ender
 Após aplicar cada bloco:
 
 ```text
-Σ balance(conta) + shielded_supply == total_supply
+Σ balance(conta) + shielded_supply
+  + Σ bloqueios de governança + Σ depósitos retidos
+  + Σ vínculos de validador + Σ desvinculações pendentes      == total_supply
 ```
+
+A punição (`spec/CONSENSUS.md §6.2`) é a única operação que reduz `total_supply`: o valor queimado sai dos vínculos e da oferta ao mesmo tempo.
 
 Um bloco que viole esta igualdade é inválido. A verificação é redundante com as regras de transação, e existe como defesa em profundidade.
 

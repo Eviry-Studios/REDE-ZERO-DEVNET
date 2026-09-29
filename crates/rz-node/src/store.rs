@@ -1,6 +1,6 @@
-//! Armazenamento local append-only de blocos.
+//! Armazenamento local append-only de blocos finalizados (com certificado).
 //!
-//! Formato: sequência de `u32 comprimento ‖ enc(Block)`. Na inicialização o
+//! Formato: sequência de `u32 comprimento ‖ enc(CommittedBlock)`. Na inicialização o
 //! Node reprocessa todos os blocos desde o Genesis, verificando cada um
 //! (`SPEC §28`): o disco também é tratado como fonte não confiável.
 
@@ -9,7 +9,7 @@ use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
 use rz_codec::{Decode, Encode};
-use rz_core::Block;
+use rz_core::CommittedBlock;
 
 const MAX_STORED_BLOCK: u32 = 64 * 1024 * 1024;
 
@@ -21,7 +21,7 @@ pub struct BlockStore {
 impl BlockStore {
     /// Abre (ou cria) o arquivo e retorna os blocos já gravados. Um final
     /// truncado ou corrompido (ex.: queda de energia) é descartado.
-    pub fn open(dir: &Path) -> io::Result<(Self, Vec<Block>)> {
+    pub fn open(dir: &Path) -> io::Result<(Self, Vec<CommittedBlock>)> {
         fs::create_dir_all(dir)?;
         let path = dir.join("blocks.log");
         let (blocks, valid_len) = Self::read_all(&path)?;
@@ -43,7 +43,7 @@ impl BlockStore {
         Ok(())
     }
 
-    fn read_all(path: &Path) -> io::Result<(Vec<Block>, u64)> {
+    fn read_all(path: &Path) -> io::Result<(Vec<CommittedBlock>, u64)> {
         let f = match File::open(path) {
             Ok(f) => f,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok((Vec::new(), 0)),
@@ -65,7 +65,7 @@ impl BlockStore {
             if r.read_exact(&mut body).is_err() {
                 break;
             }
-            match Block::from_canonical_bytes(&body) {
+            match CommittedBlock::from_canonical_bytes(&body) {
                 Ok(b) => blocks.push(b),
                 Err(_) => break,
             }
@@ -74,7 +74,7 @@ impl BlockStore {
         Ok((blocks, offset))
     }
 
-    pub fn append(&mut self, block: &Block) -> io::Result<()> {
+    pub fn append(&mut self, block: &CommittedBlock) -> io::Result<()> {
         let body = block.to_canonical_bytes();
         let len = u32::try_from(body.len())
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "bloco grande demais"))?;

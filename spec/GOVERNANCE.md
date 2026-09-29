@@ -1,6 +1,6 @@
 # spec/GOVERNANCE.md — Governança
 
-**Versão:** 0.1.0 (DEVNET) — aprovada e implementada
+**Versão:** 0.2.0 (DEVNET) — aprovada e implementada
 **Relacionamento:** ADR-0008, REQ-040..045, `ARCHITECTURE.md §31–32`, `SPECIFICATIONS.md §43–47`, THR-GOV-001..006
 
 ---
@@ -47,7 +47,7 @@ Durações são expressas em **blocos**, nunca em tempo de relógio (THR-CON-006
 | `0x11` | `Unlock` | `lock_id` | devolve após `unlock_height` |
 | `0x12` | `Propose` | `category, content_hash, params, release_id?` | cria proposta e debita depósito |
 | `0x13` | `Vote` | `proposal_id, choice ∈ {SIM, NÃO, ABSTENÇÃO}` | registra/substitui o voto da conta |
-| `0x14` | `ReportEquivocation` | `first, second: (BlockHeader, assinatura)` | zera os pontos de contribuição do produtor que assinou dois cabeçalhos distintos para o mesmo slot |
+| `0x14` | `ReportEquivocation` | `first, second: (BlockHeader, assinatura)` | pune o proponente que assinou dois cabeçalhos distintos para a mesma altura e rodada (`spec/CONSENSUS.md §6.2`) |
 
 Formatos exatos:
 
@@ -57,11 +57,19 @@ Unlock             { lock_id: u64 }                                  dono, h ≥
 Propose            { category: u8, content_hash: fixed[32], params: list<ParamChange> (≤16),
                      release_id: option<fixed[32]>, deposit: u64 }   deposit ≥ gov_deposit vigente
 Vote               { proposal: fixed[32], choice: u8 }               voting_start ≤ h < voting_end
-ReportEquivocation { first: SignedHeader, second: SignedHeader }     mesmo produtor e slot, ids distintos, assinaturas válidas
+ReportEquivocation { first: SignedHeader, second: SignedHeader }     mesmo proponente, altura e rodada, ids distintos, assinaturas válidas
 
 ParamChange (tag u8): 0 min_fee u64 | 1 max_block_txs u32 | 2 gov_deposit | 3 analysis_blocks | 4 voting_blocks
                       | 5 ordinary_delay_blocks | 6 constitutional_delay_blocks | 7 lock_min_blocks
-                      | 8 lock_max_blocks | 9 contribution_half_life_blocks          (u64, exceto tag 1)
+                      | 8 lock_max_blocks | 9 contribution_half_life_blocks
+                      | 10 epoch_blocks | 11 max_validators | 12 min_bond | 13 unbonding_blocks
+                      | 14 slash_bps | 15 block_interval_ms | 16 timeout_propose_ms
+                      | 17 timeout_prevote_ms | 18 timeout_precommit_ms | 19 timeout_delta_ms
+                                                                     (u64, exceto tag 1)
+
+Tags 0 e 1 são da categoria ordinária; as demais, constitucional. Os parâmetros
+resultantes são validados antes de a proposta ser aceita (tags 10..19:
+spec/CONSENSUS.md §2).
 ```
 
 `h` é a altura do bloco em que a transação é incluída. O identificador da proposta é o `TxId` da transação `Propose`.
@@ -116,7 +124,7 @@ T[i] = round(10⁶ × 2^(−i/16)),  i = 0..15
 | Tarefa de computação verificada | a definir |
 | Atestação de contribuição defensiva | a definir |
 | Recompensa aprovada por governança | definida na proposta |
-| Violação comprovada (`ReportEquivocation`) | zera os pontos |
+| Violação comprovada (`ReportEquivocation`, `ReportDoubleVote`) | zera os pontos (e queima `slash_bps` do vínculo, `spec/CONSENSUS.md §6`) |
 
 ## 5. Apuração
 
@@ -160,7 +168,7 @@ A categoria de uma proposta é verificável: cada parâmetro do protocolo perten
 
 ## 8. Estado e invariante monetária
 
-A parte de governança do estado (parâmetros vigentes, bloqueios, próximo id de bloqueio, propostas com votos e apuração, pontos de contribuição e comunidades aprovadas) entra na raiz do estado via `H("rede-zero/governance-root/v1", …)`.
+A parte de governança do estado (parâmetros vigentes, bloqueios, próximo id de bloqueio, propostas com votos e apuração, pontos de contribuição, comunidades aprovadas e, após elas, a participação do consenso: vínculos, desvinculações pendentes, validadores excluídos, infrações já punidas, conjunto do próximo bloco e do último bloco) entra na raiz do estado via `H("rede-zero/governance-root/v1", …)`.
 
 ```text
 Σ saldos + oferta_privada + Σ bloqueios + Σ depósitos_de_propostas_pendentes == oferta_total

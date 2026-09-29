@@ -111,6 +111,7 @@ pub struct ProtocolParams {
     pub min_fee: u64,
     pub max_block_txs: u32,
     pub governance: GovernanceParams,
+    pub consensus: crate::consensus::ConsensusParams,
 }
 
 impl ProtocolParams {
@@ -118,6 +119,7 @@ impl ProtocolParams {
         if self.max_block_txs == 0 || self.max_block_txs as usize > crate::limits::MAX_BLOCK_TXS {
             return Err("max_block_txs fora dos limites");
         }
+        self.consensus.validate()?;
         self.governance.validate()
     }
 }
@@ -126,7 +128,8 @@ impl Encode for ProtocolParams {
     fn encode(&self, e: &mut Encoder) {
         e.u64(self.min_fee)
             .u32(self.max_block_txs)
-            .put(&self.governance);
+            .put(&self.governance)
+            .put(&self.consensus);
     }
 }
 
@@ -136,6 +139,7 @@ impl Decode for ProtocolParams {
             min_fee: d.u64()?,
             max_block_txs: d.u32()?,
             governance: d.get()?,
+            consensus: d.get()?,
         })
     }
 }
@@ -228,6 +232,17 @@ pub enum ParamChange {
     LockMinBlocks(u64),
     LockMaxBlocks(u64),
     ContributionHalfLife(u64),
+    // Consenso Zero-BFT (ADR-0012); todos constitucionais.
+    EpochBlocks(u64),
+    MaxValidators(u64),
+    MinBond(u64),
+    UnbondingBlocks(u64),
+    SlashBps(u64),
+    BlockInterval(u64),
+    TimeoutPropose(u64),
+    TimeoutPrevote(u64),
+    TimeoutPrecommit(u64),
+    TimeoutDelta(u64),
 }
 
 impl ParamChange {
@@ -250,6 +265,16 @@ impl ParamChange {
             ParamChange::LockMinBlocks(_) => 7,
             ParamChange::LockMaxBlocks(_) => 8,
             ParamChange::ContributionHalfLife(_) => 9,
+            ParamChange::EpochBlocks(_) => 10,
+            ParamChange::MaxValidators(_) => 11,
+            ParamChange::MinBond(_) => 12,
+            ParamChange::UnbondingBlocks(_) => 13,
+            ParamChange::SlashBps(_) => 14,
+            ParamChange::BlockInterval(_) => 15,
+            ParamChange::TimeoutPropose(_) => 16,
+            ParamChange::TimeoutPrevote(_) => 17,
+            ParamChange::TimeoutPrecommit(_) => 18,
+            ParamChange::TimeoutDelta(_) => 19,
         }
     }
 
@@ -265,6 +290,16 @@ impl ParamChange {
             ParamChange::LockMinBlocks(_) => "lock_min_blocks",
             ParamChange::LockMaxBlocks(_) => "lock_max_blocks",
             ParamChange::ContributionHalfLife(_) => "contribution_half_life_blocks",
+            ParamChange::EpochBlocks(_) => "epoch_blocks",
+            ParamChange::MaxValidators(_) => "max_validators",
+            ParamChange::MinBond(_) => "min_bond",
+            ParamChange::UnbondingBlocks(_) => "unbonding_blocks",
+            ParamChange::SlashBps(_) => "slash_bps",
+            ParamChange::BlockInterval(_) => "block_interval_ms",
+            ParamChange::TimeoutPropose(_) => "timeout_propose_ms",
+            ParamChange::TimeoutPrevote(_) => "timeout_prevote_ms",
+            ParamChange::TimeoutPrecommit(_) => "timeout_precommit_ms",
+            ParamChange::TimeoutDelta(_) => "timeout_delta_ms",
         }
     }
 
@@ -282,6 +317,16 @@ impl ParamChange {
             "lock_min_blocks" => ParamChange::LockMinBlocks(v),
             "lock_max_blocks" => ParamChange::LockMaxBlocks(v),
             "contribution_half_life_blocks" => ParamChange::ContributionHalfLife(v),
+            "epoch_blocks" => ParamChange::EpochBlocks(v),
+            "max_validators" => ParamChange::MaxValidators(v),
+            "min_bond" => ParamChange::MinBond(v),
+            "unbonding_blocks" => ParamChange::UnbondingBlocks(v),
+            "slash_bps" => ParamChange::SlashBps(v),
+            "block_interval_ms" => ParamChange::BlockInterval(v),
+            "timeout_propose_ms" => ParamChange::TimeoutPropose(v),
+            "timeout_prevote_ms" => ParamChange::TimeoutPrevote(v),
+            "timeout_precommit_ms" => ParamChange::TimeoutPrecommit(v),
+            "timeout_delta_ms" => ParamChange::TimeoutDelta(v),
             _ => return None,
         })
     }
@@ -297,7 +342,17 @@ impl ParamChange {
             | ParamChange::ConstitutionalDelay(v)
             | ParamChange::LockMinBlocks(v)
             | ParamChange::LockMaxBlocks(v)
-            | ParamChange::ContributionHalfLife(v) => v,
+            | ParamChange::ContributionHalfLife(v)
+            | ParamChange::EpochBlocks(v)
+            | ParamChange::MaxValidators(v)
+            | ParamChange::MinBond(v)
+            | ParamChange::UnbondingBlocks(v)
+            | ParamChange::SlashBps(v)
+            | ParamChange::BlockInterval(v)
+            | ParamChange::TimeoutPropose(v)
+            | ParamChange::TimeoutPrevote(v)
+            | ParamChange::TimeoutPrecommit(v)
+            | ParamChange::TimeoutDelta(v) => v,
         }
     }
 
@@ -313,6 +368,20 @@ impl ParamChange {
             ParamChange::LockMinBlocks(v) => p.governance.lock_min_blocks = v,
             ParamChange::LockMaxBlocks(v) => p.governance.lock_max_blocks = v,
             ParamChange::ContributionHalfLife(v) => p.governance.contribution_half_life_blocks = v,
+            ParamChange::EpochBlocks(v) => p.consensus.epoch_blocks = v,
+            ParamChange::MaxValidators(v) => {
+                p.consensus.max_validators = u32::try_from(v).unwrap_or(u32::MAX)
+            }
+            ParamChange::MinBond(v) => p.consensus.min_bond = v,
+            ParamChange::UnbondingBlocks(v) => p.consensus.unbonding_blocks = v,
+            ParamChange::SlashBps(v) => {
+                p.consensus.slash_bps = u32::try_from(v).unwrap_or(u32::MAX)
+            }
+            ParamChange::BlockInterval(v) => p.consensus.block_interval_ms = v,
+            ParamChange::TimeoutPropose(v) => p.consensus.timeout_propose_ms = v,
+            ParamChange::TimeoutPrevote(v) => p.consensus.timeout_prevote_ms = v,
+            ParamChange::TimeoutPrecommit(v) => p.consensus.timeout_precommit_ms = v,
+            ParamChange::TimeoutDelta(v) => p.consensus.timeout_delta_ms = v,
         }
     }
 }
@@ -344,6 +413,16 @@ impl Decode for ParamChange {
             7 => ParamChange::LockMinBlocks(d.u64()?),
             8 => ParamChange::LockMaxBlocks(d.u64()?),
             9 => ParamChange::ContributionHalfLife(d.u64()?),
+            10 => ParamChange::EpochBlocks(d.u64()?),
+            11 => ParamChange::MaxValidators(d.u64()?),
+            12 => ParamChange::MinBond(d.u64()?),
+            13 => ParamChange::UnbondingBlocks(d.u64()?),
+            14 => ParamChange::SlashBps(d.u64()?),
+            15 => ParamChange::BlockInterval(d.u64()?),
+            16 => ParamChange::TimeoutPropose(d.u64()?),
+            17 => ParamChange::TimeoutPrevote(d.u64()?),
+            18 => ParamChange::TimeoutPrecommit(d.u64()?),
+            19 => ParamChange::TimeoutDelta(d.u64()?),
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }
@@ -928,6 +1007,7 @@ mod tests {
             min_fee: 1,
             max_block_txs: 10,
             governance: g(),
+            consensus: crate::consensus::ConsensusParams::fast(200),
         };
         assert!(check_proposal_shape(Category::Ordinary, &[ParamChange::MinFee(5)], &cur).is_ok());
         // Parâmetro constitucional com categoria ordinária: inválido.
@@ -952,6 +1032,46 @@ mod tests {
         assert!(
             check_proposal_shape(Category::Ordinary, &[ParamChange::MaxBlockTxs(0)], &cur).is_err()
         );
+        // Parâmetros de consenso: constitucionais e validados após aplicados.
+        let slash =
+            |v| check_proposal_shape(Category::Constitutional, &[ParamChange::SlashBps(v)], &cur);
+        assert!(slash(1_000).is_ok());
+        assert!(slash(10_001).is_err());
+        assert!(slash(u64::MAX).is_err());
+        assert!(
+            check_proposal_shape(Category::Ordinary, &[ParamChange::MinBond(5)], &cur).is_err()
+        );
+        assert!(check_proposal_shape(
+            Category::Constitutional,
+            &[ParamChange::TimeoutPropose(0)],
+            &cur
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn consensus_params_roundtrip() {
+        for name in [
+            "epoch_blocks",
+            "max_validators",
+            "min_bond",
+            "unbonding_blocks",
+            "slash_bps",
+            "block_interval_ms",
+            "timeout_propose_ms",
+            "timeout_prevote_ms",
+            "timeout_precommit_ms",
+            "timeout_delta_ms",
+        ] {
+            let p = ParamChange::parse(name, "7").unwrap();
+            assert_eq!(p.name(), name);
+            assert_eq!(p.value(), 7);
+            assert_eq!(p.category(), Category::Constitutional);
+            assert_eq!(
+                ParamChange::from_canonical_bytes(&p.to_canonical_bytes()).unwrap(),
+                p
+            );
+        }
     }
 
     #[test]

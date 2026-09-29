@@ -6,7 +6,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use rz_codec::{Decode, DecodeError, Decoder, Encode, Encoder};
 use rz_core::governance::{LockEntry, ProposalSummary, ProtocolParams};
 use rz_core::limits::MAX_NETWORK_ID_LEN;
-use rz_core::{Block, BlockId, Transaction, TxId};
+use rz_core::{BlockId, CommittedBlock, Proposal, Transaction, TxId, Vote};
 use rz_crypto::{Address, Hash32};
 use rz_privacy::note::OutputData;
 
@@ -248,12 +248,12 @@ pub enum Message {
     Peers(Vec<PeerAddr>),
     /// `0x05` — propagação de transação.
     Transaction(Transaction),
-    /// `0x06` — propagação de bloco.
-    Block(Box<Block>),
+    /// `0x06` — propagação de bloco finalizado (com certificado).
+    Block(Box<CommittedBlock>),
     /// `0x07` — solicita blocos da cadeia preferida a partir de uma altura.
     GetBlocks { from_height: u64, max: u32 },
-    /// `0x08`
-    Blocks(Vec<Block>),
+    /// `0x08` — blocos finalizados consecutivos.
+    Blocks(Vec<CommittedBlock>),
     /// `0x09` — consulta de conta (usada por Wallets).
     GetAccount(Address),
     /// `0x0a`
@@ -303,6 +303,10 @@ pub enum Message {
         proposals: Vec<ProposalSummary>,
         locks: Vec<LockEntry>,
     },
+    /// `0x16` — proposta de bloco (consenso Zero-BFT).
+    ConsensusProposal(Box<Proposal>),
+    /// `0x17` — voto de consenso.
+    ConsensusVote(Vote),
 }
 
 impl Encode for Message {
@@ -407,6 +411,12 @@ impl Encode for Message {
                     .list(proposals)
                     .list(locks);
             }
+            Message::ConsensusProposal(p) => {
+                e.u8(0x16).put(p.as_ref());
+            }
+            Message::ConsensusVote(v) => {
+                e.u8(0x17).put(v);
+            }
         }
     }
 }
@@ -473,6 +483,8 @@ impl Decode for Message {
                 proposals: d.list(MAX_PROPOSALS_PER_MSG)?,
                 locks: d.list(MAX_LOCKS_PER_MSG)?,
             },
+            0x16 => Message::ConsensusProposal(Box::new(d.get()?)),
+            0x17 => Message::ConsensusVote(d.get()?),
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }
@@ -504,6 +516,8 @@ impl Message {
             Message::StemTransaction(_) => "STEM_TRANSACTION",
             Message::GetGovernance { .. } => "GET_GOVERNANCE",
             Message::Governance { .. } => "GOVERNANCE",
+            Message::ConsensusProposal(_) => "CONSENSUS_PROPOSAL",
+            Message::ConsensusVote(_) => "CONSENSUS_VOTE",
         }
     }
 }

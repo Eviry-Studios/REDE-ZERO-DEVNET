@@ -6,6 +6,7 @@
 
 pub mod amount;
 pub mod block;
+pub mod consensus;
 pub mod genesis;
 pub mod governance;
 #[cfg(test)]
@@ -17,7 +18,10 @@ pub mod tx;
 
 pub use amount::{format_zero, parse_zero, UNITS_PER_ZERO};
 pub use block::{apply_block, Block, BlockError, BlockHeader, BlockId, SignedHeader};
-pub use genesis::{Allocation, Genesis, GenesisError, NetworkKind};
+pub use consensus::{
+    Commit, CommittedBlock, ConsensusParams, Proposal, Validator, ValidatorSet, Vote, VoteType,
+};
+pub use genesis::{Allocation, Genesis, GenesisError, GenesisValidator, NetworkKind};
 pub use governance::{
     Category, Choice, GovernanceParams, ParamChange, ProposalStatus, ProtocolParams,
 };

@@ -47,15 +47,16 @@ impl Decode for BlockId {
     }
 }
 
-/// Cabeçalho do bloco. Não contém timestamp livre: o tempo é derivado do
-/// slot (`genesis_time + slot × slot_duration`), o que evita manipulação
-/// temporal (THR-CON-006) e metadados desnecessários.
+/// Cabeçalho do bloco. Não contém timestamp: regras temporais usam alturas,
+/// o que evita manipulação de relógio (THR-CON-006) e metadados
+/// desnecessários.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockHeader {
     pub version: u16,
     pub height: u64,
     pub parent: BlockId,
-    pub slot: u64,
+    /// Rodada de consenso em que o bloco foi proposto (ADR-0012).
+    pub round: u64,
     pub proposer: PublicKey,
     pub tx_root: Hash32,
     pub state_root: Hash32,
@@ -66,7 +67,7 @@ impl Encode for BlockHeader {
         e.u16(self.version)
             .u64(self.height)
             .put(&self.parent)
-            .u64(self.slot)
+            .u64(self.round)
             .put(&self.proposer)
             .put(&self.tx_root)
             .put(&self.state_root);
@@ -79,7 +80,7 @@ impl Decode for BlockHeader {
             version: d.u16()?,
             height: d.u64()?,
             parent: d.get()?,
-            slot: d.u64()?,
+            round: d.u64()?,
             proposer: d.get()?,
             tx_root: d.get()?,
             state_root: d.get()?,
@@ -176,7 +177,7 @@ impl Block {
         parent: BlockId,
         parent_height: u64,
         parent_state: &State,
-        slot: u64,
+        round: u64,
         txs: Vec<Transaction>,
         key: &SecretKey,
     ) -> Result<(Block, State), BlockError> {
@@ -186,7 +187,7 @@ impl Block {
             version: BLOCK_VERSION,
             height: parent_height + 1,
             parent,
-            slot,
+            round,
             proposer,
             tx_root: tx_root(&txs),
             state_root: state.root(),
@@ -251,7 +252,7 @@ fn execute(
         .credit_fees(proposer.address(), fees)
         .map_err(BlockError::State)?;
     state
-        .end_block(proposer, height)
+        .end_block(proposer, height, parent_state.validators().clone())
         .map_err(BlockError::State)?;
     // Defesa em profundidade: nenhum bloco pode alterar a oferta (INV-003).
     state.check_supply().map_err(BlockError::State)?;
@@ -266,7 +267,6 @@ pub fn apply_block(
     genesis: &Genesis,
     parent: BlockId,
     parent_height: u64,
-    parent_slot: Option<u64>,
     parent_state: &State,
     block: &Block,
 ) -> Result<State, BlockError> {
@@ -282,11 +282,6 @@ pub fn apply_block(
             expected: parent_height.saturating_add(1),
             got: h.height,
         });
-    }
-    if let Some(ps) = parent_slot {
-        if h.slot <= ps {
-            return Err(BlockError::SlotNotIncreasing);
-        }
     }
     if h.tx_root != tx_root(&block.txs) {
         return Err(BlockError::TxRootMismatch);
@@ -304,7 +299,6 @@ pub enum BlockError {
     UnsupportedVersion(u16),
     WrongParent,
     WrongHeight { expected: u64, got: u64 },
-    SlotNotIncreasing,
     TxRootMismatch,
     StateRootMismatch,
     Signature,
@@ -325,7 +319,6 @@ impl fmt::Display for BlockError {
                     "altura inconsistente: esperado {expected}, recebido {got}"
                 )
             }
-            Self::SlotNotIncreasing => write!(f, "slot não é maior que o do pai"),
             Self::TxRootMismatch => write!(f, "tx_root não confere"),
             Self::StateRootMismatch => write!(f, "state_root não confere"),
             Self::Signature => write!(f, "assinatura do bloco inválida"),
@@ -385,7 +378,7 @@ mod tests {
     #[test]
     fn at_block_001_valid() {
         let (g, s, gid, b, s2) = build(vec![tx(0, 10), tx(1, 20)]);
-        let applied = apply_block(&g, gid, 0, None, &s, &b).unwrap();
+        let applied = apply_block(&g, gid, 0, &s, &b).unwrap();
         assert_eq!(applied, s2);
         // Taxas creditadas ao produtor.
         assert_eq!(
@@ -418,7 +411,7 @@ mod tests {
     fn at_block_003_wrong_parent() {
         let (g, s, _, b, _) = build(vec![]);
         assert_eq!(
-            apply_block(&g, BlockId(Hash32([7; 32])), 0, None, &s, &b),
+            apply_block(&g, BlockId(Hash32([7; 32])), 0, &s, &b),
             Err(BlockError::WrongParent)
         );
     }
@@ -431,23 +424,17 @@ mod tests {
         let mut t = b.clone();
         t.txs.clear();
         assert_eq!(
-            apply_block(&g, gid, 0, None, &s, &t),
+            apply_block(&g, gid, 0, &s, &t),
             Err(BlockError::TxRootMismatch)
         );
 
         let mut t = b.clone();
         t.header.state_root = Hash32([1; 32]);
-        assert_eq!(
-            apply_block(&g, gid, 0, None, &s, &t),
-            Err(BlockError::Signature)
-        );
+        assert_eq!(apply_block(&g, gid, 0, &s, &t), Err(BlockError::Signature));
 
         let mut t = b.clone();
         t.signature.0[5] ^= 1;
-        assert_eq!(
-            apply_block(&g, gid, 0, None, &s, &t),
-            Err(BlockError::Signature)
-        );
+        assert_eq!(apply_block(&g, gid, 0, &s, &t), Err(BlockError::Signature));
     }
 
     // AT-BLOCK-005 — altura inconsistente
@@ -455,7 +442,7 @@ mod tests {
     fn at_block_005_height() {
         let (g, s, gid, b, _) = build(vec![]);
         assert!(matches!(
-            apply_block(&g, gid, 5, None, &s, &b),
+            apply_block(&g, gid, 5, &s, &b),
             Err(BlockError::WrongHeight { .. })
         ));
     }
@@ -468,7 +455,7 @@ mod tests {
             version: BLOCK_VERSION,
             height: 1,
             parent: gid,
-            slot: 1,
+            round: 1,
             proposer: validator().public_key(),
             tx_root: tx_root(&[]),
             state_root: Hash32([9; 32]),
@@ -484,17 +471,8 @@ mod tests {
             signature,
         };
         assert_eq!(
-            apply_block(&g, gid, 0, None, &s, &b),
+            apply_block(&g, gid, 0, &s, &b),
             Err(BlockError::StateRootMismatch)
-        );
-    }
-
-    #[test]
-    fn slot_must_increase() {
-        let (g, s, gid, b, _) = build(vec![]);
-        assert_eq!(
-            apply_block(&g, gid, 0, Some(1), &s, &b),
-            Err(BlockError::SlotNotIncreasing)
         );
     }
 
@@ -502,8 +480,8 @@ mod tests {
     #[test]
     fn at_det_003_same_block() {
         let (g, s, gid, b, _) = build(vec![tx(0, 10)]);
-        let a = apply_block(&g, gid, 0, None, &s, &b).unwrap();
-        let c = apply_block(&g, gid, 0, None, &s, &b).unwrap();
+        let a = apply_block(&g, gid, 0, &s, &b).unwrap();
+        let c = apply_block(&g, gid, 0, &s, &b).unwrap();
         assert_eq!(a.root(), c.root());
     }
 

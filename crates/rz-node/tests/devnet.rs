@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 
 use rz_codec::Encode;
 use rz_core::{
-    Allocation, Block, BlockHeader, Genesis, NetworkKind, TxBody, TxKind, PROTOCOL_VERSION,
+    Allocation, Block, BlockHeader, Commit, CommittedBlock, Genesis, NetworkKind, TxBody, TxKind,
+    Vote, VoteType, PROTOCOL_VERSION,
 };
 use rz_crypto::{context, Hash32, SecretKey};
 use rz_node::{now_ms, LogLevel, Node, NodeConfig};
@@ -35,12 +36,13 @@ fn genesis(n: u8) -> Genesis {
         protocol_version: PROTOCOL_VERSION,
         kind: NetworkKind::Devnet,
         network_id: NET.into(),
-        genesis_time_ms: now_ms(),
-        slot_duration_ms: 200,
-        finality_depth: 3,
+        consensus: rz_core::ConsensusParams::fast(200),
         min_fee: 10,
         max_block_txs: 500,
-        validators: validators(n).iter().map(SecretKey::public_key).collect(),
+        validators: validators(n)
+            .iter()
+            .map(|k| rz_core::GenesisValidator::new(k.public_key(), 100))
+            .collect(),
         allocations: vec![Allocation {
             address: faucet().public_key().address(),
             amount: 1_000_000_000,
@@ -261,22 +263,36 @@ fn malicious_blocks_rejected_and_peer_banned() {
 
     let mut c = client(&n);
     let attacker = SecretKey::from_seed([66; 32]);
-    let forge = |slot: u64| {
+    // Bloco forjado com um certificado assinado por quem não é validador.
+    let forge = |round: u64| {
         let s = n.status();
+        let height = s.height + 50;
         let header = BlockHeader {
             version: 1,
-            height: s.height + 1,
+            height,
             parent: s.tip,
-            slot,
+            round,
             proposer: attacker.public_key(),
             tx_root: Hash32([0; 32]),
             state_root: Hash32([0; 32]),
         };
         let signature = attacker.sign(context::BLOCK_SIGNATURE, NET, &header.to_canonical_bytes());
-        Block {
+        let block = Block {
             header,
             txs: vec![],
             signature,
+        };
+        let vote = Vote::sign(
+            VoteType::Precommit,
+            height,
+            0,
+            Some(block.id()),
+            &attacker,
+            NET,
+        );
+        CommittedBlock {
+            commit: Commit::from_votes(&[vote]).expect("voto"),
+            block,
         }
     };
     let root_before = n.account(&faucet().public_key().address());

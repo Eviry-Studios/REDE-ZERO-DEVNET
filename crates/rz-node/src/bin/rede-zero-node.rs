@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! rede-zero-node init-devnet --out DIR [--validators N] [--network-id ID]
-//!                            [--slot-ms MS] [--finality K] [--faucet ZERO] [--base-port P]
+//!                            [--block-ms MS] [--faucet ZERO] [--base-port P]
 //! rede-zero-node run --genesis FILE --data DIR [--listen ADDR | --no-listen] [--peer ADDR]...
 //!                    [--proxy ADDR] [--advertise ADDR] [--validator-key FILE] [--verbose | --quiet]
 //! rede-zero-node genesis-info --genesis FILE
@@ -19,19 +19,22 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rz_codec::{Decode, Encode};
-use rz_core::{format_zero, parse_zero, Allocation, Genesis, NetworkKind, PROTOCOL_VERSION};
+use rz_core::{
+    format_zero, parse_zero, Allocation, ConsensusParams, Genesis, GenesisValidator, NetworkKind,
+    PROTOCOL_VERSION,
+};
 use rz_crypto::{keyfile, SecretKey};
-use rz_node::{now_ms, LogLevel, Node, NodeConfig};
+use rz_node::{LogLevel, Node, NodeConfig};
 
 const USAGE: &str = "\
 rede-zero-node — Node da DEVNET da Rede Zero
 
 USO:
   rede-zero-node init-devnet --out DIR [opções]
-      --validators N      número de validadores (padrão 3)
+      --validators N      número de validadores (padrão 4; tolera ⌊(N−1)/3⌋ falhas)
       --network-id ID     identificador da rede (padrão rede-zero-devnet-1)
-      --slot-ms MS        duração do slot em ms (padrão 2000)
-      --finality K        profundidade de finalidade (padrão 5)
+      --block-ms MS       intervalo alvo entre blocos em ms (padrão 2000)
+      --stake ZERO        ZERO vinculado por validador (padrão 10000)
       --faucet ZERO       saldo inicial da chave faucet (padrão 1000000)
       --min-fee ZERO      taxa mínima (padrão 0.00001)
       --base-port P       porta do primeiro node (padrão 7100)
@@ -144,7 +147,7 @@ fn load_genesis(path: &Path) -> Result<Genesis, String> {
 
 fn init_devnet(args: &Args) -> Result<(), String> {
     let out = PathBuf::from(args.req("out")?);
-    let n: u8 = args.num("validators", 3)?;
+    let n: u8 = args.num("validators", 4)?;
     if n == 0 {
         return Err("--validators deve ser ao menos 1".into());
     }
@@ -152,8 +155,9 @@ fn init_devnet(args: &Args) -> Result<(), String> {
         .get("network-id")
         .unwrap_or("rede-zero-devnet-1")
         .to_string();
-    let slot_ms: u64 = args.num("slot-ms", 2_000)?;
-    let finality: u32 = args.num("finality", 5)?;
+    let block_ms: u64 = args.num("block-ms", 2_000)?;
+    let stake =
+        parse_zero(args.get("stake").unwrap_or("10000")).ok_or("--stake: valor inválido")?;
     let faucet_amount =
         parse_zero(args.get("faucet").unwrap_or("1000000")).ok_or("--faucet: valor inválido")?;
     let min_fee =
@@ -172,7 +176,7 @@ fn init_devnet(args: &Args) -> Result<(), String> {
     for i in 0..n {
         let k = SecretKey::generate();
         keyfile::save(&out.join(format!("validator-{i}.key")), &k).map_err(|e| e.to_string())?;
-        validators.push(k.public_key());
+        validators.push(GenesisValidator::new(k.public_key(), stake));
     }
     let faucet = SecretKey::generate();
     keyfile::save(&out.join("faucet.key"), &faucet).map_err(|e| e.to_string())?;
@@ -182,7 +186,7 @@ fn init_devnet(args: &Args) -> Result<(), String> {
     let mut allocations: Vec<Allocation> = validators
         .iter()
         .map(|v| Allocation {
-            address: v.address(),
+            address: v.key.address(),
             amount: 1_000 * rz_core::UNITS_PER_ZERO,
         })
         .collect();
@@ -195,14 +199,12 @@ fn init_devnet(args: &Args) -> Result<(), String> {
         protocol_version: PROTOCOL_VERSION,
         kind: NetworkKind::Devnet,
         network_id,
-        genesis_time_ms: now_ms(),
-        slot_duration_ms: slot_ms,
-        finality_depth: finality,
+        consensus: ConsensusParams::devnet(block_ms),
         min_fee,
         max_block_txs: 1_000,
         validators,
         allocations,
-        governance: rz_core::GovernanceParams::for_slot_ms(slot_ms),
+        governance: rz_core::GovernanceParams::for_slot_ms(block_ms),
     };
     genesis.validate().map_err(|e| e.to_string())?;
     let genesis_path = out.join("genesis.bin");
@@ -235,12 +237,17 @@ fn init_devnet(args: &Args) -> Result<(), String> {
 fn print_genesis(g: &Genesis) {
     println!("  rede:            {} ({:?})", g.network_id, g.kind);
     println!("  genesis:         {}", g.hash());
-    println!("  slot:            {} ms", g.slot_duration_ms);
-    println!("  finalidade:      {} blocos", g.finality_depth);
+    let c = &g.consensus;
+    println!("  consenso:        Zero-BFT (finalidade imediata)");
+    println!("  bloco:           {} ms", c.block_interval_ms);
+    println!("  época:           {} blocos", c.epoch_blocks);
+    println!("  vínculo mínimo:  {} ZERO", format_zero(c.min_bond));
+    println!("  desvinculação:   {} blocos", c.unbonding_blocks);
+    println!("  punição:         {} bps", c.slash_bps);
     println!("  taxa mínima:     {} ZERO", format_zero(g.min_fee));
     println!("  validadores:     {}", g.validators.len());
     for v in &g.validators {
-        println!("    {v}");
+        println!("    {} ({} ZERO)", v.key, format_zero(v.stake));
     }
     for a in &g.allocations {
         println!(
@@ -284,8 +291,16 @@ fn run(args: &Args) -> Result<(), String> {
     }
     if let Some(k) = args.get("validator-key") {
         let key = keyfile::load(Path::new(k)).map_err(|e| format!("{k}: {e}"))?;
-        if !cfg.genesis.validators.contains(&key.public_key()) {
-            return Err("a chave informada não é validadora neste Genesis".into());
+        if !cfg
+            .genesis
+            .validators
+            .iter()
+            .any(|v| v.key == key.public_key())
+        {
+            eprintln!(
+                "aviso: a chave não é validadora no Genesis; participará do consenso \
+                 apenas após vincular ZERO (Bond) e a próxima época"
+            );
         }
         cfg.validator_key = Some(key);
     }

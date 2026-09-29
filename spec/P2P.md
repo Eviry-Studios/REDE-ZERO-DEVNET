@@ -1,6 +1,6 @@
 # spec/P2P.md — Protocolo P2P da DEVNET
 
-**Versão:** 0.2.0 (DEVNET), `P2P_VERSION = 2`
+**Versão:** 0.3.0 (DEVNET), `P2P_VERSION = 3`
 **Relacionamento:** `SPECIFICATIONS.md §23–§30`, ADR-0007, ADR-0010, ADR-0011, THR-P2P-001..006, THR-PRIV-002..004
 **Implementação de referência:** `crates/rz-p2p` (mensagens) e `crates/rz-node` (orquestração)
 
@@ -47,9 +47,9 @@ m = enc(Message)
 | `0x03` | `GET_PEERS` | — |
 | `0x04` | `PEERS` | `list<PeerAddr>` (máx. 32) |
 | `0x05` | `TRANSACTION` | `Transaction` |
-| `0x06` | `BLOCK` | `Block` |
+| `0x06` | `BLOCK` | `CommittedBlock` (bloco finalizado com certificado) |
 | `0x07` | `GET_BLOCKS` | `u64 from_height, u32 max` |
-| `0x08` | `BLOCKS` | `list<Block>` (máx. 64) |
+| `0x08` | `BLOCKS` | `list<CommittedBlock>` (máx. 64) |
 | `0x09` | `GET_ACCOUNT` | `Address` |
 | `0x0a` | `ACCOUNT` | `Address, u64 balance, u64 nonce, u64 height` |
 | `0x0b` | `TX_RESULT` | `TxId, bool accepted, string reason` (máx. 256) |
@@ -63,6 +63,8 @@ m = enc(Message)
 | `0x13` | `STEM_TRANSACTION` | `Transaction` em fase de haste (seção 4) |
 | `0x14` | `GET_GOVERNANCE` | `option<Address>` (filtra bloqueios) |
 | `0x15` | `GOVERNANCE` | `u64 height, ProtocolParams, list<ProposalSummary> (≤256), list<LockEntry> (≤1024)` |
+| `0x16` | `CONSENSUS_PROPOSAL` | `Proposal` (`spec/CONSENSUS.md §4.1`) |
+| `0x17` | `CONSENSUS_VOTE` | `Vote` (`spec/CONSENSUS.md §4.2`) |
 
 `PeerAddr` (tag `u8`):
 
@@ -116,6 +118,7 @@ Transações em haste devem ser executáveis sobre a ponta atual (nonce igual ao
 ### 4.2 Blocos
 
 * Um bloco é repassado somente se foi importado com sucesso pela primeira vez.
+* `CONSENSUS_PROPOSAL` e `CONSENSUS_VOTE` são deduplicados pelo identificador (cache de 50 000) e repassados apenas quando novos e aceitos pela máquina de consenso (assinatura válida, altura corrente ou seguinte). Validadores retransmitem periodicamente a proposta da rodada e os próprios votos (`spec/CONSENSUS.md §5`).
 
 ### 4.3 Consultas de Wallet
 
@@ -124,10 +127,10 @@ Transações em haste devem ser executáveis sobre a ponta atual (nonce igual ao
 ## 5. Sincronização
 
 1. Após o handshake, se `height` do par for maior que a altura local, o Node envia `GET_BLOCKS { from_height: altura_local + 1, max: 64 }`.
-2. O par responde `BLOCKS` com blocos consecutivos da sua cadeia preferida.
-3. Cada bloco é **validado integralmente** antes de ser aceito (`SPEC §28`, `AT-SYNC-002`).
+2. O par responde `BLOCKS` com blocos finalizados consecutivos, cada um com o seu certificado.
+3. Cada bloco é **validado integralmente**, a começar pelo certificado contra o conjunto de validadores do estado local, antes de ser aceito (`SPEC §28`, `AT-SYNC-002`).
 4. Se ainda houver diferença de altura, o processo se repete.
-5. Ao receber um bloco cujo pai é desconhecido, o Node solicita blocos a partir da sua altura finalizada + 1.
+5. Ao receber um bloco finalizado com certificado válido e altura acima da seguinte, o Node solicita blocos a partir da sua altura + 1.
 
 Um par que envia blocos inválidos é penalizado (seção 6) — nenhum estado é aceito por declaração (`AT-SYNC-003`).
 

@@ -35,6 +35,12 @@ Todo hash protocolar **deve** usar um contexto da seção 3. O hash "puro" (sem 
 | `TX_ROOT` | `rede-zero/tx-root/v1` | Compromisso da lista de transações |
 | `STATE_ROOT` | `rede-zero/state-root/v1` | Compromisso do estado |
 | `GENESIS` | `rede-zero/genesis/v1` | Hash do Genesis |
+| `VOTE` | `rede-zero/vote/v1` | Assinatura e identificador de voto Zero-BFT |
+| `PROPOSAL` | `rede-zero/proposal/v1` | Assinatura e identificador de proposta Zero-BFT |
+| `PROPOSER` | `rede-zero/proposer/v1` | Sorteio ponderado do proponente |
+| `EVIDENCE` | `rede-zero/evidence/v1` | Identificador de infração punida |
+
+Os contextos de consenso estão em `crates/rz-core/src/consensus.rs` (`spec/CONSENSUS.md`). Privacidade, governança e canal P2P usam contextos próprios, listados em `spec/PRIVACY.md`, `spec/GOVERNANCE.md` e `spec/P2P.md`.
 
 Alterar o significado de um contexto exige novo sufixo de versão (`/v2`).
 

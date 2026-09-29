@@ -6,6 +6,7 @@ use std::fmt;
 use rz_codec::{Decode, DecodeError, Decoder, Encode, Encoder};
 use rz_crypto::{context, hash, Address, Hash32, PublicKey};
 
+use crate::consensus::ConsensusParams;
 use crate::governance::GovernanceParams;
 use crate::limits::{MAX_ALLOCATIONS, MAX_NETWORK_ID_LEN, MAX_VALIDATORS};
 use crate::PROTOCOL_VERSION;
@@ -60,6 +61,34 @@ impl Decode for Allocation {
     }
 }
 
+/// Validador inicial, com o ZERO que já nasce bloqueado.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GenesisValidator {
+    pub key: PublicKey,
+    pub stake: u64,
+}
+
+impl GenesisValidator {
+    pub fn new(key: PublicKey, stake: u64) -> Self {
+        Self { key, stake }
+    }
+}
+
+impl Encode for GenesisValidator {
+    fn encode(&self, e: &mut Encoder) {
+        e.put(&self.key).u64(self.stake);
+    }
+}
+
+impl Decode for GenesisValidator {
+    fn decode(d: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        Ok(Self {
+            key: d.get()?,
+            stake: d.u64()?,
+        })
+    }
+}
+
 /// Definição completa do estado inicial e dos parâmetros da rede.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Genesis {
@@ -67,15 +96,13 @@ pub struct Genesis {
     pub kind: NetworkKind,
     /// Identificador textual da rede, incluído em toda assinatura.
     pub network_id: String,
-    /// Início do slot 0, em milissegundos desde a época Unix.
-    pub genesis_time_ms: u64,
-    pub slot_duration_ms: u64,
-    /// Número de descendentes para um bloco ser considerado final (ADR-0006).
-    pub finality_depth: u32,
+    /// Parâmetros do consenso Zero-BFT (ADR-0012).
+    pub consensus: ConsensusParams,
     pub min_fee: u64,
     pub max_block_txs: u32,
-    /// Conjunto de validadores da DEVNET (ADR-0006 — não serve para MAINNET).
-    pub validators: Vec<PublicKey>,
+    /// Validadores iniciais. Depois do Genesis, o conjunto é aberto: qualquer
+    /// conta pode bloquear ZERO e se candidatar (ADR-0012).
+    pub validators: Vec<GenesisValidator>,
     /// Estado monetário inicial, ordenado por endereço e sem repetições.
     pub allocations: Vec<Allocation>,
     /// Parâmetros iniciais de governança (ADR-0008).
@@ -87,9 +114,7 @@ impl Encode for Genesis {
         e.u16(self.protocol_version)
             .put(&self.kind)
             .str(&self.network_id)
-            .u64(self.genesis_time_ms)
-            .u64(self.slot_duration_ms)
-            .u32(self.finality_depth)
+            .put(&self.consensus)
             .u64(self.min_fee)
             .u32(self.max_block_txs)
             .list(&self.validators)
@@ -104,9 +129,7 @@ impl Decode for Genesis {
             protocol_version: d.u16()?,
             kind: d.get()?,
             network_id: d.str(MAX_NETWORK_ID_LEN)?,
-            genesis_time_ms: d.u64()?,
-            slot_duration_ms: d.u64()?,
-            finality_depth: d.u32()?,
+            consensus: d.get()?,
             min_fee: d.u64()?,
             max_block_txs: d.u32()?,
             validators: d.list(MAX_VALIDATORS)?,
@@ -161,12 +184,15 @@ impl Genesis {
         hash(context::GENESIS, &self.to_canonical_bytes())
     }
 
-    /// Soma das alocações — oferta total inicial.
+    /// Oferta total inicial: alocações livres + ZERO bloqueado dos validadores.
     pub fn total_supply(&self) -> Result<u64, GenesisError> {
-        self.allocations.iter().try_fold(0u64, |acc, a| {
-            acc.checked_add(a.amount)
-                .ok_or(GenesisError::SupplyOverflow)
-        })
+        self.allocations
+            .iter()
+            .map(|a| a.amount)
+            .chain(self.validators.iter().map(|v| v.stake))
+            .try_fold(0u64, |acc, x| {
+                acc.checked_add(x).ok_or(GenesisError::SupplyOverflow)
+            })
     }
 
     /// Verifica a coerência do Genesis antes de qualquer uso.
@@ -193,21 +219,32 @@ impl Genesis {
         if !id.contains(marker) {
             return Err(GenesisError::NetworkKindMismatch);
         }
-        if self.slot_duration_ms == 0 {
-            return Err(GenesisError::InvalidParameter("slot_duration_ms"));
-        }
-        if self.finality_depth == 0 {
-            return Err(GenesisError::InvalidParameter("finality_depth"));
-        }
+        self.consensus
+            .validate()
+            .map_err(GenesisError::InvalidParameter)?;
         if self.max_block_txs == 0 || self.max_block_txs as usize > crate::limits::MAX_BLOCK_TXS {
             return Err(GenesisError::InvalidParameter("max_block_txs"));
         }
         if self.validators.is_empty() {
             return Err(GenesisError::NoValidators);
         }
-        let unique: BTreeSet<_> = self.validators.iter().collect();
+        let unique: BTreeSet<_> = self.validators.iter().map(|v| v.key).collect();
         if unique.len() != self.validators.len() {
             return Err(GenesisError::DuplicateValidator);
+        }
+        if self.validators.len() > self.consensus.max_validators as usize {
+            return Err(GenesisError::InvalidParameter(
+                "validadores acima do máximo",
+            ));
+        }
+        if self
+            .validators
+            .iter()
+            .any(|v| v.stake == 0 || v.stake < self.consensus.min_bond)
+        {
+            return Err(GenesisError::InvalidParameter(
+                "bloqueio de validador abaixo do mínimo",
+            ));
         }
         if !self
             .allocations
@@ -224,28 +261,6 @@ impl Genesis {
             .validate()
             .map_err(GenesisError::InvalidParameter)?;
         Ok(())
-    }
-
-    /// Validador responsável pelo slot (ADR-0006).
-    pub fn proposer_for_slot(&self, slot: u64) -> Option<&PublicKey> {
-        if self.validators.is_empty() {
-            return None;
-        }
-        let idx = (slot % self.validators.len() as u64) as usize;
-        self.validators.get(idx)
-    }
-
-    /// Instante de início de um slot, em milissegundos.
-    pub fn slot_start_ms(&self, slot: u64) -> Option<u64> {
-        slot.checked_mul(self.slot_duration_ms)?
-            .checked_add(self.genesis_time_ms)
-    }
-
-    /// Slot correspondente a um instante (`None` antes do Genesis).
-    pub fn slot_at(&self, now_ms: u64) -> Option<u64> {
-        now_ms
-            .checked_sub(self.genesis_time_ms)
-            .map(|dt| dt / self.slot_duration_ms.max(1))
     }
 }
 
@@ -271,12 +286,10 @@ pub(crate) mod tests {
             protocol_version: PROTOCOL_VERSION,
             kind: NetworkKind::Devnet,
             network_id: "rede-zero-devnet-test".into(),
-            genesis_time_ms: 1_000,
-            slot_duration_ms: 2_000,
-            finality_depth: 3,
+            consensus: ConsensusParams::fast(200),
             min_fee: 1,
             max_block_txs: 100,
-            validators: vec![v],
+            validators: vec![GenesisValidator::new(v, 10_000)],
             allocations,
             governance: GovernanceParams {
                 deposit: 1_000,
@@ -326,7 +339,7 @@ pub(crate) mod tests {
     #[test]
     fn rejects_duplicate_validators() {
         let mut g = sample();
-        g.validators.push(g.validators[0]);
+        g.validators.push(g.validators[0].clone());
         assert_eq!(g.validate(), Err(GenesisError::DuplicateValidator));
     }
 
@@ -335,14 +348,5 @@ pub(crate) mod tests {
         let mut g = sample();
         g.allocations[0].amount = u64::MAX;
         assert_eq!(g.validate(), Err(GenesisError::SupplyOverflow));
-    }
-
-    #[test]
-    fn slots() {
-        let g = sample();
-        assert_eq!(g.slot_at(999), None);
-        assert_eq!(g.slot_at(1_000), Some(0));
-        assert_eq!(g.slot_at(4_999), Some(1));
-        assert_eq!(g.slot_start_ms(2), Some(5_000));
     }
 }

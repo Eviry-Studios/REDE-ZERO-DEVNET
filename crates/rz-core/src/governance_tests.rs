@@ -525,3 +525,158 @@ fn community_proposal_records_content() {
         .approved_communities()
         .any(|c| *c == Hash32([7; 32])));
 }
+
+// ------------------------------------------------------------ participação
+// Zero-BFT (ADR-0012): vínculo, desvinculação, épocas e punição.
+
+fn bond(sim: &mut Sim, key: &SecretKey, amount: u64) {
+    let tx = sim.tx(key, TxKind::Bond { amount });
+    sim.block(vec![tx]);
+}
+
+#[test]
+fn bond_enters_validator_set_at_next_epoch() {
+    let mut sim = Sim::new();
+    let rk = rich().public_key();
+    let before = sim.state.account(&rk.address()).balance;
+    bond(&mut sim, &rich(), 5_000);
+    assert_eq!(sim.state.bond_of(&rk), 5_000);
+    assert_eq!(
+        sim.state.account(&rk.address()).balance,
+        before - 5_000 - sim.g.min_fee
+    );
+    // Ainda fora do conjunto até o fim da época.
+    assert!(!sim.state.validators().contains(&rk));
+    let epoch = sim.state.params().consensus.epoch_blocks;
+    sim.advance_to(epoch - 1);
+    assert!(!sim.state.validators().contains(&rk));
+    sim.advance_to(epoch);
+    assert!(sim.state.validators().contains(&rk));
+    assert_eq!(sim.state.validators().power_of(&rk), 5_000);
+    assert_eq!(sim.state.validators().total_power(), 15_000);
+}
+
+#[test]
+fn unbond_releases_after_period_and_leaves_set() {
+    let mut sim = Sim::new();
+    let rk = rich().public_key();
+    let epoch = sim.state.params().consensus.epoch_blocks;
+    bond(&mut sim, &rich(), 5_000);
+    sim.advance_to(epoch);
+    assert!(sim.state.validators().contains(&rk));
+
+    let too_much = sim.tx(&rich(), TxKind::Unbond { amount: 5_001 });
+    assert!(matches!(sim.check(&too_much), Err(TxError::Staking(_))));
+
+    let balance = sim.state.account(&rk.address()).balance;
+    let tx = sim.tx(&rich(), TxKind::Unbond { amount: 5_000 });
+    sim.block(vec![tx]);
+    let unbond_height = sim.height;
+    assert_eq!(sim.state.bond_of(&rk), 0);
+    assert_eq!(sim.state.unbonding().len(), 1);
+    let release = sim.state.unbonding()[0].release_height;
+    assert_eq!(
+        release,
+        unbond_height + sim.state.params().consensus.unbonding_blocks
+    );
+
+    // Sai do conjunto na próxima época; o valor fica retido até a liberação.
+    sim.advance_to(2 * epoch);
+    assert!(!sim.state.validators().contains(&rk));
+    sim.advance_to(release - 1);
+    assert_eq!(
+        sim.state.account(&rk.address()).balance,
+        balance - sim.g.min_fee
+    );
+    sim.advance_to(release);
+    assert!(sim.state.unbonding().is_empty());
+    assert_eq!(
+        sim.state.account(&rk.address()).balance,
+        balance - sim.g.min_fee + 5_000
+    );
+}
+
+// SPEC §49 — voto duplo comprovado: queima, exclusão imediata e bloqueio
+// de novo vínculo.
+#[test]
+fn double_vote_slashes_bond_and_jails() {
+    let mut sim = Sim::new();
+    let rk = rich().public_key();
+    let epoch = sim.state.params().consensus.epoch_blocks;
+    bond(&mut sim, &rich(), 5_000);
+    sim.advance_to(epoch);
+    assert!(sim.state.validators().contains(&rk));
+
+    let net = sim.g.network_id.clone();
+    let h = sim.height + 1;
+    let a = crate::Vote::sign(
+        crate::VoteType::Prevote,
+        h,
+        0,
+        Some(BlockId(Hash32([1; 32]))),
+        &rich(),
+        &net,
+    );
+    let b = crate::Vote::sign(
+        crate::VoteType::Prevote,
+        h,
+        0,
+        Some(BlockId(Hash32([2; 32]))),
+        &rich(),
+        &net,
+    );
+    // Evidência não conflitante (o mesmo voto duas vezes).
+    let bad = sim.tx(
+        &poor(),
+        TxKind::ReportDoubleVote {
+            first: Box::new(a.clone()),
+            second: Box::new(a.clone()),
+        },
+    );
+    assert!(matches!(sim.check(&bad), Err(TxError::InvalidEvidence(_))));
+    // Assinatura adulterada.
+    let mut forged = b.clone();
+    forged.signature.0[0] ^= 1;
+    let bad = sim.tx(
+        &poor(),
+        TxKind::ReportDoubleVote {
+            first: Box::new(a.clone()),
+            second: Box::new(forged),
+        },
+    );
+    assert!(matches!(sim.check(&bad), Err(TxError::InvalidEvidence(_))));
+
+    let supply = sim.state.total_supply();
+    let report = sim.tx(
+        &poor(),
+        TxKind::ReportDoubleVote {
+            first: Box::new(a.clone()),
+            second: Box::new(b.clone()),
+        },
+    );
+    sim.block(vec![report]);
+    let burned = 5_000 * u64::from(sim.state.params().consensus.slash_bps) / 10_000;
+    assert_eq!(sim.state.bond_of(&rk), 5_000 - burned);
+    assert_eq!(sim.state.total_supply(), supply - burned);
+    assert!(sim.state.is_jailed(&rk));
+    assert!(!sim.state.validators().contains(&rk));
+
+    // A mesma infração não é punida duas vezes.
+    let again = sim.tx(
+        &poor(),
+        TxKind::ReportDoubleVote {
+            first: Box::new(b),
+            second: Box::new(a),
+        },
+    );
+    assert!(matches!(
+        sim.check(&again),
+        Err(TxError::InvalidEvidence(_))
+    ));
+    // Excluído não volta a vincular.
+    let rebond = sim.tx(&rich(), TxKind::Bond { amount: 1_000 });
+    assert!(matches!(sim.check(&rebond), Err(TxError::Staking(_))));
+    // Nem retorna ao conjunto na época seguinte.
+    sim.advance_to(3 * epoch);
+    assert!(!sim.state.validators().contains(&rk));
+}

@@ -25,12 +25,13 @@ fn genesis() -> Genesis {
         protocol_version: PROTOCOL_VERSION,
         kind: NetworkKind::Devnet,
         network_id: NET.into(),
-        genesis_time_ms: now_ms(),
-        slot_duration_ms: 200,
-        finality_depth: 3,
+        consensus: rz_core::ConsensusParams::fast(200),
         min_fee: 10,
         max_block_txs: 100,
-        validators: vec![validator().public_key()],
+        validators: vec![rz_core::GenesisValidator::new(
+            validator().public_key(),
+            100,
+        )],
         allocations: vec![Allocation {
             address: SecretKey::from_seed([181; 32]).public_key().address(),
             amount: 1_000,

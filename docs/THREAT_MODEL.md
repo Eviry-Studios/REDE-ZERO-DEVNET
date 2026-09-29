@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.3.0
-**Status:** Modelo de ameaças — fase de definição (0.3.0: governança implementada; proteção do IP do usuário)
+**Versão:** 0.4.0
+**Status:** Modelo de ameaças — fase de definição (0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -453,8 +453,8 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Mitigações:**
 
 * encadeamento criptográfico (`SPEC §16`);
-* finalidade explícita;
-* checkpoints verificáveis (**A DEFINIR**);
+* finalidade explícita e imediata: todo bloco aceito carrega certificado de > 2/3 do poder de voto (ADR-0012, `spec/CONSENSUS.md §4.3`), e não há reorganização;
+* checkpoints verificáveis contra ataque de longo alcance com chaves desvinculadas (**A DEFINIR**);
 * testes `AT-BLOCK-003`, `AT-BLOCK-004`.
 
 ### THR-CON-002 — Captura do consenso
@@ -465,12 +465,12 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 **Mitigações:**
 
-* algoritmo de consenso com limite de tolerância a falhas explicitamente documentado (**A DEFINIR**);
-* participação no consenso não baseada apenas em número de identidades (anti-Sybil);
+* algoritmo de consenso com limite de tolerância a falhas explicitamente documentado: Zero-BFT tolera menos de 1/3 do poder de voto bizantino (ADR-0012);
+* participação no consenso não baseada apenas em número de identidades (anti-Sybil): o poder de voto é o ZERO vinculado (`Bond`), aberto a qualquer conta que atinja `min_bond`;
 * monitoramento de concentração (`REQ-045`);
 * mudanças no conjunto de participantes do consenso apenas por regras protocolares.
 
-**Nota sobre a DEVNET:** a DEVNET pode usar um conjunto fixo de validadores definido no Genesis para fins de desenvolvimento. Essa escolha **não é aceitável para a MAINNET** e deve ser registrada como decisão restrita ao ambiente de desenvolvimento.
+**Nota sobre a DEVNET:** até a versão 0.3.0 a DEVNET usou um conjunto fixo de validadores (ADR-0006). Ele foi substituído pelo conjunto aberto e recomputado por época do Zero-BFT (ADR-0012). O Genesis ainda define o poder inicial, e a concentração inicial deve ser avaliada antes de qualquer rede com valor.
 
 ### THR-CON-003 — Censura de transações
 
@@ -478,7 +478,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Adversários:** ADV-04, ADV-12
 **Mitigações:**
 
-* rotação de produtores de bloco;
+* rotação de produtores de bloco: o proponente muda a cada rodada, por sorteio ponderado e determinístico;
 * múltiplos caminhos de propagação;
 * métricas públicas de inclusão;
 * mecanismos anti-censura adicionais (**A DEFINIR**).
@@ -492,7 +492,9 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Mitigações:**
 
 * dois blocos assinados pela mesma identidade para a mesma altura/rodada constituem evidência objetiva e verificável;
-* penalização protocolar baseada nessa evidência (`SPEC §49`): a transação `ReportEquivocation` zera os pontos de contribuição do produtor (spec/GOVERNANCE.md §3). A perda de participação no consenso fica para o mecanismo definitivo.
+* penalização protocolar baseada nessa evidência (`SPEC §49`): `ReportEquivocation` (propostas) e `ReportDoubleVote` (votos) queimam `slash_bps` do vínculo e das desvinculações pendentes, excluem o validador do conjunto imediatamente e de forma permanente e zeram seus pontos de contribuição (`spec/CONSENSUS.md §6`);
+* o período de desvinculação mantém o ZERO punível depois da saída;
+* Nodes detectam e denunciam automaticamente as evidências observadas.
 
 ### THR-CON-005 — Bloco malformado ou excessivo
 
@@ -504,13 +506,13 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Severidade:** MÉDIA
 **Descrição:** produtores manipulam timestamps para afetar regras dependentes de tempo.
 
-**Mitigações:** limites de desvio aceitável; regras dependentes de altura sempre que possível em vez de relógio (SUP-05).
+**Mitigações:** limites de desvio aceitável; regras dependentes de altura sempre que possível em vez de relógio (SUP-05). No Zero-BFT o bloco não tem timestamp nem slot: todo prazo protocolar é medido em blocos, e o relógio local só controla temporizadores de rodada, que não afetam a validade.
 
 ### THR-CON-007 — Partição de rede
 
 **Severidade:** ALTA
 **Adversários:** ADV-06, ADV-12
-**Mitigações:** regras determinísticas de resolução de forks (`SPEC §22`); preferência por segurança sobre disponibilidade quando a finalidade estiver em risco (**A DEFINIR** conforme consenso).
+**Mitigações:** preferência por segurança sobre disponibilidade: sem > 2/3 do poder conectado nenhum lado da partição finaliza blocos, e a rede retoma ao se reconectar (retransmissão de propostas e votos); não há forks a resolver (ADR-0012, testes de partição em `rz-chain`).
 
 ---
 
@@ -887,7 +889,8 @@ Classificação de severidade (inicial, sujeita a revisão):
 | THR-TX-004 | REQ-016 | SPEC §7, §8 | AT-CAN-*, AT-TID-* |
 | THR-TX-005 | REQ-004, REQ-016 | SPEC §68 | AT-DET-* |
 | THR-CON-001 | REQ-016 | SPEC §16 | AT-BLOCK-003/004 |
-| THR-CON-002 | REQ-005, REQ-015 | SPEC §19, §20 | AT-CON-* |
+| THR-CON-002 | REQ-005, REQ-015 | SPEC §19, §20, spec/CONSENSUS.md | AT-CON-*, rz-chain bft_tests |
+| THR-CON-007 | REQ-015 | SPEC §22, spec/CONSENSUS.md §1 | rz-chain partition_halts_then_recovers |
 | THR-P2P-001 | REQ-017 | SPEC §29 | — (a definir) |
 | THR-P2P-002 | REQ-053 | SPEC §26 | AT-P2P-004/005 |
 | THR-P2P-004 | REQ-016 | SPEC §28 | AT-SYNC-* |
@@ -895,7 +898,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 | THR-PRIV-002 | REQ-026 | SPEC §30, spec/P2P.md §4 | rz-node dandelion_stem_then_embargo_fluff |
 | THR-GOV-001 | REQ-044 | SPEC §47, spec/GOVERNANCE.md | rz-core governance_tests (neutralidade a Sybil), rz-wallet governance_devnet |
 | THR-P2P-005 | — | SPEC §30, spec/P2P.md §1.1 | rz-p2p secure::tests |
-| THR-CON-004 | REQ-049 | SPEC §49, spec/GOVERNANCE.md §3 | rz-core equivocation_report_slashes_contribution |
+| THR-CON-004 | REQ-049 | SPEC §49, spec/CONSENSUS.md §6 | rz-core equivocation_report_slashes_contribution, double_vote_slashes_bond_and_jails |
 | THR-POOL-001 | REQ-037, REQ-038 | SPEC §39, §40 | AT-POOL-002 |
 | THR-DEF-001 | REQ-058, REQ-059 | SPEC §53, §54 | — (a definir) |
 | THR-DEV-001 | REQ-084 | — | CI |
@@ -920,11 +923,11 @@ Ameaças aceitas **temporariamente** na DEVNET, com registro explícito:
 
 | Ameaça | Aceitação temporária | Condição para sair da DEVNET |
 | --- | --- | --- |
-| THR-CON-002 | Conjunto fixo de validadores no Genesis | Algoritmo de consenso definitivo escolhido e avaliado |
+| THR-CON-001/002 | Zero-BFT (ADR-0012) implementado **sem auditoria** nem prova formal; sem checkpoints contra longo alcance; poder inicial definido no Genesis | Auditoria independente; checkpoints verificáveis; distribuição inicial avaliada |
 | THR-PRIV-001 | RingCT implementado **sem auditoria**; anel de 11 | Auditoria independente da implementação (ADR-0009) |
 | THR-PRIV-002 | Dandelion++, canal cifrado e Tor opcional **não auditados** | Auditoria do canal; avaliação de tráfego de cobertura (ADR-0011) |
 | THR-P2P-005 | Canal cifrado sem fixação obrigatória de identidade | Distribuição verificável de identidades de Nodes ou uso de serviços onion |
-| THR-GOV-001/002 | Governança implementada (ADR-0008); câmara de contribuição dominada pelos validadores fixos da DEVNET | Consenso definitivo e computação verificável |
+| THR-GOV-001/002 | Governança implementada (ADR-0008); a câmara de contribuição só pontua produção de blocos, então favorece validadores | Computação e contribuição defensiva verificáveis |
 
 Nenhuma dessas aceitações temporárias pode ser herdada pela TESTNET pública ou pela MAINNET sem nova avaliação.
 
@@ -953,7 +956,7 @@ Mesmo com todas as mitigações:
 
 * um usuário com dispositivo comprometido pode perder fundos;
 * correlação temporal e comportamental pode reduzir a privacidade;
-* reorganizações antes da finalidade podem reverter transações recentes;
+* sem > 2/3 do poder conectado a rede para, e transações ficam pendentes até a retomada;
 * uma coalizão acima do limite de tolerância pode comprometer o consenso;
 * governança pode tomar decisões ruins dentro das regras;
 * o Agente Zero pode produzir recomendações erradas;
@@ -979,7 +982,7 @@ Toda alteração deverá possuir histórico, justificativa e versão (`REQ-086`,
 
 # 15. Status
 
-**THREAT_MODEL.md v0.3.0**
+**THREAT_MODEL.md v0.4.0**
 
 > **Modelo de ameaças inicial — não congelado.**
 

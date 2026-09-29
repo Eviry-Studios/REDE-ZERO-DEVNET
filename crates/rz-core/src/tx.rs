@@ -81,6 +81,17 @@ pub enum TxKind {
         first: Box<SignedHeader>,
         second: Box<SignedHeader>,
     },
+    /// Tag `0x20` — bloqueia ZERO como validador (ADR-0012). A chave do
+    /// remetente passa a ser candidata; efeito a partir da próxima época.
+    Bond { amount: u64 },
+    /// Tag `0x21` — desbloqueia; o valor só volta à conta após o período de
+    /// desvinculação, durante o qual ainda pode ser punido.
+    Unbond { amount: u64 },
+    /// Tag `0x22` — denuncia dupla assinatura de votos de consenso.
+    ReportDoubleVote {
+        first: Box<crate::consensus::Vote>,
+        second: Box<crate::consensus::Vote>,
+    },
 }
 
 impl Encode for TxKind {
@@ -125,6 +136,15 @@ impl Encode for TxKind {
             TxKind::ReportEquivocation { first, second } => {
                 e.u8(0x14).put(first.as_ref()).put(second.as_ref());
             }
+            TxKind::Bond { amount } => {
+                e.u8(0x20).u64(*amount);
+            }
+            TxKind::Unbond { amount } => {
+                e.u8(0x21).u64(*amount);
+            }
+            TxKind::ReportDoubleVote { first, second } => {
+                e.u8(0x22).put(first.as_ref()).put(second.as_ref());
+            }
         }
     }
 }
@@ -158,6 +178,12 @@ impl Decode for TxKind {
                 choice: d.get()?,
             }),
             0x14 => Ok(TxKind::ReportEquivocation {
+                first: Box::new(d.get()?),
+                second: Box::new(d.get()?),
+            }),
+            0x20 => Ok(TxKind::Bond { amount: d.u64()? }),
+            0x21 => Ok(TxKind::Unbond { amount: d.u64()? }),
+            0x22 => Ok(TxKind::ReportDoubleVote {
                 first: Box::new(d.get()?),
                 second: Box::new(d.get()?),
             }),
@@ -338,14 +364,21 @@ impl AccountTx {
                     return Err(TxError::InvalidPrivate("blindagem sem saídas"));
                 }
             }
-            TxKind::LockStake { amount, .. } if *amount == 0 => {
+            TxKind::LockStake { amount, .. }
+            | TxKind::Bond { amount }
+            | TxKind::Unbond { amount }
+                if *amount == 0 =>
+            {
                 return Err(TxError::ZeroAmount);
             }
             TxKind::LockStake { .. }
             | TxKind::Unlock { .. }
             | TxKind::Propose { .. }
             | TxKind::Vote { .. }
-            | TxKind::ReportEquivocation { .. } => {}
+            | TxKind::ReportEquivocation { .. }
+            | TxKind::Bond { .. }
+            | TxKind::Unbond { .. }
+            | TxKind::ReportDoubleVote { .. } => {}
         }
         if self.body.fee < min_fee {
             return Err(TxError::FeeTooLow {
@@ -412,6 +445,8 @@ pub enum TxError {
     },
     /// Evidência de equivocação inválida.
     InvalidEvidence(&'static str),
+    /// Regra de staking violada.
+    Staking(&'static str),
 }
 
 impl fmt::Display for TxError {
@@ -440,6 +475,7 @@ impl fmt::Display for TxError {
                 write!(f, "depósito {deposit} abaixo do mínimo {min}")
             }
             Self::InvalidEvidence(w) => write!(f, "evidência inválida: {w}"),
+            Self::Staking(w) => write!(f, "staking: {w}"),
         }
     }
 }

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Inicia uma DEVNET local com N validadores (padrão 3).
+# Inicia uma DEVNET local com N validadores (padrão 4: tolera 1 falha no
+# Zero-BFT, que exige mais de 2/3 do poder de voto).
 #
 #   scripts/devnet.sh [N]
 #
@@ -7,7 +8,7 @@
 # Encerre com Ctrl+C.
 set -euo pipefail
 
-N="${1:-3}"
+N="${1:-4}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DATA="$ROOT/devnet-data"
 BASE_PORT=7100

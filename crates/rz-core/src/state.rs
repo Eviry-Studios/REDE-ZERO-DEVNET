@@ -21,6 +21,7 @@ use rz_privacy::clsag::{self, RingMember};
 use rz_privacy::note::OutputData;
 use rz_privacy::{balance_holds, commitment, decode_point, excess};
 
+use crate::consensus::{Validator, ValidatorSet};
 use crate::genesis::{Genesis, GenesisError};
 use crate::governance::{
     check_proposal_shape, decide, lock_weight, Category, ChamberTally, Contribution, Lock,
@@ -111,6 +112,24 @@ pub struct State {
     proposals: BTreeMap<Hash32, Proposal>,
     contributions: BTreeMap<rz_crypto::PublicKey, Contribution>,
     approved_communities: BTreeSet<Hash32>,
+    // Staking e consenso (ADR-0012).
+    bonds: BTreeMap<rz_crypto::PublicKey, u64>,
+    unbonding: Vec<Unbonding>,
+    jailed: BTreeSet<rz_crypto::PublicKey>,
+    /// Evidências já processadas (evita punir duas vezes a mesma infração).
+    punished: BTreeSet<Hash32>,
+    /// Conjunto que valida o **próximo** bloco.
+    validators: ValidatorSet,
+    /// Conjunto que validou o bloco mais recente.
+    last_validators: ValidatorSet,
+}
+
+/// ZERO em período de desvinculação.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unbonding {
+    pub owner: Address,
+    pub amount: u64,
+    pub release_height: u64,
 }
 
 /// Alteração de governança produzida por uma transação.
@@ -119,7 +138,10 @@ enum GovEffect {
     Unlock(u64),
     Propose(Box<Proposal>),
     Vote(Hash32, Address, Vote),
-    Slash(rz_crypto::PublicKey),
+    /// Punição de validador por evidência verificável.
+    Slash(rz_crypto::PublicKey, Hash32),
+    Bond(rz_crypto::PublicKey, u64),
+    Unbond(rz_crypto::PublicKey, u64),
 }
 
 /// Efeito calculado de uma transação, aplicado só após todas as verificações.
@@ -150,6 +172,16 @@ impl State {
             })
             .collect();
         let total_supply = genesis.total_supply().map_err(StateError::Genesis)?;
+        let initial = ValidatorSet::new(
+            genesis
+                .validators
+                .iter()
+                .map(|v| Validator {
+                    key: v.key,
+                    power: v.stake,
+                })
+                .collect(),
+        );
         Ok(Self {
             accounts,
             total_supply,
@@ -163,13 +195,73 @@ impl State {
                 min_fee: genesis.min_fee,
                 max_block_txs: genesis.max_block_txs,
                 governance: genesis.governance.clone(),
+                consensus: genesis.consensus.clone(),
             },
             locks: BTreeMap::new(),
             next_lock_id: 0,
             proposals: BTreeMap::new(),
             contributions: BTreeMap::new(),
             approved_communities: BTreeSet::new(),
+            bonds: genesis
+                .validators
+                .iter()
+                .map(|v| (v.key, v.stake))
+                .collect(),
+            unbonding: Vec::new(),
+            jailed: BTreeSet::new(),
+            punished: BTreeSet::new(),
+            validators: initial.clone(),
+            last_validators: initial,
         })
+    }
+
+    /// Conjunto de validadores do próximo bloco.
+    pub fn validators(&self) -> &ValidatorSet {
+        &self.validators
+    }
+
+    /// Conjunto que validou o bloco mais recente (verifica o seu commit).
+    pub fn last_validators(&self) -> &ValidatorSet {
+        &self.last_validators
+    }
+
+    pub fn bond_of(&self, key: &rz_crypto::PublicKey) -> u64 {
+        self.bonds.get(key).copied().unwrap_or(0)
+    }
+
+    pub fn unbonding(&self) -> &[Unbonding] {
+        &self.unbonding
+    }
+
+    pub fn is_jailed(&self, key: &rz_crypto::PublicKey) -> bool {
+        self.jailed.contains(key)
+    }
+
+    fn staked_total(&self) -> u128 {
+        self.bonds.values().map(|b| *b as u128).sum::<u128>()
+            + self
+                .unbonding
+                .iter()
+                .map(|u| u.amount as u128)
+                .sum::<u128>()
+    }
+
+    /// Candidatos com bloqueio mínimo e não excluídos, maiores primeiro.
+    fn select_validators(&self) -> ValidatorSet {
+        let c = &self.params.consensus;
+        let mut cands: Vec<(&rz_crypto::PublicKey, &u64)> = self
+            .bonds
+            .iter()
+            .filter(|(k, b)| **b >= c.min_bond.max(1) && !self.jailed.contains(*k))
+            .collect();
+        cands.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        ValidatorSet::new(
+            cands
+                .into_iter()
+                .take(c.max_validators as usize)
+                .map(|(k, b)| Validator { key: *k, power: *b })
+                .collect(),
+        )
     }
 
     /// Parâmetros vigentes (iniciados pelo Genesis, alterados por governança).
@@ -232,6 +324,24 @@ impl State {
         for c in &self.approved_communities {
             e.put(c);
         }
+        // Staking e conjunto de validadores.
+        e.u64(self.bonds.len() as u64);
+        for (k, b) in &self.bonds {
+            e.put(k).u64(*b);
+        }
+        e.u64(self.unbonding.len() as u64);
+        for u in &self.unbonding {
+            e.put(&u.owner).u64(u.amount).u64(u.release_height);
+        }
+        e.u64(self.jailed.len() as u64);
+        for k in &self.jailed {
+            e.put(k);
+        }
+        e.u64(self.punished.len() as u64);
+        for h in &self.punished {
+            e.put(h);
+        }
+        e.put(&self.validators).put(&self.last_validators);
         hash(GOVERNANCE_ROOT, &e.into_bytes())
     }
 
@@ -292,7 +402,8 @@ impl State {
             .sum::<u128>()
             + self.shielded_supply as u128
             + self.locked_total()
-            + self.deposits_held();
+            + self.deposits_held()
+            + self.staked_total();
         if actual != self.total_supply as u128 {
             return Err(StateError::SupplyMismatch {
                 expected: self.total_supply,
@@ -350,17 +461,68 @@ impl State {
                     p.votes.insert(voter, vote);
                 }
             }
-            Some(GovEffect::Slash(key)) => {
-                self.contributions.insert(
-                    key,
-                    Contribution {
-                        points: 0,
-                        updated_at: p.height,
-                    },
-                );
+            Some(GovEffect::Slash(key, evidence)) => self.slash(key, evidence, p.height),
+            Some(GovEffect::Bond(key, amount)) => {
+                *self.bonds.entry(key).or_default() += amount;
+            }
+            Some(GovEffect::Unbond(key, amount)) => {
+                let remaining = self.bond_of(&key) - amount;
+                if remaining == 0 {
+                    self.bonds.remove(&key);
+                } else {
+                    self.bonds.insert(key, remaining);
+                }
+                self.unbonding.push(Unbonding {
+                    owner: key.address(),
+                    amount,
+                    release_height: p
+                        .height
+                        .saturating_add(self.params.consensus.unbonding_blocks),
+                });
             }
         }
         Ok(effect.fee)
+    }
+
+    /// Punição com evidência verificável (`SPEC §49`): queima `slash_bps` do
+    /// bloqueio e das desvinculações pendentes, exclui do conjunto
+    /// imediatamente e zera os pontos de contribuição.
+    fn slash(&mut self, key: rz_crypto::PublicKey, evidence: Hash32, height: u64) {
+        let bps = self.params.consensus.slash_bps as u128;
+        let cut = |v: u64| (v as u128 * bps / 10_000) as u64;
+        let mut burned = 0u64;
+        if let Some(b) = self.bonds.get_mut(&key) {
+            let c = cut(*b);
+            *b -= c;
+            burned += c;
+        }
+        let owner = key.address();
+        for u in self.unbonding.iter_mut().filter(|u| u.owner == owner) {
+            let c = cut(u.amount);
+            u.amount -= c;
+            burned += c;
+        }
+        self.unbonding.retain(|u| u.amount > 0);
+        self.total_supply -= burned;
+        self.jailed.insert(key);
+        self.punished.insert(evidence);
+        self.contributions.insert(
+            key,
+            Contribution {
+                points: 0,
+                updated_at: height,
+            },
+        );
+        let remaining: Vec<Validator> = self
+            .validators
+            .validators()
+            .iter()
+            .filter(|v| v.key != key)
+            .cloned()
+            .collect();
+        if !remaining.is_empty() {
+            self.validators = ValidatorSet::new(remaining);
+        }
     }
 
     /// Regras de fim de bloco (`spec/GOVERNANCE.md §1`, §5):
@@ -373,7 +535,27 @@ impl State {
         &mut self,
         proposer: &rz_crypto::PublicKey,
         height: u64,
+        used_validators: ValidatorSet,
     ) -> Result<(), StateError> {
+        // Consenso: o conjunto que validou este bloco; nova época recalcula.
+        self.last_validators = used_validators;
+        let released: Vec<Unbonding> = self
+            .unbonding
+            .iter()
+            .filter(|u| u.release_height <= height)
+            .cloned()
+            .collect();
+        self.unbonding.retain(|u| u.release_height > height);
+        for u in released {
+            self.credit_fees(u.owner, u.amount)?;
+        }
+        if height.is_multiple_of(self.params.consensus.epoch_blocks) {
+            let next = self.select_validators();
+            if !next.is_empty() {
+                self.validators = next;
+            }
+        }
+
         let hl = self.params.governance.contribution_half_life_blocks;
         let c = self.contributions.entry(*proposer).or_default();
         c.points = c
@@ -501,7 +683,12 @@ impl State {
             | TxKind::Shield { amount, .. }
             | TxKind::LockStake { amount, .. } => *amount,
             TxKind::Propose { deposit, .. } => *deposit,
-            TxKind::Unlock { .. } | TxKind::Vote { .. } | TxKind::ReportEquivocation { .. } => 0,
+            TxKind::Bond { amount } => *amount,
+            TxKind::Unlock { .. }
+            | TxKind::Vote { .. }
+            | TxKind::ReportEquivocation { .. }
+            | TxKind::Unbond { .. }
+            | TxKind::ReportDoubleVote { .. } => 0,
         };
         let required = amount.checked_add(tx.body.fee).ok_or(TxError::Overflow)?;
         if sender_acc.balance < required {
@@ -668,8 +855,8 @@ impl State {
                 if a.proposer != b.proposer {
                     return Err(TxError::InvalidEvidence("produtores diferentes"));
                 }
-                if a.slot != b.slot {
-                    return Err(TxError::InvalidEvidence("slots diferentes"));
+                if a.height != b.height || a.round != b.round {
+                    return Err(TxError::InvalidEvidence("altura ou rodada diferentes"));
                 }
                 if a.id() == b.id() {
                     return Err(TxError::InvalidEvidence("cabeçalhos idênticos"));
@@ -677,7 +864,59 @@ impl State {
                 if !first.verify(p.network_id) || !second.verify(p.network_id) {
                     return Err(TxError::InvalidEvidence("assinatura inválida"));
                 }
-                effect.gov = Some(GovEffect::Slash(a.proposer));
+                let evidence = evidence_id(&a.proposer, a.height, a.round as u32, 0);
+                if self.punished.contains(&evidence) {
+                    return Err(TxError::InvalidEvidence("infração já punida"));
+                }
+                effect.gov = Some(GovEffect::Slash(a.proposer, evidence));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::Bond { amount } => {
+                let key = tx.body.sender;
+                if self.jailed.contains(&key) {
+                    return Err(TxError::Staking("validador excluído por punição"));
+                }
+                let total = self
+                    .bond_of(&key)
+                    .checked_add(*amount)
+                    .ok_or(TxError::Overflow)?;
+                if total < self.params.consensus.min_bond {
+                    return Err(TxError::Staking("abaixo do bloqueio mínimo de validador"));
+                }
+                effect.gov = Some(GovEffect::Bond(key, *amount));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::Unbond { amount } => {
+                let key = tx.body.sender;
+                let bonded = self.bond_of(&key);
+                if *amount > bonded {
+                    return Err(TxError::Staking("valor maior que o bloqueado"));
+                }
+                let remaining = bonded - amount;
+                if remaining != 0 && remaining < self.params.consensus.min_bond {
+                    return Err(TxError::Staking("restante abaixo do bloqueio mínimo"));
+                }
+                effect.gov = Some(GovEffect::Unbond(key, *amount));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::ReportDoubleVote { first, second } => {
+                if !first.conflicts_with(second) {
+                    return Err(TxError::InvalidEvidence("votos não conflitantes"));
+                }
+                if !first.verify(p.network_id) || !second.verify(p.network_id) {
+                    return Err(TxError::InvalidEvidence("assinatura inválida"));
+                }
+                let key = first.validator;
+                if self.bond_of(&key) == 0
+                    && !self.unbonding.iter().any(|u| u.owner == key.address())
+                {
+                    return Err(TxError::InvalidEvidence("não é validador"));
+                }
+                let evidence = evidence_id(&key, first.height, first.round, first.kind as u8);
+                if self.punished.contains(&evidence) {
+                    return Err(TxError::InvalidEvidence("infração já punida"));
+                }
+                effect.gov = Some(GovEffect::Slash(key, evidence));
                 effect.accounts.push((sender, sender_acc));
             }
         }
@@ -773,6 +1012,13 @@ impl State {
             gov: None,
         })
     }
+}
+
+/// Identificador de uma infração: `(validador, altura, rodada, tipo)`.
+fn evidence_id(key: &rz_crypto::PublicKey, height: u64, round: u32, kind: u8) -> Hash32 {
+    let mut e = Encoder::new();
+    e.put(key).u64(height).u32(round).u8(kind);
+    hash("rede-zero/evidence/v1", &e.into_bytes())
 }
 
 /// Pontos válidos e prova de faixa válida para cada saída.

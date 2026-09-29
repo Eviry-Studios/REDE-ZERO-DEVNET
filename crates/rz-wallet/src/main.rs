@@ -46,6 +46,12 @@ Governança (ADR-0008) — operações transparentes, por natureza públicas:
 
 Validadores votam na câmara de contribuição usando a própria chave de validador.
 
+Consenso Zero-BFT (ADR-0012) — vínculo de validador, público:
+  zero-wallet bond    --genesis FILE --node ADDR --key FILE --amount ZERO
+  zero-wallet unbond  --genesis FILE --node ADDR --key FILE --amount ZERO
+  O vínculo entra no conjunto de validadores na próxima época; a desvinculação
+  só libera o saldo após o período de desvinculação (e continua punível).
+
 Endereços:
   zs…  endereço PRIVADO (padrão recomendado): remetente, destinatário e valor ocultos
   HEX  endereço transparente: tudo público (necessário para taxas e validadores)
@@ -120,6 +126,8 @@ fn main() -> ExitCode {
         "governance" => cmd_governance(&args),
         "lock" => cmd_lock(&args),
         "unlock" => cmd_unlock(&args),
+        "bond" => cmd_bond(&args, true),
+        "unbond" => cmd_bond(&args, false),
         "propose" => cmd_propose(&args),
         "vote" => cmd_vote(&args),
         "help" | "--help" | "-h" => {
@@ -397,7 +405,7 @@ fn cmd_lock(args: &Args) -> Result<(), String> {
     let (_, _, height) = account(&mut client, keys.address())?;
     let g = governance(&mut client, None)?.params.governance;
     if blocks < g.lock_min_blocks || blocks > g.lock_max_blocks {
-        let slot_s = genesis.slot_duration_ms as f64 / 1000.0;
+        let slot_s = genesis.consensus.block_interval_ms as f64 / 1000.0;
         return Err(format!(
             "--blocks deve estar entre {} e {} blocos (~{:.0} a {:.0} dias nesta rede)",
             g.lock_min_blocks,
@@ -443,6 +451,27 @@ fn cmd_unlock(args: &Args) -> Result<(), String> {
         TxKind::Unlock { lock_id },
         fee,
     )?;
+    println!("transação: {id} — aceita, aguardando inclusão em bloco");
+    Ok(())
+}
+
+fn cmd_bond(args: &Args, bond: bool) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let amount = args.amount("amount")?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let kind = if bond {
+        TxKind::Bond { amount }
+    } else {
+        TxKind::Unbond { amount }
+    };
+    let id = send_account(&mut client, &genesis, &keys, kind, fee)?;
+    eprintln!("aviso: vínculos de validador são públicos (valor e conta)");
+    println!(
+        "{} {} ZERO",
+        if bond { "vinculando" } else { "desvinculando" },
+        format_zero(amount)
+    );
     println!("transação: {id} — aceita, aguardando inclusão em bloco");
     Ok(())
 }

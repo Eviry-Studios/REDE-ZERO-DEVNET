@@ -37,7 +37,22 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Proteção do IP do usuário (ADR-0011): canal cifrado e autenticado com preenchimento; Tor/I2P via SOCKS5 com endereços `.onion`; Node privado (`--no-listen`); Wallet recusa conexão direta a Node remoto sem consentimento; logs sem endereços de clientes.
 * `THREAT_MODEL.md` v0.3.0.
 
+### Adicionado — consenso Zero-BFT e Democracia Orgânica
+
+* Consenso **Zero-BFT** (ADR-0012, `spec/CONSENSUS.md` v0.2.0), substituindo a autoridade rotativa (ADR-0006):
+  * algoritmo de Tendermint (proposta, pré-voto, pré-compromisso, trava e rodadas) com finalidade imediata e sem reorganização;
+  * poder de voto igual ao ZERO vinculado; conjunto aberto recomputado por época; proponente por sorteio ponderado;
+  * operações `Bond`, `Unbond` (com período de desvinculação) e `ReportDoubleVote`; punição queima `slash_bps`, exclui o validador e zera seus pontos de contribuição;
+  * certificados `Commit` verificados na importação e na sincronização (`CommittedBlock`);
+  * parâmetros de consenso no estado e alteráveis por governança constitucional;
+  * máquina de estados determinística em `rz-chain` testada em rede simulada (proponente offline, voto duplo, partição, falta de quórum);
+  * comandos `bond` e `unbond` na Wallet; `init-devnet --block-ms --stake` e padrão de 4 validadores.
+* `docs/DEMOCRACIA_ORGANICA.md` incorporado com notas de conformidade (ADR-0013).
+* `THREAT_MODEL.md` v0.4.0.
+
 ### Protocolo
 
-* `PROTOCOL_VERSION = 1`, `P2P_VERSION = 2` (DEVNET, não congelados). O Genesis passou a incluir parâmetros de governança.
+* **Incompatível** com DEVNETs anteriores ao Zero-BFT: o cabeçalho troca `slot` por `round`, o Genesis troca tempo/slot/finalidade por `ConsensusParams` e validadores com vínculo, blocos trafegam com certificado e `P2P_VERSION = 3`. Recrie a DEVNET (`rm -rf devnet-data`).
+
+* `PROTOCOL_VERSION = 1` (DEVNET, não congelado). O Genesis passou a incluir parâmetros de governança.
 * **Incompatível** com blocos anteriores à camada privada: `Transaction` passou a ter tag de tipo, e a raiz do estado inclui a parte privada. DEVNETs antigas devem ser recriadas (`rm -rf devnet-data`).

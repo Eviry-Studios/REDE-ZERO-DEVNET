@@ -17,12 +17,14 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use rand_core::{OsRng, RngCore};
-use rz_chain::{
-    Chain, ChainError, ConsensusError, ImportOutcome, Mempool, MempoolError, RoundRobin,
-};
+use rz_chain::bft::{App, Bft, Output, Timeout};
+use rz_chain::{Chain, ChainError, Mempool, MempoolError};
 use rz_codec::Encode;
 use rz_core::state::ExecParams;
-use rz_core::{Account, Block, BlockId, Genesis, Transaction, TxError, TxId};
+use rz_core::{
+    Account, Block, BlockId, CommittedBlock, Genesis, Proposal, Transaction, TxBody, TxError, TxId,
+    TxKind, Vote,
+};
 use rz_crypto::{Address, Hash32, SecretKey};
 use rz_p2p::secure::{initiate, respond, SecureReader};
 use rz_p2p::{
@@ -110,8 +112,40 @@ pub struct NodeStatus {
     pub mempool: usize,
 }
 
+/// Eventos para a thread de consenso.
+enum ConsensusEvent {
+    Proposal(Box<Proposal>, Option<u64>),
+    Vote(Vote, Option<u64>),
+    /// A cadeia avançou por sincronização.
+    ChainAdvanced,
+}
+
+/// Identificadores de mensagens de consenso já vistas (evita reenvio em laço).
+#[derive(Default)]
+struct Seen {
+    set: HashSet<Hash32>,
+    order: std::collections::VecDeque<Hash32>,
+}
+
+impl Seen {
+    const CAP: usize = 50_000;
+
+    fn insert(&mut self, id: Hash32) -> bool {
+        if !self.set.insert(id) {
+            return false;
+        }
+        self.order.push_back(id);
+        if self.order.len() > Self::CAP {
+            if let Some(old) = self.order.pop_front() {
+                self.set.remove(&old);
+            }
+        }
+        true
+    }
+}
+
 struct Core {
-    chain: Chain<RoundRobin>,
+    chain: Chain,
     mempool: Mempool,
     store: BlockStore,
 }
@@ -151,6 +185,8 @@ struct Shared {
     peers: Mutex<Peers>,
     shutdown: AtomicBool,
     stem: Mutex<Stem>,
+    consensus_tx: mpsc::Sender<ConsensusEvent>,
+    seen: Mutex<Seen>,
 }
 
 /// Estado local do Dandelion++.
@@ -182,15 +218,16 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 impl Node {
     pub fn start(cfg: NodeConfig) -> io::Result<Node> {
         let genesis_hash = cfg.genesis.hash();
-        let mut chain = Chain::new(cfg.genesis.clone(), RoundRobin::default())
+        let mut chain = Chain::new(cfg.genesis.clone())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-        // Reprocessa blocos persistidos, verificando cada um.
+        // Reprocessa blocos persistidos, verificando cada certificado e cada
+        // transição de estado: o disco também é fonte não confiável.
         let (store, blocks) = BlockStore::open(&cfg.data_dir)?;
         let total = blocks.len();
         let mut rejected = 0usize;
-        for b in blocks {
-            if chain.import(b, None).is_err() {
+        for cb in blocks {
+            if chain.commit(cb).is_err() {
                 rejected += 1;
             }
         }
@@ -213,6 +250,7 @@ impl Node {
             None => None,
         };
 
+        let (consensus_tx, consensus_rx) = mpsc::channel::<ConsensusEvent>();
         let shared = Arc::new(Shared {
             genesis_hash,
             key: cfg.validator_key,
@@ -237,6 +275,8 @@ impl Node {
                 chosen_at: Instant::now(),
                 pool: HashMap::new(),
             }),
+            consensus_tx,
+            seen: Mutex::new(Seen::default()),
             genesis: cfg.genesis,
         });
 
@@ -275,9 +315,9 @@ impl Node {
             let s = shared.clone();
             threads.push(thread::spawn(move || s.dial_loop()));
         }
-        if shared.key.is_some() {
+        {
             let s = shared.clone();
-            threads.push(thread::spawn(move || s.produce_loop()));
+            threads.push(thread::spawn(move || s.consensus_loop(consensus_rx)));
         }
         Ok(Node { shared, threads })
     }
@@ -387,7 +427,7 @@ impl Shared {
             (
                 c.chain.height(),
                 c.chain.tip(),
-                c.chain.finalized_height(),
+                c.chain.height(),
                 c.mempool.len(),
             )
         };
@@ -415,90 +455,225 @@ impl Shared {
 
     // ---------------------------------------------------------------- cadeia
 
-    /// Importa um bloco; retorna `true` se ele era novo.
-    fn process_block(&self, block: Block, now: Option<u64>) -> Result<bool, ChainError> {
+    /// Acrescenta um bloco finalizado (do consenso local ou da rede).
+    /// Retorna `true` se era novo.
+    fn commit_block(&self, cb: CommittedBlock) -> Result<bool, ChainError> {
         let mut guard = lock(&self.core);
         let Core {
             chain,
             mempool,
             store,
         } = &mut *guard;
-        let outcome = chain.import(block.clone(), now)?;
-        match outcome {
-            ImportOutcome::AlreadyKnown => Ok(false),
-            ImportOutcome::Stored | ImportOutcome::NewTip { .. } => {
-                if let Err(e) = store.append(&block) {
-                    self.info(format!("falha ao gravar bloco: {e}"));
+        if cb.block.header.height <= chain.height() {
+            return Ok(false);
+        }
+        chain.commit(cb.clone())?;
+        if let Err(e) = store.append(&cb) {
+            self.info(format!("falha ao gravar bloco: {e}"));
+        }
+        let state = chain.state();
+        mempool.prune(&state, &ExecParams::at(chain.genesis(), chain.height() + 1));
+        Ok(true)
+    }
+
+    // ------------------------------------------------------------- consenso
+
+    /// Thread do consenso Zero-BFT (ADR-0012): alimenta a máquina de estados
+    /// com propostas, votos e temporizadores, e executa suas saídas.
+    fn consensus_loop(self: Arc<Self>, rx: mpsc::Receiver<ConsensusEvent>) {
+        let key = self.key.as_ref().map(|k| SecretKey::from_seed(k.seed()));
+        let params = lock(&self.core).chain.state().params().consensus.clone();
+        let mut bft = Bft::new(&self.genesis.network_id, key, params);
+        let mut timers: Vec<(Instant, Timeout)> = Vec::new();
+        let mut next_height_at: Option<Instant> = Some(Instant::now());
+        let retransmit_every = Duration::from_millis(
+            lock(&self.core)
+                .chain
+                .state()
+                .params()
+                .consensus
+                .timeout_propose_ms
+                .max(200),
+        );
+        let mut next_retransmit = Instant::now() + retransmit_every;
+
+        while self.running() {
+            let now = Instant::now();
+            if next_height_at.is_some_and(|t| now >= t) {
+                next_height_at = None;
+                timers.clear();
+                let outs = {
+                    let guard = lock(&self.core);
+                    let state = guard.chain.state();
+                    bft.set_params(state.params().consensus.clone());
+                    let mut app = NodeApp::new(&guard, &self.genesis, self.key.as_ref());
+                    bft.start_height(
+                        guard.chain.height() + 1,
+                        guard.chain.tip(),
+                        state.validators().clone(),
+                        &mut app,
+                    )
+                };
+                self.apply_outputs(outs, &mut timers, &mut next_height_at, &bft);
+            }
+
+            let mut wait = Duration::from_millis(100);
+            for t in timers
+                .iter()
+                .map(|(t, _)| *t)
+                .chain(next_height_at)
+                .chain([next_retransmit])
+            {
+                wait = wait.min(t.saturating_duration_since(now));
+            }
+
+            match rx.recv_timeout(wait) {
+                Ok(ConsensusEvent::Proposal(p, from)) => {
+                    let r = {
+                        let guard = lock(&self.core);
+                        let mut app = NodeApp::new(&guard, &self.genesis, self.key.as_ref());
+                        bft.on_proposal((*p).clone(), &mut app)
+                    };
+                    if r.relay {
+                        self.broadcast(&Message::ConsensusProposal(p), from);
+                    }
+                    self.apply_outputs(r.outputs, &mut timers, &mut next_height_at, &bft);
                 }
-                if let ImportOutcome::NewTip { reorg } = outcome {
-                    let state = chain.state();
-                    mempool.prune(&state, &ExecParams::at(chain.genesis(), chain.height() + 1));
-                    if reorg {
-                        self.info(format!(
-                            "reorganização: nova ponta {} na altura {}",
-                            block.id(),
-                            block.header.height
-                        ));
+                Ok(ConsensusEvent::Vote(v, from)) => {
+                    let r = {
+                        let guard = lock(&self.core);
+                        let mut app = NodeApp::new(&guard, &self.genesis, self.key.as_ref());
+                        bft.on_vote(v.clone(), &mut app)
+                    };
+                    if r.relay {
+                        self.broadcast(&Message::ConsensusVote(v), from);
+                    }
+                    self.apply_outputs(r.outputs, &mut timers, &mut next_height_at, &bft);
+                }
+                Ok(ConsensusEvent::ChainAdvanced) => {
+                    let h = lock(&self.core).chain.height();
+                    if h >= bft.height() && next_height_at.is_none() {
+                        next_height_at = Some(Instant::now());
                     }
                 }
-                Ok(true)
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+
+            let now = Instant::now();
+            let due: Vec<Timeout> = timers
+                .iter()
+                .filter(|(t, _)| *t <= now)
+                .map(|(_, t)| *t)
+                .collect();
+            timers.retain(|(t, _)| *t > now);
+            for t in due {
+                let outs = {
+                    let guard = lock(&self.core);
+                    let mut app = NodeApp::new(&guard, &self.genesis, self.key.as_ref());
+                    bft.on_timeout(t, &mut app)
+                };
+                self.apply_outputs(outs, &mut timers, &mut next_height_at, &bft);
+            }
+            if now >= next_retransmit {
+                next_retransmit = now + retransmit_every;
+                let outs = bft.retransmit();
+                self.apply_outputs(outs, &mut timers, &mut next_height_at, &bft);
             }
         }
     }
 
-    fn produce_loop(self: Arc<Self>) {
-        let Some(key) = &self.key else { return };
-        let me = key.public_key();
-        let mut last_slot: Option<u64> = None;
-        while self.running() {
-            thread::sleep(Duration::from_millis(50));
-            let now = now_ms();
-            let Some(slot) = self.genesis.slot_at(now) else {
-                continue;
-            };
-            if last_slot.is_some_and(|s| s >= slot) {
-                continue;
-            }
-            last_slot = Some(slot);
-            if self.genesis.proposer_for_slot(slot) != Some(&me) {
-                continue;
-            }
-            let built = {
-                let c = lock(&self.core);
-                if c.chain.tip_slot().is_some_and(|s| s >= slot) {
-                    continue;
+    fn apply_outputs(
+        &self,
+        outs: Vec<Output>,
+        timers: &mut Vec<(Instant, Timeout)>,
+        next_height_at: &mut Option<Instant>,
+        bft: &Bft,
+    ) {
+        for o in outs {
+            match o {
+                Output::BroadcastProposal(p) => {
+                    lock(&self.seen).insert(p.id());
+                    self.broadcast(&Message::ConsensusProposal(p), None);
                 }
-                let state = c.chain.state();
-                let params = ExecParams::at(&self.genesis, c.chain.height() + 1);
-                let txs = c
-                    .mempool
-                    .select(&state, &params, state.params().max_block_txs as usize);
-                Block::build(
-                    &self.genesis,
-                    c.chain.tip(),
-                    c.chain.height(),
-                    &state,
-                    slot,
-                    txs,
-                    key,
-                )
-            };
-            match built {
-                Ok((block, _)) => {
-                    let (h, n, id) = (block.header.height, block.txs.len(), block.id());
-                    match self.process_block(block.clone(), Some(now)) {
+                Output::BroadcastVote(v) => {
+                    lock(&self.seen).insert(v.id());
+                    self.broadcast(&Message::ConsensusVote(v), None);
+                }
+                Output::ScheduleTimeout(t, ms) => {
+                    timers.push((Instant::now() + Duration::from_millis(ms), t));
+                }
+                Output::Decide(block, commit) => {
+                    let cb = CommittedBlock {
+                        block: *block,
+                        commit,
+                    };
+                    let (h, n, id, round) = (
+                        cb.block.header.height,
+                        cb.block.txs.len(),
+                        cb.block.id(),
+                        cb.commit.round,
+                    );
+                    match self.commit_block(cb.clone()) {
                         Ok(true) => {
                             self.info(format!(
-                                "bloco produzido: altura {h}, slot {slot}, {n} transações, id {id}"
+                                "bloco finalizado: altura {h}, rodada {round}, {n} transações, id {id}"
                             ));
-                            self.broadcast(&Message::Block(Box::new(block)), None);
+                            self.broadcast(&Message::Block(Box::new(cb)), None);
                         }
                         Ok(false) => {}
-                        Err(e) => self.info(format!("bloco próprio rejeitado: {e}")),
+                        Err(e) => self.info(format!("decisão não aplicada: {e}")),
                     }
+                    let interval = lock(&self.core)
+                        .chain
+                        .state()
+                        .params()
+                        .consensus
+                        .block_interval_ms;
+                    *next_height_at = Some(Instant::now() + Duration::from_millis(interval));
                 }
-                Err(e) => self.info(format!("falha ao montar bloco: {e}")),
+                Output::VoteEvidence(a, b) => {
+                    self.info(format!(
+                        "dupla assinatura detectada: validador {} na altura {}",
+                        a.validator, a.height
+                    ));
+                    self.report(TxKind::ReportDoubleVote {
+                        first: a,
+                        second: b,
+                    });
+                }
+                Output::ProposalEvidence(a, b) => {
+                    self.info("propostas conflitantes detectadas");
+                    self.report(TxKind::ReportEquivocation {
+                        first: a,
+                        second: b,
+                    });
+                }
             }
+        }
+        let _ = bft;
+    }
+
+    /// Transforma evidência em transação de denúncia, assinada pela chave do
+    /// validador local (que paga a taxa).
+    fn report(&self, kind: TxKind) {
+        let Some(key) = &self.key else {
+            return;
+        };
+        let tx = {
+            let c = lock(&self.core);
+            let state = c.chain.state();
+            TxBody {
+                version: rz_core::tx::TX_VERSION,
+                sender: key.public_key(),
+                nonce: state.account(&key.public_key().address()).nonce,
+                fee: state.params().min_fee,
+                kind,
+            }
+            .sign(key, &self.genesis.network_id)
+        };
+        if let Ok(tx) = tx {
+            let _ = self.fluff(tx, None);
         }
     }
 
@@ -880,6 +1055,22 @@ impl Shared {
             }
             Message::Transaction(tx) => self.handle_tx(ctx, tx),
             Message::Block(b) => self.handle_block(ctx, *b),
+            Message::ConsensusProposal(p) => {
+                if lock(&self.seen).insert(p.id()) {
+                    let _ = self
+                        .consensus_tx
+                        .send(ConsensusEvent::Proposal(p, Some(ctx.id)));
+                }
+                Flow::Continue
+            }
+            Message::ConsensusVote(v) => {
+                if lock(&self.seen).insert(v.id()) {
+                    let _ = self
+                        .consensus_tx
+                        .send(ConsensusEvent::Vote(v, Some(ctx.id)));
+                }
+                Flow::Continue
+            }
             Message::GetBlocks { from_height, max } => {
                 let blocks = self.blocks_from(from_height, max);
                 self.send_to(ctx.id, Message::Blocks(blocks));
@@ -1166,20 +1357,20 @@ impl Shared {
         }
     }
 
-    fn handle_block(&self, ctx: &mut ConnCtx, block: Block) -> Flow {
-        ctx.peer_height = ctx.peer_height.max(block.header.height);
-        match self.process_block(block.clone(), Some(now_ms())) {
+    fn handle_block(&self, ctx: &mut ConnCtx, cb: CommittedBlock) -> Flow {
+        ctx.peer_height = ctx.peer_height.max(cb.block.header.height);
+        match self.commit_block(cb.clone()) {
             Ok(true) => {
-                self.broadcast(&Message::Block(Box::new(block)), Some(ctx.id));
+                self.broadcast(&Message::Block(Box::new(cb)), Some(ctx.id));
+                let _ = self.consensus_tx.send(ConsensusEvent::ChainAdvanced);
                 Flow::Continue
             }
             Ok(false) => Flow::Continue,
-            Err(ChainError::UnknownParent(_)) => {
-                let fin = lock(&self.core).chain.finalized_height();
-                self.request_blocks(ctx, fin + 1);
+            Err(ChainError::NotNext { expected, got }) if got > expected => {
+                self.request_blocks(ctx, expected);
                 Flow::Continue
             }
-            Err(e) if benign(&e) => Flow::Continue,
+            Err(ChainError::NotNext { .. }) => Flow::Continue,
             Err(e) => {
                 self.debug(format!("bloco inválido recebido: {e}"));
                 Flow::Penalize(Offense::InvalidBlock)
@@ -1187,41 +1378,39 @@ impl Shared {
         }
     }
 
-    fn handle_blocks(&self, ctx: &mut ConnCtx, blocks: Vec<Block>) -> Flow {
+    fn handle_blocks(&self, ctx: &mut ConnCtx, blocks: Vec<CommittedBlock>) -> Flow {
         let mut imported = false;
-        let mut unknown_parent = false;
-        for b in blocks {
-            ctx.peer_height = ctx.peer_height.max(b.header.height);
-            match self.process_block(b, Some(now_ms())) {
+        for cb in blocks {
+            ctx.peer_height = ctx.peer_height.max(cb.block.header.height);
+            match self.commit_block(cb) {
                 Ok(new) => imported |= new,
-                Err(ChainError::UnknownParent(_)) => unknown_parent = true,
-                Err(e) if benign(&e) => {}
+                Err(ChainError::NotNext { .. }) => {}
                 Err(e) => {
                     self.debug(format!("bloco inválido na sincronização: {e}"));
                     return Flow::Penalize(Offense::InvalidBlock);
                 }
             }
         }
-        let (height, fin) = {
-            let c = lock(&self.core);
-            (c.chain.height(), c.chain.finalized_height())
-        };
-        if imported && ctx.peer_height > height {
-            self.request_blocks(ctx, height + 1);
-        } else if unknown_parent && ctx.last_request_from != Some(fin + 1) {
-            self.request_blocks(ctx, fin + 1);
+        let height = lock(&self.core).chain.height();
+        if imported {
+            let _ = self.consensus_tx.send(ConsensusEvent::ChainAdvanced);
+            if ctx.peer_height > height {
+                self.request_blocks(ctx, height + 1);
+            }
         }
         Flow::Continue
     }
 
-    fn blocks_from(&self, from: u64, max: u32) -> Vec<Block> {
+    fn blocks_from(&self, from: u64, max: u32) -> Vec<CommittedBlock> {
         let c = lock(&self.core);
         let max = (max as usize).min(MAX_BLOCKS_PER_MSG);
         let mut out = Vec::new();
         let mut bytes = 0usize;
         let mut h = from.max(1);
         while out.len() < max {
-            let Some(b) = c.chain.block_at(h) else { break };
+            let Some(b) = c.chain.committed_at(h) else {
+                break;
+            };
             bytes += b.to_canonical_bytes().len();
             if bytes > MAX_BLOCKS_RESPONSE_BYTES && !out.is_empty() {
                 break;
@@ -1233,14 +1422,45 @@ impl Shared {
     }
 }
 
-/// Rejeições que podem ocorrer com pares honestos (relógios diferentes,
-/// ramificações antigas) e por isso não geram penalidade.
-fn benign(e: &ChainError) -> bool {
-    matches!(
-        e,
-        ChainError::ConflictsWithFinality
-            | ChainError::Consensus(ConsensusError::FutureSlot { .. })
-    )
+/// Serviços do Node para a máquina de consenso.
+struct NodeApp<'a> {
+    core: &'a Core,
+    genesis: &'a Genesis,
+    key: Option<&'a SecretKey>,
+}
+
+impl<'a> NodeApp<'a> {
+    fn new(core: &'a Core, genesis: &'a Genesis, key: Option<&'a SecretKey>) -> Self {
+        Self { core, genesis, key }
+    }
+}
+
+impl App for NodeApp<'_> {
+    fn build_block(&mut self, height: u64, round: u32) -> Option<Block> {
+        let key = self.key?;
+        let chain = &self.core.chain;
+        let state = chain.state();
+        let params = ExecParams::at(self.genesis, height);
+        let txs = self
+            .core
+            .mempool
+            .select(&state, &params, state.params().max_block_txs as usize);
+        Block::build(
+            self.genesis,
+            chain.tip(),
+            chain.height(),
+            &state,
+            u64::from(round),
+            txs,
+            key,
+        )
+        .ok()
+        .map(|(b, _)| b)
+    }
+
+    fn validate_block(&mut self, block: &Block) -> bool {
+        self.core.chain.check_next(block).is_ok()
+    }
 }
 
 /// Penalidade para rejeições que um par honesto nunca produz.

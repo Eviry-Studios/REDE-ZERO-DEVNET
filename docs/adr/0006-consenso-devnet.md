@@ -1,6 +1,6 @@
 # ADR-0006 — Consenso da DEVNET: autoridade rotativa
 
-**Estado:** Aceita
+**Estado:** Substituída por ADR-0012 (Zero-BFT)
 **Escopo:** **DEVNET apenas**
 **Data:** 2026-09-29
 **Relacionamento:** REQ-005, REQ-015, SPEC §19–22, THR-CON-002, THR-CON-004

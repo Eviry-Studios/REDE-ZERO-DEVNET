@@ -209,12 +209,13 @@ mod tests {
             protocol_version: PROTOCOL_VERSION,
             kind: NetworkKind::Devnet,
             network_id: "rede-zero-devnet-test".into(),
-            genesis_time_ms: 0,
-            slot_duration_ms: 1_000,
-            finality_depth: 3,
+            consensus: rz_core::ConsensusParams::fast(1_000),
             min_fee: 1,
             max_block_txs: 100,
-            validators: vec![SecretKey::from_seed([1; 32]).public_key()],
+            validators: vec![rz_core::GenesisValidator::new(
+                SecretKey::from_seed([1; 32]).public_key(),
+                100,
+            )],
             allocations: vec![Allocation {
                 address: rich().public_key().address(),
                 amount: 1_000,
