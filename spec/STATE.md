@@ -25,13 +25,17 @@ State {
 
 Contas ausentes equivalem a `{ balance: 0, nonce: 0 }`. Contas com `nonce > 0` nunca são removidas (proteção contra replay).
 
+A parte privada do estado (notas, imagens de chave, oferta privada) é especificada em `spec/PRIVACY.md §8`.
+
 ## 3. Compromisso do estado
 
 ```text
 state_root = H(STATE_ROOT,
-               u64(total_supply) ‖
+               u64(total_supply) ‖ u64(shielded_supply) ‖
                u32(n) ‖
-               (address ‖ u64(balance) ‖ u64(nonce))  para cada conta, em ordem crescente de address)
+               (address ‖ u64(balance) ‖ u64(nonce))  para cada conta, em ordem crescente de address ‖
+               u64(total_saídas) ‖ output_acc ‖
+               u64(total_imagens_de_chave) ‖ key_image_acc)
 ```
 
 ## 4. Estado inicial
@@ -53,7 +57,7 @@ As taxas de todas as transações de um bloco são somadas e creditadas ao ender
 Após aplicar cada bloco:
 
 ```text
-Σ balance(conta) == total_supply
+Σ balance(conta) + shielded_supply == total_supply
 ```
 
 Um bloco que viole esta igualdade é inválido. A verificação é redundante com as regras de transação, e existe como defesa em profundidade.

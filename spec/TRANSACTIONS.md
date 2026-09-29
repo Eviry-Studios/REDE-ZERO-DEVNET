@@ -6,6 +6,16 @@
 
 ---
 
+## 0. Tipos de transação
+
+```text
+Transaction (tag u8):
+  0x00 AccountTx   // transparente, descrita neste documento
+  0x01 PrivateTx   // privada, descrita em spec/PRIVACY.md §7.2
+```
+
+A operação `TxKind::Shield` (tag `0x01`) está descrita em `spec/PRIVACY.md §7.1`.
+
 ## 1. Estrutura
 
 ```text

@@ -1,6 +1,6 @@
 # ADR-0005 — Modelo de contas com nonce e unidade mínima do ZERO
 
-**Estado:** Aceita
+**Estado:** Aceita — complementada pela ADR-0009 (camada privada)
 **Escopo:** DEVNET
 **Data:** 2026-09-29
 **Relacionamento:** SPEC §6, §11, §33, §34, §36, THR-ID-004, THR-TX-001, THR-TX-003, THR-PRIV-001
