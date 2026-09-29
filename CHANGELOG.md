@@ -20,6 +20,18 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
   * `rz-wallet` — wallet de linha de comando.
 * `scripts/devnet.sh` para DEVNET local.
 
+### Adicionado — privacidade e governança
+
+* Licença MIT.
+* Proposta de governança bicameral (ADR-0008, `spec/GOVERNANCE.md`).
+* Privacidade transacional RingCT sobre Ristretto255 (ADR-0009, `spec/PRIVACY.md`):
+  * crate `rz-privacy` — endereços furtivos, compromissos de Pedersen, Bulletproofs, CLSAG, prova de excesso;
+  * transações privadas, operação `Shield`, retirada (`unshield`), controle público da oferta privada;
+  * Wallet privada por padrão com varredura local de notas.
+* Privacidade de rede Dandelion++ (ADR-0010).
+* `THREAT_MODEL.md` v0.2.0.
+
 ### Protocolo
 
 * `PROTOCOL_VERSION = 1`, `P2P_VERSION = 1` (DEVNET, não congelados).
+* **Incompatível** com blocos anteriores à camada privada: `Transaction` passou a ter tag de tipo, e a raiz do estado inclui a parte privada. DEVNETs antigas devem ser recriadas (`rm -rf devnet-data`).

@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.1.0
-**Status:** Modelo de ameaças inicial — fase de definição
+**Versão:** 0.2.0
+**Status:** Modelo de ameaças — fase de definição (0.2.0: privacidade transacional e de rede implementadas na DEVNET)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -394,6 +394,8 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Adversários:** ADV-02, ADV-04
 **Mitigações:**
 
+* no conjunto privado, onde valores são ocultos: equação de balanço de compromissos, provas de faixa, e **controle público da oferta privada**, que nunca pode ficar negativa. Uma falha criptográfica que crie moeda oculta não consegue retirar do conjunto privado mais do que entrou;
+
 * emissão exclusivamente por regras protocolares (`SPEC §34`);
 * todo Node verifica a soma monetária a cada bloco (`SPEC §35`);
 * aritmética com verificação de overflow/underflow;
@@ -576,9 +578,9 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Adversários:** ADV-05, ADV-02, qualquer observador da cadeia
 **Descrição:** transações públicas permitem vincular remetente, destinatário, valor e histórico.
 
-**Mitigações:** modelo criptográfico de privacidade transacional (**A DEFINIR**); minimização de campos públicos (`SPEC §31`).
+**Mitigações:** RingCT sobre Ristretto255 (ADR-0009, `spec/PRIVACY.md`): endereços furtivos ocultam o destinatário, compromissos de Pedersen com Bulletproofs ocultam valores, e assinaturas em anel CLSAG (anel de 11) com imagens de chave ocultam o remetente e a ligação entre transações. Wallet privada por padrão; saída de troco sempre presente; minimização de campos públicos (`SPEC §31`).
 
-**Nota sobre a DEVNET:** a DEVNET inicial pode operar com transações transparentes para fins de desenvolvimento. **Transações transparentes não satisfazem `REQ-024`** e esta limitação deve ser documentada até que o modelo de privacidade seja implementado.
+**Risco residual:** anonimato probabilístico — análise estatística de anéis, correlação temporal entre blindagem, gasto e retirada, e valores característicos em operações públicas (`spec/PRIVACY.md §11`). Transações de conta transparentes continuam existindo e são públicas por natureza.
 
 ### THR-PRIV-002 — Correlação de endereço IP
 
@@ -586,7 +588,9 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Adversários:** ADV-05, ADV-02
 **Descrição:** o primeiro Node a propagar uma transação revela a provável origem.
 
-**Mitigações:** propagação que dificulte identificar a origem, roteamento em camadas ou integração com redes de anonimização (**A DEFINIR**, `REQ-026`).
+**Mitigações:** propagação Dandelion++ (ADR-0010): a transação percorre uma haste de Nodes antes da difusão, com relay por época e embargo aleatório. Tor/I2P permanecem complementares.
+
+**Risco residual:** a Wallet revela o IP ao primeiro Node; adversários que controlam muitos Nodes da haste ou observam todo o tráfego ainda podem correlacionar.
 
 ### THR-PRIV-003 — Metadados excessivos
 
@@ -879,8 +883,9 @@ Classificação de severidade (inicial, sujeita a revisão):
 | THR-P2P-001 | REQ-017 | SPEC §29 | — (a definir) |
 | THR-P2P-002 | REQ-053 | SPEC §26 | AT-P2P-004/005 |
 | THR-P2P-004 | REQ-016 | SPEC §28 | AT-SYNC-* |
-| THR-PRIV-001 | REQ-024 | SPEC §31 | — (a definir) |
-| THR-GOV-001 | REQ-044 | SPEC §47 | — (a definir) |
+| THR-PRIV-001 | REQ-024 | SPEC §31, spec/PRIVACY.md | rz-core private::tests, rz-wallet private_devnet |
+| THR-PRIV-002 | REQ-026 | SPEC §30, spec/P2P.md §4 | rz-node dandelion_stem_then_embargo_fluff |
+| THR-GOV-001 | REQ-044 | SPEC §47, spec/GOVERNANCE.md (proposta) | — (a implementar) |
 | THR-POOL-001 | REQ-037, REQ-038 | SPEC §39, §40 | AT-POOL-002 |
 | THR-DEF-001 | REQ-058, REQ-059 | SPEC §53, §54 | — (a definir) |
 | THR-DEV-001 | REQ-084 | — | CI |
@@ -906,10 +911,10 @@ Ameaças aceitas **temporariamente** na DEVNET, com registro explícito:
 | Ameaça | Aceitação temporária | Condição para sair da DEVNET |
 | --- | --- | --- |
 | THR-CON-002 | Conjunto fixo de validadores no Genesis | Algoritmo de consenso definitivo escolhido e avaliado |
-| THR-PRIV-001 | Transações transparentes | Modelo de privacidade implementado |
-| THR-PRIV-002 | Sem anonimização de rede | Mecanismo de privacidade de rede implementado |
+| THR-PRIV-001 | RingCT implementado **sem auditoria**; anel de 11 | Auditoria independente da implementação (ADR-0009) |
+| THR-PRIV-002 | Dandelion++ sem canal cifrado nem Tor/I2P nativo | Canal cifrado entre Nodes; avaliação de Tor/I2P (ADR-0010) |
 | THR-P2P-005 | Canal sem cifragem | Canal autenticado e cifrado entre Nodes |
-| THR-GOV-001/002 | Governança não implementada ou simplificada | Mecanismo anti-Sybil e de voto definidos |
+| THR-GOV-001/002 | Governança proposta (ADR-0008), ainda não implementada | Proposta aceita, simulada e implementada |
 
 Nenhuma dessas aceitações temporárias pode ser herdada pela TESTNET pública ou pela MAINNET sem nova avaliação.
 
@@ -964,7 +969,7 @@ Toda alteração deverá possuir histórico, justificativa e versão (`REQ-086`,
 
 # 15. Status
 
-**THREAT_MODEL.md v0.1.0**
+**THREAT_MODEL.md v0.2.0**
 
 > **Modelo de ameaças inicial — não congelado.**
 

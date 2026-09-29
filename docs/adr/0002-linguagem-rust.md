@@ -39,5 +39,8 @@ Regras:
 | `ed25519-dalek` | Assinaturas | Implementação amplamente auditada de Ed25519 (ADR-0003) |
 | `blake3` | Hash | Implementação oficial de BLAKE3 (ADR-0003) |
 | `rand_core` / `getrandom` | Geração de chaves | Fonte de entropia do sistema operacional |
+| `curve25519-dalek` | Aritmética em Ristretto255 | Mesma base auditada de `ed25519-dalek` (ADR-0009) |
+| `bulletproofs` | Provas de faixa | Implementação de referência da equipe dalek, amplamente usada (ADR-0009) |
+| `merlin` | Transcrições de provas | Exigida por `bulletproofs`; construção STROBE padronizada |
 
 Rede, CLI, codificação e persistência usam apenas a biblioteca padrão, para reduzir superfície de ataque da cadeia de suprimentos (THR-DEV-001).
