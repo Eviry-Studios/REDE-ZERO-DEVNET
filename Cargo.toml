@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+repository = "https://github.com/Eviry-Studios/REDE-ZERO-DEVNET"
+
+[workspace.dependencies]
+rz-codec = { path = "crates/rz-codec" }
+rz-crypto = { path = "crates/rz-crypto" }
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize", "rand_core", "fast"] }
+blake3 = { version = "1", default-features = false, features = ["std"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+
+[profile.release]
+overflow-checks = true

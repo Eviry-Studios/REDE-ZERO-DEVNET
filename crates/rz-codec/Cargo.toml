@@ -1,0 +1,10 @@
+[package]
+name = "rz-codec"
+description = "Codificação canônica da Rede Zero (spec/ENCODING.md)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
