@@ -314,3 +314,62 @@ fn oversized_frame_disconnects() {
         .unwrap();
     assert!(wait_until(Duration::from_secs(5), || n.status().peers == 0));
 }
+
+// REQ-026 / ADR-0010 — Dandelion++: a transação de um cliente sai primeiro em
+// fase de haste para um único relay; se o relay a segurar, o embargo garante
+// a difusão.
+#[test]
+fn dandelion_stem_then_embargo_fluff() {
+    let g = genesis(1);
+    let n = start(&g, data_dir("dandelion"), None, vec![]);
+
+    // Espião: único par (relay) do node.
+    let mut spy =
+        Client::connect_with_port(n.listen_addr(), NET, g.hash(), Duration::from_secs(30), 9)
+            .unwrap();
+    assert!(wait_until(Duration::from_secs(5), || n.status().peers == 1));
+
+    let mut wallet = client(&n);
+    let tx = TxBody {
+        version: 1,
+        sender: faucet().public_key(),
+        nonce: 0,
+        fee: 10,
+        kind: TxKind::Transfer {
+            to: SecretKey::from_seed([202; 32]).public_key().address(),
+            amount: 1,
+        },
+    }
+    .sign(&faucet(), NET)
+    .unwrap();
+    let id = tx.id();
+    let accepted = wallet
+        .request(&Message::Transaction(tx), |m| match m {
+            Message::TxResult { accepted, .. } => Some(accepted),
+            _ => None,
+        })
+        .unwrap();
+    assert!(accepted);
+
+    // 1. Haste: o espião recebe STEM_TRANSACTION, nunca TRANSACTION antes.
+    let first = spy
+        .request(&Message::Ping(0), |m| match m {
+            Message::StemTransaction(t) if t.id() == id => Some("stem"),
+            Message::Transaction(t) if t.id() == id => Some("fluff"),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(first, "stem");
+    // Durante a haste, a transação não está no mempool (não é difundida).
+    assert_eq!(n.status().mempool, 0);
+
+    // 2. O espião não repassa; o embargo (10–20 s) difunde a transação.
+    let fluffed = spy
+        .request(&Message::Ping(1), |m| match m {
+            Message::Transaction(t) if t.id() == id => Some(true),
+            _ => None,
+        })
+        .unwrap();
+    assert!(fluffed);
+    assert_eq!(n.status().mempool, 1);
+}

@@ -16,12 +16,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use rand_core::{OsRng, RngCore};
 use rz_chain::{
     Chain, ChainError, ConsensusError, ImportOutcome, Mempool, MempoolError, RoundRobin,
 };
 use rz_codec::Encode;
 use rz_core::state::ExecParams;
-use rz_core::{Account, Block, BlockId, Genesis, TxError};
+use rz_core::{Account, Block, BlockId, Genesis, Transaction, TxError, TxId};
 use rz_crypto::{Address, Hash32, SecretKey};
 use rz_p2p::{
     check_hello, read_frame, write_frame, FrameError, Hello, Message, Offense, PeerAddr, PeerScore,
@@ -36,6 +37,16 @@ const DIAL_TIMEOUT: Duration = Duration::from_secs(3);
 const BAN_DURATION: Duration = Duration::from_secs(600);
 const SEND_QUEUE: usize = 1024;
 const MAX_BLOCKS_RESPONSE_BYTES: usize = 3 * 1024 * 1024;
+
+// Dandelion++ (ADR-0010, spec/P2P.md §4).
+/// Probabilidade de passar da haste à flor em cada salto: 1 em N.
+const FLUFF_ONE_IN: u64 = 10;
+/// Duração da época de escolha do relay da haste.
+const STEM_EPOCH: Duration = Duration::from_secs(600);
+/// Embargo: prazo para a transação aparecer em fase de flor.
+const STEM_EMBARGO_MIN: Duration = Duration::from_secs(10);
+const STEM_EMBARGO_JITTER_MS: u64 = 10_000;
+const MAX_STEM_POOL: usize = 10_000;
 
 /// Nível de registro local. Por padrão, endereços de pares não são
 /// registrados (THR-PRIV-004).
@@ -123,6 +134,15 @@ struct Shared {
     core: Mutex<Core>,
     peers: Mutex<Peers>,
     shutdown: AtomicBool,
+    stem: Mutex<Stem>,
+}
+
+/// Estado local do Dandelion++.
+struct Stem {
+    relay: Option<u64>,
+    chosen_at: Instant,
+    /// Transações em haste, com prazo de embargo.
+    pool: HashMap<TxId, (Transaction, Instant)>,
 }
 
 /// Node em execução. Encerra suas threads ao ser descartado.
@@ -179,6 +199,11 @@ impl Node {
             }),
             peers: Mutex::new(Peers::default()),
             shutdown: AtomicBool::new(false),
+            stem: Mutex::new(Stem {
+                relay: None,
+                chosen_at: Instant::now(),
+                pool: HashMap::new(),
+            }),
             genesis: cfg.genesis,
         });
 
@@ -493,6 +518,7 @@ impl Shared {
 
     fn dial_loop(self: Arc<Self>) {
         while self.running() {
+            self.check_embargo();
             let candidates: Vec<SocketAddr> = {
                 let mut p = lock(&self.peers);
                 let now = Instant::now();
@@ -829,7 +855,7 @@ impl Shared {
                 );
                 Flow::Continue
             }
-            Message::StemTransaction(tx) => self.handle_tx(ctx, tx),
+            Message::StemTransaction(tx) => self.handle_stem(ctx, tx),
             Message::Reject(_) => Flow::Disconnect,
             // Respostas não solicitadas são ignoradas.
             Message::Account { .. }
@@ -840,55 +866,172 @@ impl Shared {
         }
     }
 
-    fn handle_tx(&self, ctx: &mut ConnCtx, tx: rz_core::Transaction) -> Flow {
+    // ------------------------------------------------ transações (Dandelion++)
+
+    /// Transação recebida pela mensagem `TRANSACTION`.
+    ///
+    /// * De um cliente (Wallet): entra na **haste** (Dandelion++), para que a
+    ///   origem não seja o primeiro Node a difundi-la (REQ-026).
+    /// * De um par: fase de **flor** — mempool e difusão.
+    fn handle_tx(&self, ctx: &mut ConnCtx, tx: Transaction) -> Flow {
+        if !ctx.relay {
+            return self.originate_stem(ctx, tx);
+        }
+        lock(&self.stem).pool.remove(&tx.id());
+        match self.fluff(tx, Some(ctx.id)) {
+            Ok(()) => Flow::Continue,
+            Err(e) => penalty(&e),
+        }
+    }
+
+    fn originate_stem(&self, ctx: &mut ConnCtx, tx: Transaction) -> Flow {
         let id = tx.id();
-        let result = {
-            let mut guard = lock(&self.core);
-            let Core { chain, mempool, .. } = &mut *guard;
-            let state = chain.state();
-            mempool.insert(tx.clone(), &state, &ExecParams::from_genesis(&self.genesis))
-        };
-        match result {
-            Ok(_) => {
-                self.debug(format!("transação aceita: {id}"));
-                self.broadcast(&Message::Transaction(tx), Some(ctx.id));
-                if !ctx.relay {
-                    self.send_to(
-                        ctx.id,
-                        Message::TxResult {
-                            id,
-                            accepted: true,
-                            reason: String::new(),
-                        },
-                    );
-                }
+        match self.check_executable(&tx) {
+            Ok(()) => {
+                self.send_to(
+                    ctx.id,
+                    Message::TxResult {
+                        id,
+                        accepted: true,
+                        reason: String::new(),
+                    },
+                );
+                self.debug(format!("transação {id} entrou na haste"));
+                self.stem_forward(tx, None);
                 Flow::Continue
             }
             Err(e) => {
-                if !ctx.relay {
-                    self.send_to(
-                        ctx.id,
-                        Message::TxResult {
-                            id,
-                            accepted: false,
-                            reason: e.to_string(),
-                        },
-                    );
-                }
-                match e {
-                    // Erros que um par honesto nunca produz.
-                    MempoolError::Invalid(
-                        TxError::Signature
-                        | TxError::UnsupportedVersion(_)
-                        | TxError::ZeroAmount
-                        | TxError::RingSignature
-                        | TxError::RangeProof
-                        | TxError::Excess
-                        | TxError::Balance,
-                    ) => Flow::Penalize(Offense::InvalidTransaction),
-                    _ => Flow::Continue,
-                }
+                self.send_to(
+                    ctx.id,
+                    Message::TxResult {
+                        id,
+                        accepted: false,
+                        reason: e.to_string(),
+                    },
+                );
+                penalty(&e)
             }
+        }
+    }
+
+    /// Transação recebida na fase de haste.
+    fn handle_stem(&self, ctx: &mut ConnCtx, tx: Transaction) -> Flow {
+        let id = tx.id();
+        if lock(&self.core).mempool.contains(&id) {
+            return Flow::Continue;
+        }
+        // Ciclo na haste: difunde imediatamente em vez de esperar o embargo.
+        if lock(&self.stem).pool.remove(&id).is_some() {
+            let _ = self.fluff(tx, None);
+            return Flow::Continue;
+        }
+        if let Err(e) = self.check_executable(&tx) {
+            return penalty(&e);
+        }
+        if random_below(FLUFF_ONE_IN) == 0 {
+            let _ = self.fluff(tx, None);
+        } else {
+            self.stem_forward(tx, Some(ctx.id));
+        }
+        Flow::Continue
+    }
+
+    /// A transação é executável agora sobre a ponta (sem inseri-la).
+    fn check_executable(&self, tx: &Transaction) -> Result<(), MempoolError> {
+        let c = lock(&self.core);
+        if c.mempool.contains(&tx.id()) {
+            return Err(MempoolError::Duplicate);
+        }
+        c.chain
+            .state()
+            .check_transaction(tx, &ExecParams::from_genesis(&self.genesis))
+            .map_err(MempoolError::Invalid)
+    }
+
+    /// Encaminha pela haste ao relay da época; sem relay disponível, difunde.
+    fn stem_forward(&self, tx: Transaction, from: Option<u64>) {
+        match self.stem_relay(from) {
+            Some(relay) => {
+                let deadline = Instant::now()
+                    + STEM_EMBARGO_MIN
+                    + Duration::from_millis(random_below(STEM_EMBARGO_JITTER_MS));
+                {
+                    let mut st = lock(&self.stem);
+                    if st.pool.len() >= MAX_STEM_POOL {
+                        return;
+                    }
+                    st.pool.insert(tx.id(), (tx.clone(), deadline));
+                }
+                self.send_to(relay, Message::StemTransaction(tx));
+            }
+            None => {
+                let _ = self.fluff(tx, from);
+            }
+        }
+    }
+
+    /// Relay da haste: um par escolhido aleatoriamente e mantido durante a
+    /// época, o que dificulta inferir a origem por observação repetida.
+    fn stem_relay(&self, exclude: Option<u64>) -> Option<u64> {
+        let relays: Vec<u64> = {
+            let p = lock(&self.peers);
+            let mut v: Vec<u64> = p
+                .conns
+                .iter()
+                .filter(|(id, c)| c.relay && Some(**id) != exclude)
+                .map(|(id, _)| *id)
+                .collect();
+            v.sort_unstable();
+            v
+        };
+        if relays.is_empty() {
+            return None;
+        }
+        let mut st = lock(&self.stem);
+        let expired = st.chosen_at.elapsed() >= STEM_EPOCH;
+        match st.relay {
+            Some(r) if !expired && relays.contains(&r) => Some(r),
+            _ => {
+                let r = relays[random_below(relays.len() as u64) as usize];
+                st.relay = Some(r);
+                st.chosen_at = Instant::now();
+                Some(r)
+            }
+        }
+    }
+
+    /// Fase de flor: insere no mempool e difunde a todos os pares.
+    fn fluff(&self, tx: Transaction, except: Option<u64>) -> Result<(), MempoolError> {
+        let id = tx.id();
+        {
+            let mut guard = lock(&self.core);
+            let Core { chain, mempool, .. } = &mut *guard;
+            let state = chain.state();
+            mempool.insert(tx.clone(), &state, &ExecParams::from_genesis(&self.genesis))?;
+        }
+        self.debug(format!("transação {id} difundida"));
+        self.broadcast(&Message::Transaction(tx), except);
+        Ok(())
+    }
+
+    /// Difunde transações cuja haste não terminou dentro do embargo — garante
+    /// entrega mesmo que um Node da haste descarte a transação.
+    fn check_embargo(&self) {
+        let now = Instant::now();
+        let expired: Vec<Transaction> = {
+            let mut st = lock(&self.stem);
+            let ids: Vec<TxId> = st
+                .pool
+                .iter()
+                .filter(|(_, (_, deadline))| *deadline <= now)
+                .map(|(id, _)| *id)
+                .collect();
+            ids.into_iter()
+                .filter_map(|id| st.pool.remove(&id).map(|(tx, _)| tx))
+                .collect()
+        };
+        for tx in expired {
+            let _ = self.fluff(tx, None);
         }
     }
 
@@ -967,6 +1110,34 @@ fn benign(e: &ChainError) -> bool {
         ChainError::ConflictsWithFinality
             | ChainError::Consensus(ConsensusError::FutureSlot { .. })
     )
+}
+
+/// Penalidade para rejeições que um par honesto nunca produz.
+fn penalty(e: &MempoolError) -> Flow {
+    match e {
+        MempoolError::Invalid(
+            TxError::Signature
+            | TxError::UnsupportedVersion(_)
+            | TxError::ZeroAmount
+            | TxError::RingSignature
+            | TxError::RangeProof
+            | TxError::Excess
+            | TxError::Balance,
+        ) => Flow::Penalize(Offense::InvalidTransaction),
+        _ => Flow::Continue,
+    }
+}
+
+/// Inteiro uniforme em `[0, n)` a partir da entropia do sistema.
+fn random_below(n: u64) -> u64 {
+    let n = n.max(1);
+    let zone = u64::MAX - (u64::MAX % n);
+    loop {
+        let v = OsRng.next_u64();
+        if v < zone {
+            return v % n;
+        }
+    }
 }
 
 fn frame_io(e: FrameError) -> io::Error {

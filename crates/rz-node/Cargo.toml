@@ -12,6 +12,7 @@ rz-crypto.workspace = true
 rz-core.workspace = true
 rz-chain.workspace = true
 rz-p2p.workspace = true
+rand_core.workspace = true
 
 [[bin]]
 name = "rede-zero-node"

@@ -37,6 +37,11 @@ O canal **não é cifrado** na DEVNET (THR-P2P-005, aceitação temporária). A 
 | `0x0c` | `GET_STATUS` | — |
 | `0x0d` | `STATUS` | `u64 height, BlockId tip, u64 finalized_height, u32 peers, u32 mempool` |
 | `0x0e` | `REJECT` | `string reason` (máx. 256), seguido de encerramento |
+| `0x0f` | `GET_OUTPUTS` | `u64 from, u32 max` |
+| `0x10` | `OUTPUTS` | `u64 start, list<OutputData>` (máx. 4096) |
+| `0x11` | `GET_KEY_IMAGES` | `u64 from, u32 max` |
+| `0x12` | `KEY_IMAGES` | `u64 start, list<fixed[32]>` (máx. 8192) |
+| `0x13` | `STEM_TRANSACTION` | `Transaction` em fase de haste (seção 4) |
 
 `PeerAddr = fixed[16] (IPv6; IPv4 mapeado) ‖ u16 porta`.
 
@@ -57,9 +62,30 @@ O `HELLO` não contém versão de software, sistema operacional, fuso horário, 
 
 ## 4. Propagação
 
-* Uma transação é repassada aos pares somente se foi aceita no mempool local pela primeira vez.
+### 4.1 Transações — Dandelion++ (ADR-0010)
+
+```text
+Wallet ──TRANSACTION──► Node A ──STEM──► Node B ──STEM──► … ──(1/10)──► FLOR: mempool + TRANSACTION para todos
+                         │                 │
+                         └─ embargo 10–20 s: se não houver flor, difunde
+```
+
+1. `TRANSACTION` vinda de um **cliente** (`listen_port = 0`): o Node valida a transação contra a ponta, responde `TX_RESULT` e a encaminha em **haste** (`STEM_TRANSACTION`) ao relay da época, sem inseri-la no mempool.
+2. `STEM_TRANSACTION` recebida: se já estiver no mempool, é ignorada; se já estiver na haste local (ciclo), é difundida imediatamente; caso contrário é validada e, com probabilidade 1/10, difundida; senão, encaminhada ao relay da época (excluindo quem a enviou).
+3. Relay da época: escolhido aleatoriamente entre os pares que aceitam conexões, mantido por 10 minutos ou até desconectar.
+4. Sem relay disponível, a transação é difundida.
+5. Embargo: cada Node da haste difunde a transação se ela não aparecer em fase de flor em 10–20 s (prazo aleatório).
+6. `TRANSACTION` vinda de um **par** é fase de flor: entra no mempool e é difundida aos demais pares.
+
+Transações em haste devem ser executáveis sobre a ponta atual (nonce igual ao da conta, notas não gastas).
+
+### 4.2 Blocos
+
 * Um bloco é repassado somente se foi importado com sucesso pela primeira vez.
-* Um cliente que envia `TRANSACTION` recebe `TX_RESULT`.
+
+### 4.3 Consultas de Wallet
+
+`GET_OUTPUTS` e `GET_KEY_IMAGES` permitem à Wallet baixar **todas** as saídas privadas e imagens de chave gastas e fazer a varredura localmente (`spec/PRIVACY.md`), sem revelar ao Node quais notas lhe pertencem.
 
 ## 5. Sincronização
 
@@ -104,8 +130,8 @@ Rejeições que podem ocorrer com pares honestos (transação duplicada, nonce j
 ## 8. Privacidade e registros
 
 * Registros locais não armazenam endereços de pares além do necessário à operação.
-* Não há anonimização de rede na DEVNET (THR-PRIV-002, aceitação temporária).
+* A origem de transações é protegida por Dandelion++ (seção 4.1). A Wallet ainda revela seu IP ao Node ao qual se conecta; recomenda-se Node próprio ou Tor.
 
 ## 9. Testes de aceitação cobertos
 
-AT-P2P-001..005, AT-SYNC-001..003 (os testes de sincronização estão em `crates/rz-node/tests`).
+AT-P2P-001..005, AT-SYNC-001..003 e o teste de haste/embargo do Dandelion++ (em `crates/rz-node/tests`).

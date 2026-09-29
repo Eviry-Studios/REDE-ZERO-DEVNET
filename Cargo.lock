@@ -397,6 +397,7 @@ dependencies = [
 name = "rz-node"
 version = "0.1.0"
 dependencies = [
+ "rand_core",
  "rz-chain",
  "rz-codec",
  "rz-core",

@@ -26,6 +26,7 @@ Uma decisão com escopo `DEVNET` **não** vale automaticamente para outros ambie
 | [0007](0007-p2p-devnet.md) | P2P da DEVNET sobre TCP | DEVNET | Aceita |
 | [0008](0008-governanca-bicameral.md) | Governança bicameral com compromisso temporal | DEVNET → TESTNET | Proposta |
 | [0009](0009-privacidade-transacional.md) | Privacidade transacional: RingCT sobre Ristretto255 | DEVNET | Aceita (auditoria pendente) |
+| [0010](0010-privacidade-de-rede.md) | Privacidade de rede: Dandelion++ | DEVNET | Aceita |
 
 ## Modelo
 

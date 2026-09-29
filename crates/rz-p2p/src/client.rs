@@ -71,6 +71,18 @@ impl Client {
         genesis: Hash32,
         timeout: Duration,
     ) -> Result<Self, ClientError> {
+        Self::connect_with_port(addr, network_id, genesis, timeout, 0)
+    }
+
+    /// Como [`Client::connect`], anunciando `listen_port` no HELLO. Com porta
+    /// diferente de zero, o Node trata a conexão como par (recebe propagação).
+    pub fn connect_with_port(
+        addr: SocketAddr,
+        network_id: &str,
+        genesis: Hash32,
+        timeout: Duration,
+        listen_port: u16,
+    ) -> Result<Self, ClientError> {
         let mut stream = TcpStream::connect_timeout(&addr, timeout).map_err(ClientError::Io)?;
         stream
             .set_read_timeout(Some(timeout))
@@ -83,7 +95,7 @@ impl Client {
                 network_id: network_id.to_owned(),
                 genesis,
                 height: 0,
-                listen_port: 0,
+                listen_port,
             }),
         )?;
         let hello = match read_frame(&mut stream)? {
