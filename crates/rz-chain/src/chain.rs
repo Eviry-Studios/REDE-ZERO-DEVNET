@@ -276,6 +276,7 @@ mod tests {
                 amount: 1_000_000,
             }],
             governance: GovernanceParams::default(),
+            assets: vec![],
         }
     }
 

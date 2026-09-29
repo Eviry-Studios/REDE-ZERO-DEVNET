@@ -18,7 +18,9 @@ cargo build --release --quiet
 NODE="$ROOT/target/release/rede-zero-node"
 
 if [[ ! -f "$DATA/genesis.bin" ]]; then
-  "$NODE" init-devnet --out "$DATA" --validators "$N" --base-port "$BASE_PORT"
+  # RZ_TEST_ASSET=rede:ativo cria um ativo externo DE TESTE para o faucet (ADR-0014).
+  "$NODE" init-devnet --out "$DATA" --validators "$N" --base-port "$BASE_PORT" \
+    ${RZ_TEST_ASSET:+--test-asset "$RZ_TEST_ASSET"}
 fi
 
 pids=()

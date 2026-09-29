@@ -333,6 +333,114 @@ pub fn governance(client: &mut Client, address: Option<Address>) -> Result<Gover
         .map_err(|e| e.to_string())
 }
 
+// ------------------------------------------------------ Grande Mercado e Pool
+
+/// Ativos externos, Pool e (opcionalmente) saldos de uma conta.
+pub struct AssetsView {
+    pub height: u64,
+    pub pool_zero: u64,
+    pub assets: Vec<rz_core::market::AssetView>,
+}
+
+pub fn assets(client: &mut Client, address: Option<Address>) -> Result<AssetsView, String> {
+    client
+        .request(&Message::GetAssets { address }, |m| match m {
+            Message::Assets {
+                height,
+                pool_zero,
+                assets,
+            } => Some(AssetsView {
+                height,
+                pool_zero,
+                assets,
+            }),
+            _ => None,
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// Livro agregado de um ativo e as ordens de `owner`.
+pub struct MarketView {
+    pub height: u64,
+    pub last_price: Option<u64>,
+    pub bids: Vec<rz_core::market::BookLevel>,
+    pub asks: Vec<rz_core::market::BookLevel>,
+    pub own: Vec<rz_core::market::Order>,
+}
+
+pub fn market(
+    client: &mut Client,
+    asset: rz_core::market::AssetId,
+    owner: Option<Address>,
+) -> Result<MarketView, String> {
+    client
+        .request(&Message::GetMarket { asset, owner }, |m| match m {
+            Message::Market {
+                height,
+                asset: a,
+                last_price,
+                bids,
+                asks,
+                own,
+            } if a == asset => Some(MarketView {
+                height,
+                last_price,
+                bids,
+                asks,
+                own,
+            }),
+            _ => None,
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// Interpreta uma quantidade decimal de um ativo com `decimals` casas.
+pub fn parse_units(s: &str, decimals: u8) -> Option<u64> {
+    let (int, frac) = s.split_once('.').unwrap_or((s, ""));
+    if int.is_empty() && frac.is_empty() || frac.len() > decimals as usize {
+        return None;
+    }
+    if !int.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let scale = 10u128.checked_pow(decimals as u32)?;
+    let int: u128 = if int.is_empty() { 0 } else { int.parse().ok()? };
+    let frac_scaled: u128 = if frac.is_empty() {
+        0
+    } else {
+        frac.parse::<u128>().ok()? * 10u128.pow((decimals as usize - frac.len()) as u32)
+    };
+    u64::try_from(int.checked_mul(scale)?.checked_add(frac_scaled)?).ok()
+}
+
+/// Formata uma quantidade de um ativo com `decimals` casas.
+pub fn format_units(v: u64, decimals: u8) -> String {
+    if decimals == 0 {
+        return v.to_string();
+    }
+    let scale = 10u128.pow(decimals as u32);
+    let v = v as u128;
+    format!(
+        "{}.{:0width$}",
+        v / scale,
+        v % scale,
+        width = decimals as usize
+    )
+}
+
+/// Converte "ZERO por unidade inteira do ativo" (unidades mínimas de ZERO)
+/// para o preço do protocolo (`market::PRICE_SCALE`).
+pub fn price_from_zero_per_unit(zero_units: u64, decimals: u8) -> Option<u64> {
+    let scale = 10u128.checked_pow(decimals as u32)?;
+    let raw = zero_units as u128 * rz_core::market::PRICE_SCALE / scale;
+    u64::try_from(raw).ok().filter(|p| *p > 0)
+}
+
+/// Preço do protocolo em ZERO (unidades mínimas) por unidade inteira.
+pub fn zero_per_unit(price: u64, decimals: u8) -> u128 {
+    price as u128 * 10u128.pow(decimals as u32) / rz_core::market::PRICE_SCALE
+}
+
 /// Monta, assina localmente e envia uma transação de conta.
 pub fn send_account(
     client: &mut Client,
@@ -352,4 +460,33 @@ pub fn send_account(
     .sign(&keys.transparent, &genesis.network_id)
     .map_err(|e| e.to_string())?;
     submit(client, tx)
+}
+
+#[cfg(test)]
+mod market_units_tests {
+    use super::*;
+
+    #[test]
+    fn units_roundtrip() {
+        assert_eq!(parse_units("1.5", 8), Some(150_000_000));
+        assert_eq!(parse_units("0.00000001", 8), Some(1));
+        assert_eq!(parse_units("1.000000001", 8), None);
+        assert_eq!(parse_units("abc", 8), None);
+        assert_eq!(parse_units("7", 0), Some(7));
+        assert_eq!(format_units(150_000_000, 8), "1.50000000");
+        assert_eq!(format_units(7, 0), "7");
+    }
+
+    #[test]
+    fn prices() {
+        // 2 ZERO por unidade inteira de um ativo com 8 casas.
+        let p = price_from_zero_per_unit(2 * rz_core::UNITS_PER_ZERO, 8).unwrap();
+        assert_eq!(zero_per_unit(p, 8), 2 * rz_core::UNITS_PER_ZERO as u128);
+        // 1 unidade inteira (10^8) custa 2 ZERO.
+        assert_eq!(
+            rz_core::market::quote_floor(100_000_000, p),
+            Some(2 * rz_core::UNITS_PER_ZERO)
+        );
+        assert_eq!(price_from_zero_per_unit(0, 8), None);
+    }
 }

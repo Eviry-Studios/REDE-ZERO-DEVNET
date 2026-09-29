@@ -1257,6 +1257,55 @@ impl Shared {
                 self.send_to(ctx.id, msg);
                 Flow::Continue
             }
+            Message::GetAssets { address } => {
+                let msg = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let m = state.market();
+                    Message::Assets {
+                        height: c.chain.height(),
+                        pool_zero: m.pool_balance(&rz_core::market::AssetId::ZERO),
+                        assets: m
+                            .assets
+                            .iter()
+                            .take(rz_core::market::MAX_ASSETS)
+                            .map(|(id, info)| rz_core::market::AssetView {
+                                id: *id,
+                                info: info.clone(),
+                                pool: m.pool_balance(id),
+                                balance: address.map(|a| m.balance(&a, id)),
+                                last_price: m.last_price.get(id).copied(),
+                            })
+                            .collect(),
+                    }
+                };
+                self.send_to(ctx.id, msg);
+                Flow::Continue
+            }
+            Message::GetMarket { asset, owner } => {
+                let msg = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let m = state.market();
+                    let (bids, asks) = m.book(&asset, rz_p2p::MAX_BOOK_LEVELS);
+                    Message::Market {
+                        height: c.chain.height(),
+                        asset,
+                        last_price: m.last_price.get(&asset).copied(),
+                        bids,
+                        asks,
+                        own: m
+                            .orders
+                            .values()
+                            .filter(|o| o.asset == asset && Some(o.owner) == owner)
+                            .take(rz_p2p::MAX_OWN_ORDERS)
+                            .cloned()
+                            .collect(),
+                    }
+                };
+                self.send_to(ctx.id, msg);
+                Flow::Continue
+            }
             Message::Reject(_) => Flow::Disconnect,
             // Respostas não solicitadas são ignoradas.
             Message::Account { .. }
@@ -1264,7 +1313,9 @@ impl Shared {
             | Message::Status { .. }
             | Message::Outputs { .. }
             | Message::KeyImages { .. }
-            | Message::Governance { .. } => Flow::Continue,
+            | Message::Governance { .. }
+            | Message::Assets { .. }
+            | Message::Market { .. } => Flow::Continue,
         }
     }
 

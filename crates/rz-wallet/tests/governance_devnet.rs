@@ -60,6 +60,7 @@ fn genesis() -> Genesis {
             lock_max_blocks: 500,
             contribution_half_life_blocks: 10_000,
         },
+        assets: vec![],
     }
 }
 

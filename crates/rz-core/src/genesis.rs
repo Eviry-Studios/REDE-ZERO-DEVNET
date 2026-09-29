@@ -9,6 +9,7 @@ use rz_crypto::{context, hash, Address, Hash32, PublicKey};
 use crate::consensus::ConsensusParams;
 use crate::governance::GovernanceParams;
 use crate::limits::{MAX_ALLOCATIONS, MAX_NETWORK_ID_LEN, MAX_VALIDATORS};
+use crate::market::{AssetId, AssetInfo, MAX_ASSETS, MAX_ASSET_NETWORK_LEN, MAX_ASSET_REF_LEN};
 use crate::PROTOCOL_VERSION;
 
 /// Tipo de ambiente. Um Node nunca aceita dados de uma rede diferente
@@ -89,6 +90,61 @@ impl Decode for GenesisValidator {
     }
 }
 
+/// Ativo externo **de teste** declarado no Genesis de uma DEVNET
+/// (`Verification::DevnetGenesis`). Não representa nada na rede de origem:
+/// pontes verificáveis estão A DEFINIR (ADR-0014, `SPEC §42`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GenesisAsset {
+    pub network: String,
+    pub asset_ref: String,
+    pub decimals: u8,
+    /// Saldos iniciais, ordenados por endereço e sem repetição.
+    pub allocations: Vec<Allocation>,
+}
+
+impl GenesisAsset {
+    pub fn id(&self) -> AssetId {
+        AssetId::external(&self.network, &self.asset_ref)
+    }
+
+    pub fn supply(&self) -> Result<u64, GenesisError> {
+        self.allocations.iter().try_fold(0u64, |acc, a| {
+            acc.checked_add(a.amount)
+                .ok_or(GenesisError::SupplyOverflow)
+        })
+    }
+
+    pub fn info(&self) -> Result<AssetInfo, GenesisError> {
+        Ok(AssetInfo {
+            network: self.network.clone(),
+            asset_ref: self.asset_ref.clone(),
+            decimals: self.decimals,
+            verification: crate::market::Verification::DevnetGenesis,
+            supply: self.supply()?,
+        })
+    }
+}
+
+impl Encode for GenesisAsset {
+    fn encode(&self, e: &mut Encoder) {
+        e.str(&self.network)
+            .str(&self.asset_ref)
+            .u8(self.decimals)
+            .list(&self.allocations);
+    }
+}
+
+impl Decode for GenesisAsset {
+    fn decode(d: &mut Decoder<'_>) -> Result<Self, DecodeError> {
+        Ok(Self {
+            network: d.str(MAX_ASSET_NETWORK_LEN)?,
+            asset_ref: d.str(MAX_ASSET_REF_LEN)?,
+            decimals: d.u8()?,
+            allocations: d.list(MAX_ALLOCATIONS)?,
+        })
+    }
+}
+
 /// Definição completa do estado inicial e dos parâmetros da rede.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Genesis {
@@ -107,6 +163,8 @@ pub struct Genesis {
     pub allocations: Vec<Allocation>,
     /// Parâmetros iniciais de governança (ADR-0008).
     pub governance: GovernanceParams,
+    /// Ativos externos de teste (somente DEVNET; ADR-0014).
+    pub assets: Vec<GenesisAsset>,
 }
 
 impl Encode for Genesis {
@@ -119,7 +177,8 @@ impl Encode for Genesis {
             .u32(self.max_block_txs)
             .list(&self.validators)
             .list(&self.allocations)
-            .put(&self.governance);
+            .put(&self.governance)
+            .list(&self.assets);
     }
 }
 
@@ -135,6 +194,7 @@ impl Decode for Genesis {
             validators: d.list(MAX_VALIDATORS)?,
             allocations: d.list(MAX_ALLOCATIONS)?,
             governance: d.get()?,
+            assets: d.list(MAX_ASSETS)?,
         })
     }
 }
@@ -260,6 +320,39 @@ impl Genesis {
         self.governance
             .validate()
             .map_err(GenesisError::InvalidParameter)?;
+        self.validate_assets()
+    }
+
+    fn validate_assets(&self) -> Result<(), GenesisError> {
+        if self.assets.is_empty() {
+            return Ok(());
+        }
+        // Sem ponte verificável, ativos externos só existem como teste
+        // (SPEC §42, THR-POOL-002).
+        if self.kind != NetworkKind::Devnet {
+            return Err(GenesisError::InvalidParameter(
+                "ativos externos exigem ponte verificável (A DEFINIR)",
+            ));
+        }
+        let mut ids = BTreeSet::new();
+        for a in &self.assets {
+            AssetInfo::check_names(&a.network, &a.asset_ref)
+                .map_err(GenesisError::InvalidParameter)?;
+            if !ids.insert(a.id()) {
+                return Err(GenesisError::InvalidParameter("ativo repetido"));
+            }
+            if !a
+                .allocations
+                .windows(2)
+                .all(|w| w[0].address < w[1].address)
+            {
+                return Err(GenesisError::AllocationsNotSorted);
+            }
+            if a.allocations.iter().any(|x| x.amount == 0) {
+                return Err(GenesisError::ZeroAllocation);
+            }
+            a.supply()?;
+        }
         Ok(())
     }
 }
@@ -301,6 +394,7 @@ pub(crate) mod tests {
                 lock_max_blocks: 105,
                 contribution_half_life_blocks: 16,
             },
+            assets: vec![],
         }
     }
 

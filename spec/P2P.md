@@ -1,6 +1,6 @@
 # spec/P2P.md — Protocolo P2P da DEVNET
 
-**Versão:** 0.3.0 (DEVNET), `P2P_VERSION = 3`
+**Versão:** 0.4.0 (DEVNET), `P2P_VERSION = 4`
 **Relacionamento:** `SPECIFICATIONS.md §23–§30`, ADR-0007, ADR-0010, ADR-0011, THR-P2P-001..006, THR-PRIV-002..004
 **Implementação de referência:** `crates/rz-p2p` (mensagens) e `crates/rz-node` (orquestração)
 
@@ -65,6 +65,10 @@ m = enc(Message)
 | `0x15` | `GOVERNANCE` | `u64 height, ProtocolParams, list<ProposalSummary> (≤256), list<LockEntry> (≤1024)` |
 | `0x16` | `CONSENSUS_PROPOSAL` | `Proposal` (`spec/CONSENSUS.md §4.1`) |
 | `0x17` | `CONSENSUS_VOTE` | `Vote` (`spec/CONSENSUS.md §4.2`) |
+| `0x18` | `GET_ASSETS` | `option<Address>` (inclui os saldos desse endereço) |
+| `0x19` | `ASSETS` | `u64 height, u64 pool_zero, list<AssetView>` (≤64) (`spec/MARKET.md §9`) |
+| `0x1a` | `GET_MARKET` | `AssetId, option<Address>` (inclui as ordens desse endereço) |
+| `0x1b` | `MARKET` | `u64 height, AssetId, option<u64> last_price, list<BookLevel> bids (≤256), list<BookLevel> asks (≤256), list<Order> own (≤256)` |
 
 `PeerAddr` (tag `u8`):
 

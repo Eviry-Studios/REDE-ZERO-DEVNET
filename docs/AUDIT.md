@@ -1,6 +1,6 @@
 # AUDIT.md — Preparação para auditoria independente
 
-**Versão:** 0.2.0
+**Versão:** 0.3.0
 **Estado:** pronto para auditoria da DEVNET; nenhuma auditoria externa foi realizada
 **Relacionamento:** `THREAT_MODEL.md §11` (aceitações temporárias), ADR-0009, ADR-0011, ADR-0012, `SECURITY.md`
 
@@ -30,11 +30,12 @@ A revisão interna (§7) **não substitui** a auditoria externa.
 | 4 | Canal cifrado e proteção de IP | `crates/rz-p2p/src/secure.rs`, `socks.rs`, `client.rs` | ~700 | handshake (X25519, assinatura do respondedor), derivação de chaves, nonces, preenchimento, SOCKS5 com DNS remoto |
 | 5 | Codificação canônica | `crates/rz-codec`, `Decode` de todos os tipos | ~400 | unicidade de codificação, limites antes de alocar |
 | 6 | Superfície de negação de serviço do Node | `crates/rz-node/src/node.rs`, `rz-p2p/src/ratelimit.rs`, `score.rs`, `rz-chain/src/mempool.rs` | ~2 300 | limites de fila, mempool, Dandelion++, sincronização |
-| 7 | Wallet | `crates/rz-wallet` | ~900 | seleção de notas, recusa de conexão direta, manuseio de chaves |
+| 7 | Grande Mercado e Pool | `crates/rz-core/src/market.rs`, partes de mercado em `state.rs` | ~1 300 | leilão (preço, prioridade, arredondamento, poeira), reservas e reembolsos, conservação por ativo, Pool monotônico, limites do livro |
+| 8 | Wallet | `crates/rz-wallet` | ~1 200 | seleção de notas, recusa de conexão direta, manuseio de chaves, unidades e preços do mercado |
 
 ¹ Aproximado, incluindo testes internos aos arquivos.
 
-**Fora do escopo:** Grande Mercado, Pool, Comunidades, Defesa, Agente Zero, Navegador Zero (ainda não implementados), e a política monetária (A DEFINIR).
+**Fora do escopo:** pontes de ativos externos (não existem; ADR-0014 §4), Comunidades, Defesa, Agente Zero, Navegador Zero (ainda não implementados), e a política monetária (A DEFINIR).
 
 ## 3. Arquitetura e fronteiras de confiança
 
@@ -80,6 +81,9 @@ Cada invariante lista onde é aplicada e os testes que a exercitam. Uma violaç�
 | INV-11 | Mensagens de consenso hostis não crescem a memória sem limite nem são amplificadas | `FUTURE_ROUND_WINDOW`, `keep_future_vote`, fila limitada | `bft_tests` (limites de memória) |
 | INV-12 | Todo bloco válido cabe num quadro P2P | `MAX_BLOCK_TX_BYTES` | `oversized_block_rejected` |
 | INV-13 | Com < 1/3 do poder bizantino, a rede volta a finalizar blocos após a estabilização | `bft.rs` (votos conflitantes, gossip da prova de trava) | `randomized_adversarial_*` |
+| INV-14 | O Pool nunca diminui; não existe operação de saída | `state.rs` (`add_to_pool` é o único ponto de escrita) | AT-POOL-002/003, `randomized_market_invariants` |
+| INV-15 | Cada ativo externo se conserva: saldos + reservas de venda + Pool = oferta | `MarketState::check_assets` | `randomized_market_invariants` |
+| INV-16 | O resultado do leilão não depende da ordem das transações no bloco | `market::clear` | `block_order_does_not_change_market_outcome`, `result_independent_of_input_order` |
 
 ## 5. Como reproduzir
 
@@ -95,6 +99,9 @@ RZ_FUZZ_ITERS=20000 RZ_FUZZ_SEED=7 cargo test --release -p rz-p2p --test robustn
 
 # Simulação adversarial do consenso com mais sementes
 RZ_BFT_SEEDS=400 cargo test --release -p rz-chain randomized
+
+# Propriedades do Grande Mercado com mais sementes
+RZ_MARKET_SEEDS=300 cargo test --release -p rz-core randomized_market
 
 # DEVNET local com 4 validadores (tolera 1 falha)
 scripts/devnet.sh 4
@@ -154,7 +161,8 @@ Feita antes da auditoria, com foco em negação de serviço, aritmética com ent
 3. **Bulletproofs:** os geradores e a transcrição (`merlin`) estão separados por domínio do resto do protocolo? Há reutilização de geradores Pedersen entre compromissos e provas que permita falsificação?
 4. **Canal cifrado:** o handshake (responder autenticado, iniciador anônimo) resiste a interceptação quando a identidade é fixada (`--node-id`)? A contagem de nonces e o preenchimento de 256 bytes estão corretos?
 5. **Zero-BFT:** as regras de trava/`pol_round` em `bft.rs` preservam segurança com a janela de rodadas futuras (RZ-IR-03) e com a contagem de votos conflitantes (RZ-IR-13)? A recomputação do conjunto na época e a punição imediata podem ser combinadas para quebrar INV-6?
-6. **Determinismo:** algum caminho da transição de estado depende de ordem de `HashMap` ou de arredondamento?
+6. **Grande Mercado:** o arredondamento do leilão (pagamento mínimo de 1 unidade para pares de valor nulo, reserva por teto) preserva a conservação em todos os casos? Há sequência de ordens que faça o leilão escolher um preço fora dos limites de alguma ordem executada?
+7. **Determinismo:** algum caminho da transição de estado depende de ordem de `HashMap` ou de arredondamento?
 
 ## 9. Contato
 

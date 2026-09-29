@@ -39,6 +39,8 @@ Todo hash protocolar **deve** usar um contexto da seção 3. O hash "puro" (sem 
 | `PROPOSAL` | `rede-zero/proposal/v1` | Assinatura e identificador de proposta Zero-BFT |
 | `PROPOSER` | `rede-zero/proposer/v1` | Sorteio ponderado do proponente |
 | `EVIDENCE` | `rede-zero/evidence/v1` | Identificador de infração punida |
+| `ASSET_ID` | `rede-zero/asset/v1` | Identificador de ativo externo (`spec/MARKET.md §1`) |
+| `MARKET_ROOT` | `rede-zero/market-root/v1` | Raiz da parte de mercado e Pool do estado |
 
 Os contextos de consenso estão em `crates/rz-core/src/consensus.rs` (`spec/CONSENSUS.md`). Privacidade, governança e canal P2P usam contextos próprios, listados em `spec/PRIVACY.md`, `spec/GOVERNANCE.md` e `spec/P2P.md`.
 

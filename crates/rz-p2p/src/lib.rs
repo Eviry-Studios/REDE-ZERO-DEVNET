@@ -15,11 +15,12 @@ pub mod socks;
 pub use client::{Client, ClientError, ConnectOptions};
 pub use frame::{read_frame, write_frame, FrameError, MAX_FRAME_SIZE};
 pub use message::{
-    check_hello, Hello, HelloError, Message, PeerAddr, MAX_BLOCKS_PER_MSG, MAX_KEY_IMAGES_PER_MSG,
-    MAX_LOCKS_PER_MSG, MAX_OUTPUTS_PER_MSG, MAX_PEERS_PER_MSG, MAX_PROPOSALS_PER_MSG,
+    check_hello, Hello, HelloError, Message, PeerAddr, MAX_BLOCKS_PER_MSG, MAX_BOOK_LEVELS,
+    MAX_KEY_IMAGES_PER_MSG, MAX_LOCKS_PER_MSG, MAX_OUTPUTS_PER_MSG, MAX_OWN_ORDERS,
+    MAX_PEERS_PER_MSG, MAX_PROPOSALS_PER_MSG,
 };
 pub use ratelimit::TokenBucket;
 pub use score::{Offense, PeerScore, BAN_THRESHOLD};
 
 /// Versão do protocolo P2P.
-pub const P2P_VERSION: u16 = 3;
+pub const P2P_VERSION: u16 = 4;

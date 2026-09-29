@@ -20,8 +20,9 @@ use rz_p2p::PeerAddr;
 use rz_p2p::{Client, Message};
 use rz_privacy::keys::ShieldedAddress;
 use rz_wallet::{
-    account, connect_to, governance, private_view, send_account, send_private, send_transparent,
-    shield, Destination, Keys, NetOptions, PROPOSAL_CONTENT,
+    account, connect_to, format_units, governance, parse_units, price_from_zero_per_unit,
+    private_view, send_account, send_private, send_transparent, shield, zero_per_unit, Destination,
+    Keys, NetOptions, PROPOSAL_CONTENT,
 };
 
 const USAGE: &str = "\
@@ -52,6 +53,19 @@ Consenso Zero-BFT (ADR-0012) — vínculo de validador, público:
   O vínculo entra no conjunto de validadores na próxima época; a desvinculação
   só libera o saldo após o período de desvinculação (e continua punível).
 
+Grande Mercado e Pool permanente (ADR-0014) — operações transparentes:
+  zero-wallet assets  --genesis FILE --node ADDR [--key FILE]
+  zero-wallet market  --genesis FILE --node ADDR --asset ATIVO [--key FILE]
+  zero-wallet order   --genesis FILE --node ADDR --key FILE --asset ATIVO --side (compra|venda)
+                      --amount QTD --price ZERO_POR_UNIDADE [--blocks N]
+  zero-wallet cancel  --genesis FILE --node ADDR --key FILE --order HEX
+  zero-wallet send-asset  --genesis FILE --node ADDR --key FILE --asset ATIVO --to HEX --amount QTD
+  zero-wallet pool-deposit --genesis FILE --node ADDR --key FILE --asset (ZERO|ATIVO) --amount QTD
+                      --permanente
+  ATIVO: identificador HEX ou rede:ativo (ex.: testnet-externa:ATV). Todo par é cotado em ZERO:
+  as ordens de todos que cruzam num bloco executam ao mesmo preço (leilão por bloco).
+  O depósito no Pool é IRREVERSÍVEL: não existe operação de retirada.
+
 Endereços:
   zs…  endereço PRIVADO (padrão recomendado): remetente, destinatário e valor ocultos
   HEX  endereço transparente: tudo público (necessário para taxas e validadores)
@@ -73,7 +87,7 @@ AVISO: DEVNET — o ZERO desta rede não possui valor econômico.
 struct Args(HashMap<String, String>);
 
 /// Opções sem valor.
-const SWITCHES: &[&str] = &["direct"];
+const SWITCHES: &[&str] = &["direct", "permanente"];
 
 impl Args {
     fn parse(raw: &[String]) -> Result<Self, String> {
@@ -127,6 +141,12 @@ fn main() -> ExitCode {
         "lock" => cmd_lock(&args),
         "unlock" => cmd_unlock(&args),
         "bond" => cmd_bond(&args, true),
+        "assets" => cmd_assets(&args),
+        "market" => cmd_market(&args),
+        "order" => cmd_order(&args),
+        "cancel" => cmd_cancel(&args),
+        "send-asset" => cmd_send_asset(&args),
+        "pool-deposit" => cmd_pool_deposit(&args),
         "unbond" => cmd_bond(&args, false),
         "propose" => cmd_propose(&args),
         "vote" => cmd_vote(&args),
@@ -452,6 +472,224 @@ fn cmd_unlock(args: &Args) -> Result<(), String> {
         fee,
     )?;
     println!("transação: {id} — aceita, aguardando inclusão em bloco");
+    Ok(())
+}
+
+/// Resolve `--asset` (HEX ou `rede:ativo`) contra os ativos registrados.
+fn find_asset(
+    client: &mut Client,
+    spec: &str,
+    address: Option<Address>,
+) -> Result<rz_core::market::AssetView, String> {
+    let v = rz_wallet::assets(client, address)?;
+    let id = match spec.split_once(':') {
+        Some((net, r)) => rz_core::market::AssetId::external(net, r),
+        None => rz_core::market::AssetId(
+            Hash32::from_hex(spec).ok_or_else(|| format!("--asset: ativo inválido '{spec}'"))?,
+        ),
+    };
+    v.assets
+        .into_iter()
+        .find(|a| a.id == id)
+        .ok_or_else(|| format!("ativo não registrado: {spec}"))
+}
+
+fn cmd_assets(args: &Args) -> Result<(), String> {
+    let keys = match args.get("key") {
+        Some(_) => Some(load_keys(args)?),
+        None => None,
+    };
+    let (mut client, _) = open(args)?;
+    let v = rz_wallet::assets(&mut client, keys.as_ref().map(Keys::address))?;
+    println!("altura: {}", v.height);
+    println!("Pool permanente: {} ZERO", format_zero(v.pool_zero));
+    if v.assets.is_empty() {
+        println!("nenhum ativo externo registrado");
+    }
+    for a in &v.assets {
+        let d = a.info.decimals;
+        println!("{}:{}  {}", a.info.network, a.info.asset_ref, a.id);
+        println!(
+            "  verificação: {:?}  oferta: {}  no Pool: {}",
+            a.info.verification,
+            format_units(a.info.supply, d),
+            format_units(a.pool, d)
+        );
+        if let Some(p) = a.last_price {
+            println!(
+                "  último preço: {} ZERO por unidade",
+                format_zero_u128(zero_per_unit(p, d))
+            );
+        }
+        if let Some(b) = a.balance {
+            println!("  seu saldo: {}", format_units(b, d));
+        }
+    }
+    Ok(())
+}
+
+fn format_zero_u128(v: u128) -> String {
+    u64::try_from(v).map_or_else(|_| "∞".into(), format_zero)
+}
+
+fn cmd_market(args: &Args) -> Result<(), String> {
+    let keys = match args.get("key") {
+        Some(_) => Some(load_keys(args)?),
+        None => None,
+    };
+    let (mut client, _) = open(args)?;
+    let a = find_asset(&mut client, args.req("asset")?, None)?;
+    let d = a.info.decimals;
+    let v = rz_wallet::market(&mut client, a.id, keys.as_ref().map(Keys::address))?;
+    println!(
+        "{}:{} / ZERO — altura {}",
+        a.info.network, a.info.asset_ref, v.height
+    );
+    if let Some(p) = v.last_price {
+        println!(
+            "último preço de equilíbrio: {} ZERO",
+            format_zero_u128(zero_per_unit(p, d))
+        );
+    }
+    println!("vendas (menor preço primeiro):");
+    for l in &v.asks {
+        println!(
+            "  {:>20} ZERO  {}",
+            format_zero_u128(zero_per_unit(l.price, d)),
+            format_units(l.amount, d)
+        );
+    }
+    println!("compras (maior preço primeiro):");
+    for l in &v.bids {
+        println!(
+            "  {:>20} ZERO  {}",
+            format_zero_u128(zero_per_unit(l.price, d)),
+            format_units(l.amount, d)
+        );
+    }
+    if keys.is_some() {
+        println!("suas ordens:");
+        for o in &v.own {
+            println!(
+                "  {} {} {} a {} ZERO, vence na altura {}",
+                o.id,
+                match o.side {
+                    rz_core::market::Side::Buy => "compra",
+                    rz_core::market::Side::Sell => "venda",
+                },
+                format_units(o.remaining, d),
+                format_zero_u128(zero_per_unit(o.price, d)),
+                o.expires_at
+            );
+        }
+    }
+    Ok(())
+}
+
+fn cmd_order(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let side = match args.req("side")? {
+        "compra" | "buy" => rz_core::market::Side::Buy,
+        "venda" | "sell" => rz_core::market::Side::Sell,
+        other => return Err(format!("--side: use compra ou venda, recebido '{other}'")),
+    };
+    let (mut client, genesis) = open(args)?;
+    let a = find_asset(&mut client, args.req("asset")?, None)?;
+    let d = a.info.decimals;
+    let amount = parse_units(args.req("amount")?, d).ok_or("--amount: quantidade inválida")?;
+    let price = price_from_zero_per_unit(args.amount("price")?, d)
+        .ok_or("--price: preço inválido ou pequeno demais")?;
+    let (_, _, height) = account(&mut client, keys.address())?;
+    let blocks: u64 = match args.get("blocks") {
+        Some(b) => b.parse().map_err(|_| "--blocks: número inválido")?,
+        None => 1_000,
+    };
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::PlaceOrder {
+            asset: a.id,
+            side,
+            amount,
+            price,
+            expires_at: height + 1 + blocks,
+        },
+        fee,
+    )?;
+    eprintln!("aviso: ordens do Grande Mercado são públicas (conta, quantidade e preço)");
+    println!("ordem {id} enviada; executa no leilão do bloco em que for incluída, se cruzar");
+    Ok(())
+}
+
+fn cmd_cancel(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let order = Hash32::from_hex(args.req("order")?).ok_or("--order: identificador inválido")?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::CancelOrder { order },
+        fee,
+    )?;
+    println!("transação: {id} — aceita, aguardando inclusão em bloco");
+    Ok(())
+}
+
+fn cmd_send_asset(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let to = Address::from_hex(args.req("to")?).ok_or("--to: endereço transparente inválido")?;
+    let (mut client, genesis) = open(args)?;
+    let a = find_asset(&mut client, args.req("asset")?, None)?;
+    let amount =
+        parse_units(args.req("amount")?, a.info.decimals).ok_or("--amount: quantidade inválida")?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::TransferAsset {
+            asset: a.id,
+            to,
+            amount,
+        },
+        fee,
+    )?;
+    println!("transação: {id} — aceita, aguardando inclusão em bloco");
+    Ok(())
+}
+
+fn cmd_pool_deposit(args: &Args) -> Result<(), String> {
+    if args.get("permanente").is_none() {
+        return Err(
+            "o depósito no Pool é IRREVERSÍVEL: não existe operação de retirada. \
+             Repita com --permanente para confirmar"
+                .into(),
+        );
+    }
+    let keys = load_keys(args)?;
+    let (mut client, genesis) = open(args)?;
+    let spec = args.req("asset")?;
+    let (asset, amount) = if spec.eq_ignore_ascii_case("zero") {
+        (rz_core::market::AssetId::ZERO, args.amount("amount")?)
+    } else {
+        let a = find_asset(&mut client, spec, None)?;
+        let amount = parse_units(args.req("amount")?, a.info.decimals)
+            .ok_or("--amount: quantidade inválida")?;
+        (a.id, amount)
+    };
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::PoolDeposit { asset, amount },
+        fee,
+    )?;
+    println!("depósito permanente no Pool enviado: {id}");
     Ok(())
 }
 

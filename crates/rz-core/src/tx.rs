@@ -8,6 +8,7 @@ use rz_privacy::excess::ExcessProof;
 
 use crate::block::SignedHeader;
 use crate::governance::{Category, Choice, ParamChange, MAX_PARAM_CHANGES};
+use crate::market::{AssetId, Side};
 use crate::private::{PrivateTx, ShieldedOutput, MAX_OUTPUTS};
 
 /// Versão atual do formato de transação.
@@ -98,6 +99,28 @@ pub enum TxKind {
         first: Box<crate::consensus::SignedProposal>,
         second: Box<crate::consensus::SignedProposal>,
     },
+    /// Tag `0x30` — transfere um ativo externo entre contas.
+    TransferAsset {
+        asset: AssetId,
+        to: Address,
+        amount: u64,
+    },
+    /// Tag `0x31` — deposita no Pool permanente. **Irreversível**: não existe
+    /// operação de retirada (`SPEC §39–§40`).
+    PoolDeposit { asset: AssetId, amount: u64 },
+    /// Tag `0x32` — coloca uma ordem-limite no Grande Mercado. O par é
+    /// sempre `asset`/ZERO; a quantidade é do ativo e o preço segue
+    /// `market::PRICE_SCALE`. O valor é reservado até a execução, o
+    /// cancelamento ou o vencimento em `expires_at`.
+    PlaceOrder {
+        asset: AssetId,
+        side: Side,
+        amount: u64,
+        price: u64,
+        expires_at: u64,
+    },
+    /// Tag `0x33` — cancela uma ordem própria e devolve o valor reservado.
+    CancelOrder { order: Hash32 },
 }
 
 impl Encode for TxKind {
@@ -154,6 +177,29 @@ impl Encode for TxKind {
             TxKind::ReportDoubleProposal { first, second } => {
                 e.u8(0x23).put(first.as_ref()).put(second.as_ref());
             }
+            TxKind::TransferAsset { asset, to, amount } => {
+                e.u8(0x30).put(asset).put(to).u64(*amount);
+            }
+            TxKind::PoolDeposit { asset, amount } => {
+                e.u8(0x31).put(asset).u64(*amount);
+            }
+            TxKind::PlaceOrder {
+                asset,
+                side,
+                amount,
+                price,
+                expires_at,
+            } => {
+                e.u8(0x32)
+                    .put(asset)
+                    .put(side)
+                    .u64(*amount)
+                    .u64(*price)
+                    .u64(*expires_at);
+            }
+            TxKind::CancelOrder { order } => {
+                e.u8(0x33).put(order);
+            }
         }
     }
 }
@@ -200,6 +246,23 @@ impl Decode for TxKind {
                 first: Box::new(d.get()?),
                 second: Box::new(d.get()?),
             }),
+            0x30 => Ok(TxKind::TransferAsset {
+                asset: d.get()?,
+                to: d.get()?,
+                amount: d.u64()?,
+            }),
+            0x31 => Ok(TxKind::PoolDeposit {
+                asset: d.get()?,
+                amount: d.u64()?,
+            }),
+            0x32 => Ok(TxKind::PlaceOrder {
+                asset: d.get()?,
+                side: d.get()?,
+                amount: d.u64()?,
+                price: d.u64()?,
+                expires_at: d.u64()?,
+            }),
+            0x33 => Ok(TxKind::CancelOrder { order: d.get()? }),
             t => Err(DecodeError::InvalidTag(t)),
         }
     }
@@ -380,6 +443,9 @@ impl AccountTx {
             TxKind::LockStake { amount, .. }
             | TxKind::Bond { amount }
             | TxKind::Unbond { amount }
+            | TxKind::TransferAsset { amount, .. }
+            | TxKind::PoolDeposit { amount, .. }
+            | TxKind::PlaceOrder { amount, .. }
                 if *amount == 0 =>
             {
                 return Err(TxError::ZeroAmount);
@@ -392,7 +458,14 @@ impl AccountTx {
             | TxKind::Bond { .. }
             | TxKind::Unbond { .. }
             | TxKind::ReportDoubleVote { .. }
-            | TxKind::ReportDoubleProposal { .. } => {}
+            | TxKind::ReportDoubleProposal { .. }
+            | TxKind::TransferAsset { .. }
+            | TxKind::PoolDeposit { .. }
+            | TxKind::CancelOrder { .. } => {}
+            TxKind::PlaceOrder { price, .. } if *price == 0 => {
+                return Err(TxError::Market("preço nulo"));
+            }
+            TxKind::PlaceOrder { .. } => {}
         }
         if self.body.fee < min_fee {
             return Err(TxError::FeeTooLow {
@@ -459,6 +532,8 @@ pub enum TxError {
     },
     /// Evidência de equivocação inválida.
     InvalidEvidence(&'static str),
+    /// Regra do Grande Mercado ou do Pool violada.
+    Market(&'static str),
     /// Regra de staking violada.
     Staking(&'static str),
 }
@@ -490,6 +565,7 @@ impl fmt::Display for TxError {
             }
             Self::InvalidEvidence(w) => write!(f, "evidência inválida: {w}"),
             Self::Staking(w) => write!(f, "staking: {w}"),
+            Self::Market(w) => write!(f, "mercado: {w}"),
         }
     }
 }

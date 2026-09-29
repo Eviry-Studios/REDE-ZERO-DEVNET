@@ -35,6 +35,8 @@ USO:
       --network-id ID     identificador da rede (padrão rede-zero-devnet-1)
       --block-ms MS       intervalo alvo entre blocos em ms (padrão 2000)
       --stake ZERO        ZERO vinculado por validador (padrão 10000)
+      --test-asset R:A    cria o ativo externo DE TESTE A da rede R (ex.: testnet-externa:ATV),
+                          com 1000000 unidades para o faucet (só DEVNET; ADR-0014)
       --faucet ZERO       saldo inicial da chave faucet (padrão 1000000)
       --min-fee ZERO      taxa mínima (padrão 0.00001)
       --base-port P       porta do primeiro node (padrão 7100)
@@ -197,6 +199,19 @@ fn init_devnet(args: &Args) -> Result<(), String> {
         amount: faucet_amount,
     });
     allocations.sort_by_key(|a| a.address);
+    let mut assets = Vec::new();
+    if let Some(spec) = args.get("test-asset") {
+        let (network, asset_ref) = spec.split_once(':').ok_or("--test-asset: use REDE:ATIVO")?;
+        assets.push(rz_core::genesis::GenesisAsset {
+            network: network.into(),
+            asset_ref: asset_ref.into(),
+            decimals: 8,
+            allocations: vec![Allocation {
+                address: faucet.public_key().address(),
+                amount: 1_000_000 * 100_000_000,
+            }],
+        });
+    }
     let genesis = Genesis {
         protocol_version: PROTOCOL_VERSION,
         kind: NetworkKind::Devnet,
@@ -207,6 +222,7 @@ fn init_devnet(args: &Args) -> Result<(), String> {
         validators,
         allocations,
         governance: rz_core::GovernanceParams::for_block_ms(block_ms),
+        assets,
     };
     genesis.validate().map_err(|e| e.to_string())?;
     let genesis_path = out.join("genesis.bin");
@@ -250,6 +266,14 @@ fn print_genesis(g: &Genesis) {
     println!("  validadores:     {}", g.validators.len());
     for v in &g.validators {
         println!("    {} ({} ZERO)", v.key, format_zero(v.stake));
+    }
+    for a in &g.assets {
+        println!(
+            "  ativo de teste:  {}:{} ({}) — NÃO representa nada na rede de origem",
+            a.network,
+            a.asset_ref,
+            a.id()
+        );
     }
     for a in &g.allocations {
         println!(

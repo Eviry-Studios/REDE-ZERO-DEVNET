@@ -35,6 +35,7 @@ fn genesis(ks: &[SecretKey]) -> Genesis {
             amount: 1_000,
         }],
         governance: GovernanceParams::default(),
+        assets: vec![],
     }
 }
 

@@ -50,6 +50,17 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * `docs/DEMOCRACIA_ORGANICA.md` incorporado com notas de conformidade (ADR-0013).
 * `THREAT_MODEL.md` v0.4.0.
 
+### Adicionado — Grande Mercado e Pool permanente
+
+* ADR-0014 e `spec/MARKET.md`:
+  * **Grande Mercado** por livro de ordens com leilão de preço uniforme a cada bloco; todo par é cotado em ZERO; o resultado não depende da ordem das transações no bloco (THR-MKT-001);
+  * **Pool permanente** sem nenhuma operação de saída; só cresce, por depósito irreversível ou pela tarifa do mercado (padrão 0);
+  * **ativos externos** com identificador derivado da origem, impossíveis de confundir com ZERO; sem ponte nesta versão, apenas ativos de teste no Genesis da DEVNET.
+* Operações `TransferAsset` (0x30), `PoolDeposit` (0x31), `PlaceOrder` (0x32), `CancelOrder` (0x33); parâmetros `market_fee_bps` e `market_order_lifetime_blocks` governáveis.
+* Consultas P2P `GET_ASSETS`/`ASSETS`, `GET_MARKET`/`MARKET`; comandos da Wallet `assets`, `market`, `order`, `cancel`, `send-asset`, `pool-deposit --permanente`; `init-devnet --test-asset`.
+* Testes AT-MKT-001..004, AT-POOL-001..004, propriedades sob operações aleatórias (conservação por ativo, Pool monotônico, livro não cruzado) e ponta a ponta com Nodes reais.
+* `THREAT_MODEL.md` v0.5.0.
+
 ### Corrigido — achados abertos da auditoria interna
 
 * Limite de taxa próprio para mensagens de consenso, proporcional ao número de validadores; excedente descartado sem banir (RZ-IR-06).
@@ -73,6 +84,7 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 
 ### Protocolo
 
+* **Incompatível** com DEVNETs anteriores ao Grande Mercado: Genesis com `assets`, parâmetros do mercado no estado, raiz do estado com `market_root`, `P2P_VERSION = 4`.
 * **Incompatível** com DEVNETs anteriores ao Zero-BFT: o cabeçalho troca `slot` por `round`, o Genesis troca tempo/slot/finalidade por `ConsensusParams` e validadores com vínculo, blocos trafegam com certificado e `P2P_VERSION = 3`. Recrie a DEVNET (`rm -rf devnet-data`).
 
 * `PROTOCOL_VERSION = 1` (DEVNET, não congelado). O Genesis passou a incluir parâmetros de governança.

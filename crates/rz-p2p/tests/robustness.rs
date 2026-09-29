@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex};
 use rz_codec::{Decode, Encode};
 use rz_core::consensus::{Commit, Proposal, Vote, VoteType};
 use rz_core::governance::{Category, Choice, ParamChange};
+use rz_core::market::{AssetId, Side, PRICE_SCALE};
 use rz_core::private::{build_private_tx, build_shield, SpendableNote};
 use rz_core::state::ExecParams;
 use rz_core::{
@@ -182,6 +183,15 @@ fn genesis() -> Genesis {
             amount: 10_000_000,
         }],
         governance: GovernanceParams::default(),
+        assets: vec![rz_core::genesis::GenesisAsset {
+            network: "testnet-externa".into(),
+            asset_ref: "ATV".into(),
+            decimals: 8,
+            allocations: vec![Allocation {
+                address: rich().public_key().address(),
+                amount: 1_000_000,
+            }],
+        }],
     }
 }
 
@@ -251,6 +261,7 @@ fn corpus() -> Corpus {
     let v2 = vote(VoteType::Prevote, Some(BlockId(Hash32([2; 32]))));
 
     let n = 12;
+    let atv = AssetId::external("testnet-externa", "ATV");
     let mut txs = vec![
         shields[0].clone(),
         Transaction::Private(private),
@@ -425,6 +436,108 @@ fn corpus() -> Corpus {
     for tx in &txs {
         messages.push(Message::Transaction(tx.clone()));
     }
+    // Grande Mercado e Pool (ADR-0014).
+    let market_txs = vec![
+        account_tx(
+            n,
+            TxKind::TransferAsset {
+                asset: atv,
+                to: validator().public_key().address(),
+                amount: 7,
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::PoolDeposit {
+                asset: AssetId::ZERO,
+                amount: 100,
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::PoolDeposit {
+                asset: atv,
+                amount: 100,
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::PlaceOrder {
+                asset: atv,
+                side: Side::Buy,
+                amount: 50,
+                price: 3 * PRICE_SCALE as u64,
+                expires_at: 100,
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::PlaceOrder {
+                asset: atv,
+                side: Side::Sell,
+                amount: 50,
+                price: 2 * PRICE_SCALE as u64,
+                expires_at: 100,
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::CancelOrder {
+                order: Hash32([4; 32]),
+            },
+        ),
+    ];
+    let open_order = rz_core::market::Order {
+        id: market_txs[3].id().0,
+        owner: rich().public_key().address(),
+        asset: atv,
+        side: Side::Buy,
+        price: 3 * PRICE_SCALE as u64,
+        remaining: 50,
+        escrow: 150,
+        placed_at: 1,
+        expires_at: 100,
+    };
+    messages.extend([
+        Message::GetAssets {
+            address: Some(rich().public_key().address()),
+        },
+        Message::Assets {
+            height: 3,
+            pool_zero: 9,
+            assets: state
+                .market()
+                .assets
+                .iter()
+                .map(|(id, info)| rz_core::market::AssetView {
+                    id: *id,
+                    info: info.clone(),
+                    pool: 1,
+                    balance: Some(2),
+                    last_price: Some(PRICE_SCALE as u64),
+                })
+                .collect(),
+        },
+        Message::GetMarket {
+            asset: atv,
+            owner: None,
+        },
+        Message::Market {
+            height: 3,
+            asset: atv,
+            last_price: None,
+            bids: vec![rz_core::market::BookLevel {
+                price: 3,
+                amount: 4,
+            }],
+            asks: vec![],
+            own: vec![open_order],
+        },
+    ]);
+    for tx in &market_txs {
+        messages.push(Message::Transaction(tx.clone()));
+    }
+    txs.extend(market_txs);
     messages.push(Message::StemTransaction(txs[1].clone()));
     txs.extend(shields.into_iter().skip(1).take(2));
 
@@ -675,7 +788,31 @@ fn extreme_signed_values_never_panic() {
     for i in 0..iters() * 5 {
         let mut pick = || extremes[rng.below(extremes.len())];
         let (a, b, fee) = (pick(), pick(), pick());
-        let kind = match i % 9 {
+        let atv = AssetId::external("testnet-externa", "ATV");
+        let kind = match i % 13 {
+            9 => TxKind::TransferAsset {
+                asset: atv,
+                to: validator().public_key().address(),
+                amount: a,
+            },
+            10 => TxKind::PoolDeposit {
+                asset: if b % 2 == 0 { AssetId::ZERO } else { atv },
+                amount: a,
+            },
+            11 => TxKind::PlaceOrder {
+                asset: atv,
+                side: if b % 2 == 0 { Side::Buy } else { Side::Sell },
+                amount: a,
+                price: b,
+                expires_at: fee,
+            },
+            12 => TxKind::PlaceOrder {
+                asset: atv,
+                side: Side::Buy,
+                amount: a,
+                price: b,
+                expires_at: height + 10,
+            },
             0 => TxKind::Transfer {
                 to: validator().public_key().address(),
                 amount: a,

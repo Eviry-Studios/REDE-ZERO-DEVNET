@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.4.0
-**Status:** Modelo de ameaças — fase de definição (0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
+**Versão:** 0.5.0
+**Status:** Modelo de ameaças — fase de definição (0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -675,12 +675,12 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Adversários:** ADV-04, ADV-07
 **Descrição:** produtores de bloco ou observadores reordenam, inserem ou atrasam ordens para lucro próprio.
 
-**Mitigações:** regras de ordenação determinísticas e verificáveis; mecanismos como leilões em lote ou ordens cifradas até a inclusão (**A DEFINIR**).
+**Mitigações:** leilão de preço uniforme por bloco (ADR-0014): todas as ordens que cruzam num bloco executam ao mesmo preço, e o resultado depende só do conjunto de ordens, não da sua ordem no bloco (`block_order_does_not_change_market_outcome`); prioridade determinística e verificável. **Residual:** o proponente pode omitir uma ordem por um bloco (rotação limita); ordens são públicas antes da inclusão, e ordens cifradas até a inclusão ficam **A DEFINIR**.
 
 ### THR-MKT-002 — Cancelamento não autorizado
 
 **Severidade:** ALTA
-**Mitigações:** somente o autor da ordem pode cancelá-la, comprovado por assinatura (`AT-MKT-003`, `AT-MKT-004`).
+**Mitigações:** somente o autor da ordem pode cancelá-la, comprovado por assinatura (`AT-MKT-003`, `AT-MKT-004`, `at_mkt_003_004_cancel_only_by_owner`).
 
 ### THR-MKT-003 — DEX paralela dentro da Rede Zero
 
@@ -693,7 +693,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 **Severidade:** CRÍTICA
 **Adversários:** ADV-04, ADV-10, ADV-12, mantenedores
-**Mitigações:** inexistência de qualquer operação de retirada administrativa (`SPEC §39`); permanência como propriedade protocolar (`SPEC §40`); teste `AT-POOL-002`.
+**Mitigações:** inexistência de **qualquer** operação que reduza o Pool, administrativa ou não (`SPEC §39–§40`, ADR-0014). O conjunto de tags de transação é fechado e testado (`at_pool_002_no_withdrawal_operation_exists`). O Pool monotônico é verificado a cada bloco em testes de propriedade (`at_pool_003_pool_never_decreases`, `randomized_market_invariants`). O Pool não é contraparte de trocas.
 
 ### THR-POOL-002 — Ponte externa comprometida
 
@@ -701,12 +701,12 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Adversários:** ADV-07, ADV-09
 **Descrição:** um ativo externo é representado no Pool sem existir ou estar bloqueado na rede de origem.
 
-**Mitigações:** verificação criptográfica da origem; proibição de dependência exclusiva de custodiante (`SPEC §42`); mecanismo **A DEFINIR**.
+**Mitigações:** verificação criptográfica da origem; proibição de dependência exclusiva de custodiante (`SPEC §42`); mecanismo **A DEFINIR**. Enquanto não existir, nenhum ativo externo real é aceito: só ativos de teste no Genesis da DEVNET, rejeitados nos demais ambientes (ADR-0014 §4).
 
 ### THR-POOL-003 — Confusão entre ZERO e ativo externo
 
 **Severidade:** ALTA
-**Mitigações:** identificadores de ativo distintos, com origem explícita (`SPEC §41`, `AT-POOL-004`).
+**Mitigações:** identificadores de ativo derivados da origem (`H(network ‖ asset_ref)`), com ZERO no identificador nulo; nomes "ZERO" e origem "rede-zero" rejeitados; operações de ativo externo recusam ZERO (`SPEC §41`, `AT-POOL-004`, `at_pool_004_external_asset_never_zero`).
 
 ---
 
@@ -904,7 +904,10 @@ Classificação de severidade (inicial, sujeita a revisão):
 | THR-GOV-001 | REQ-044 | SPEC §47, spec/GOVERNANCE.md | rz-core governance_tests (neutralidade a Sybil), rz-wallet governance_devnet |
 | THR-P2P-005 | — | SPEC §30, spec/P2P.md §1.1 | rz-p2p secure::tests |
 | THR-CON-004 | REQ-049 | SPEC §49, spec/CONSENSUS.md §6 | rz-core equivocation_report_slashes_contribution, double_vote_slashes_bond_and_jails, double_proposal_slashes_even_for_reproposal |
-| THR-POOL-001 | REQ-037, REQ-038 | SPEC §39, §40 | AT-POOL-002 |
+| THR-POOL-001 | REQ-037, REQ-038 | SPEC §39, §40, spec/MARKET.md §5 | AT-POOL-002, AT-POOL-003, randomized_market_invariants |
+| THR-POOL-003 | REQ-039 | SPEC §41, spec/MARKET.md §1 | AT-POOL-004 |
+| THR-MKT-001 | REQ-035 | spec/MARKET.md §4 | block_order_does_not_change_market_outcome |
+| THR-MKT-002 | REQ-035 | spec/MARKET.md §2 | AT-MKT-003, AT-MKT-004 |
 | THR-DEF-001 | REQ-058, REQ-059 | SPEC §53, §54 | — (a definir) |
 | THR-DEV-001 | REQ-084 | — | CI |
 | THR-DEV-004 | REQ-090 | — | — |
@@ -932,6 +935,8 @@ Ameaças aceitas **temporariamente** na DEVNET, com registro explícito:
 | THR-PRIV-001 | RingCT implementado **sem auditoria**; anel de 11 | Auditoria independente da implementação (ADR-0009) |
 | THR-PRIV-002 | Dandelion++, canal cifrado e Tor opcional **não auditados** | Auditoria do canal; avaliação de tráfego de cobertura (ADR-0011) |
 | THR-P2P-005 | Canal cifrado sem fixação obrigatória de identidade | Distribuição verificável de identidades de Nodes ou uso de serviços onion |
+| THR-POOL-002 | Sem ponte: apenas ativos **de teste** no Genesis da DEVNET | Ponte verificável sem custodiante único (nova ADR) |
+| THR-MKT-001 | Ordens públicas antes da inclusão; omissão por um bloco possível | Avaliação de ordens cifradas até a inclusão |
 | THR-GOV-001/002 | Governança implementada (ADR-0008); a câmara de contribuição só pontua produção de blocos, então favorece validadores | Computação e contribuição defensiva verificáveis |
 
 Nenhuma dessas aceitações temporárias pode ser herdada pela TESTNET pública ou pela MAINNET sem nova avaliação.
@@ -987,7 +992,7 @@ Toda alteração deverá possuir histórico, justificativa e versão (`REQ-086`,
 
 # 15. Status
 
-**THREAT_MODEL.md v0.4.0**
+**THREAT_MODEL.md v0.5.0**
 
 > **Modelo de ameaças inicial — não congelado.**
 

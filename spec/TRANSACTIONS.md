@@ -14,7 +14,15 @@ Transaction (tag u8):
   0x01 PrivateTx   // privada, descrita em spec/PRIVACY.md §7.2
 ```
 
-A operação `TxKind::Shield` (tag `0x01`) está descrita em `spec/PRIVACY.md §7.1`.
+A operação `TxKind::Shield` (tag `0x01`) está descrita em `spec/PRIVACY.md §7.1`. As demais operações de conta:
+
+| Tags | Operações | Especificação |
+| --- | --- | --- |
+| `0x10–0x14` | governança (`LockStake`, `Unlock`, `Propose`, `Vote`, `ReportEquivocation`) | `spec/GOVERNANCE.md` |
+| `0x20–0x23` | participação no consenso (`Bond`, `Unbond`, `ReportDoubleVote`, `ReportDoubleProposal`) | `spec/CONSENSUS.md §6` |
+| `0x30–0x33` | Grande Mercado e Pool (`TransferAsset`, `PoolDeposit`, `PlaceOrder`, `CancelOrder`) | `spec/MARKET.md` |
+
+Qualquer outra tag é inválida.
 
 ## 1. Estrutura
 

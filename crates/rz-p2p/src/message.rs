@@ -6,6 +6,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use rz_codec::{Decode, DecodeError, Decoder, Encode, Encoder};
 use rz_core::governance::{LockEntry, ProposalSummary, ProtocolParams};
 use rz_core::limits::MAX_NETWORK_ID_LEN;
+use rz_core::market::{AssetId, AssetView, BookLevel, Order, MAX_ASSETS};
 use rz_core::{BlockId, CommittedBlock, Proposal, Transaction, TxId, Vote};
 use rz_crypto::{Address, Hash32};
 use rz_privacy::note::OutputData;
@@ -25,6 +26,10 @@ pub const MAX_PROPOSALS_PER_MSG: usize = 256;
 /// Máximo de bloqueios em uma resposta `Governance`.
 pub const MAX_LOCKS_PER_MSG: usize = 1024;
 const MAX_REASON_LEN: usize = 256;
+/// Níveis de preço por lado numa resposta `MARKET`.
+pub const MAX_BOOK_LEVELS: usize = 256;
+/// Ordens próprias numa resposta `MARKET`.
+pub const MAX_OWN_ORDERS: usize = 256;
 
 /// Comprimento máximo de um nome de host (DNS).
 pub const MAX_HOST_LEN: usize = 253;
@@ -307,6 +312,29 @@ pub enum Message {
     ConsensusProposal(Box<Proposal>),
     /// `0x17` — voto de consenso.
     ConsensusVote(Vote),
+    /// `0x18` — consulta de ativos e do Pool; `address` inclui os saldos.
+    GetAssets { address: Option<Address> },
+    /// `0x19`
+    Assets {
+        height: u64,
+        /// ZERO no Pool permanente.
+        pool_zero: u64,
+        assets: Vec<AssetView>,
+    },
+    /// `0x1a` — consulta do livro de um ativo; `owner` inclui suas ordens.
+    GetMarket {
+        asset: AssetId,
+        owner: Option<Address>,
+    },
+    /// `0x1b`
+    Market {
+        height: u64,
+        asset: AssetId,
+        last_price: Option<u64>,
+        bids: Vec<BookLevel>,
+        asks: Vec<BookLevel>,
+        own: Vec<Order>,
+    },
 }
 
 impl Encode for Message {
@@ -417,6 +445,35 @@ impl Encode for Message {
             Message::ConsensusVote(v) => {
                 e.u8(0x17).put(v);
             }
+            Message::GetAssets { address } => {
+                e.u8(0x18).option(address);
+            }
+            Message::Assets {
+                height,
+                pool_zero,
+                assets,
+            } => {
+                e.u8(0x19).u64(*height).u64(*pool_zero).list(assets);
+            }
+            Message::GetMarket { asset, owner } => {
+                e.u8(0x1a).put(asset).option(owner);
+            }
+            Message::Market {
+                height,
+                asset,
+                last_price,
+                bids,
+                asks,
+                own,
+            } => {
+                e.u8(0x1b)
+                    .u64(*height)
+                    .put(asset)
+                    .option(last_price)
+                    .list(bids)
+                    .list(asks)
+                    .list(own);
+            }
         }
     }
 }
@@ -485,6 +542,26 @@ impl Decode for Message {
             },
             0x16 => Message::ConsensusProposal(Box::new(d.get()?)),
             0x17 => Message::ConsensusVote(d.get()?),
+            0x18 => Message::GetAssets {
+                address: d.option()?,
+            },
+            0x19 => Message::Assets {
+                height: d.u64()?,
+                pool_zero: d.u64()?,
+                assets: d.list(MAX_ASSETS)?,
+            },
+            0x1a => Message::GetMarket {
+                asset: d.get()?,
+                owner: d.option()?,
+            },
+            0x1b => Message::Market {
+                height: d.u64()?,
+                asset: d.get()?,
+                last_price: d.option()?,
+                bids: d.list(MAX_BOOK_LEVELS)?,
+                asks: d.list(MAX_BOOK_LEVELS)?,
+                own: d.list(MAX_OWN_ORDERS)?,
+            },
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }
@@ -518,6 +595,10 @@ impl Message {
             Message::Governance { .. } => "GOVERNANCE",
             Message::ConsensusProposal(_) => "CONSENSUS_PROPOSAL",
             Message::ConsensusVote(_) => "CONSENSUS_VOTE",
+            Message::GetAssets { .. } => "GET_ASSETS",
+            Message::Assets { .. } => "ASSETS",
+            Message::GetMarket { .. } => "GET_MARKET",
+            Message::Market { .. } => "MARKET",
         }
     }
 }

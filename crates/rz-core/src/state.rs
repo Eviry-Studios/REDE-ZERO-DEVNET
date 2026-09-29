@@ -27,6 +27,9 @@ use crate::governance::{
     check_proposal_shape, decide, lock_weight, Category, ChamberTally, Contribution, Lock,
     Proposal, ProposalStatus, ProtocolParams, Tally, Vote, SCALE,
 };
+use crate::market::{
+    self, quote_ceil, quote_floor, AssetId, MarketParams, MarketState, Order, Side,
+};
 use crate::private::{
     accumulate, context as pctx, min_ring_size, shield_message, PrivateTx, ShieldedOutput,
     PRIVATE_TX_VERSION, RING_SIZE,
@@ -76,6 +79,8 @@ pub enum StateError {
         actual: u128,
     },
     Overflow,
+    /// A conservação de um ativo externo foi violada.
+    AssetMismatch(AssetId),
 }
 
 impl fmt::Display for StateError {
@@ -89,6 +94,7 @@ impl fmt::Display for StateError {
                 )
             }
             Self::Overflow => write!(f, "overflow aritmético"),
+            Self::AssetMismatch(a) => write!(f, "conservação do ativo {a} violada"),
         }
     }
 }
@@ -122,6 +128,8 @@ pub struct State {
     validators: ValidatorSet,
     /// Conjunto que validou o bloco mais recente.
     last_validators: ValidatorSet,
+    /// Grande Mercado e Pool permanente (ADR-0014).
+    market: MarketState,
 }
 
 /// ZERO em período de desvinculação.
@@ -152,6 +160,26 @@ struct Effect {
     shielded_supply: u64,
     fee: u64,
     gov: Option<GovEffect>,
+    market: Option<MarketEffect>,
+}
+
+/// Alteração do Grande Mercado ou do Pool produzida por uma transação.
+enum MarketEffect {
+    Transfer {
+        asset: AssetId,
+        from: Address,
+        to: Address,
+        amount: u64,
+    },
+    /// Depósito no Pool. Para ZERO, o saldo já foi debitado da conta.
+    PoolDeposit {
+        asset: AssetId,
+        from: Address,
+        amount: u64,
+    },
+    /// Nova ordem. Numa compra, o ZERO reservado já foi debitado da conta.
+    Place(Order),
+    Cancel(Hash32),
 }
 
 impl State {
@@ -196,6 +224,7 @@ impl State {
                 max_block_txs: genesis.max_block_txs,
                 governance: genesis.governance.clone(),
                 consensus: genesis.consensus.clone(),
+                market: MarketParams::default(),
             },
             locks: BTreeMap::new(),
             next_lock_id: 0,
@@ -212,6 +241,17 @@ impl State {
             punished: BTreeSet::new(),
             validators: initial.clone(),
             last_validators: initial,
+            market: {
+                let mut m = MarketState::default();
+                for a in &genesis.assets {
+                    let id = a.id();
+                    m.assets.insert(id, a.info().map_err(StateError::Genesis)?);
+                    for al in &a.allocations {
+                        m.balances.insert((al.address, id), al.amount);
+                    }
+                }
+                m
+            },
         })
     }
 
@@ -262,6 +302,17 @@ impl State {
                 .map(|(k, b)| Validator { key: *k, power: *b })
                 .collect(),
         )
+    }
+
+    /// Grande Mercado e Pool permanente.
+    pub fn market(&self) -> &MarketState {
+        &self.market
+    }
+
+    /// Acesso de teste aos parâmetros (simula uma proposta já ativada).
+    #[cfg(test)]
+    pub(crate) fn params_mut(&mut self) -> &mut ProtocolParams {
+        &mut self.params
     }
 
     /// Parâmetros vigentes (iniciados pelo Genesis, alterados por governança).
@@ -388,7 +439,8 @@ impl State {
             .put(&self.output_acc)
             .u64(self.key_image_log.len() as u64)
             .put(&self.key_image_acc)
-            .put(&self.governance_root());
+            .put(&self.governance_root())
+            .put(&self.market.root());
         hash(context::STATE_ROOT, &e.into_bytes())
     }
 
@@ -403,7 +455,12 @@ impl State {
             + self.shielded_supply as u128
             + self.locked_total()
             + self.deposits_held()
-            + self.staked_total();
+            + self.staked_total()
+            + self.market.zero_escrow()
+            + self.market.pool_balance(&AssetId::ZERO) as u128;
+        if let Err(asset) = self.market.check_assets() {
+            return Err(StateError::AssetMismatch(asset));
+        }
         if actual != self.total_supply as u128 {
             return Err(StateError::SupplyMismatch {
                 expected: self.total_supply,
@@ -444,6 +501,9 @@ impl State {
             self.key_image_log.push(ki);
         }
         self.shielded_supply = effect.shielded_supply;
+        if let Some(m) = effect.market {
+            self.apply_market(m).map_err(|_| TxError::Overflow)?;
+        }
         match effect.gov {
             None => {}
             Some(GovEffect::Lock(id, lock)) => {
@@ -537,6 +597,9 @@ impl State {
         height: u64,
         used_validators: ValidatorSet,
     ) -> Result<(), StateError> {
+        // Grande Mercado: vencimentos e leilões dos livros que mudaram.
+        self.settle_market(height)?;
+
         // Consenso: o conjunto que validou este bloco; nova época recalcula.
         self.last_validators = used_validators;
         let released: Vec<Unbonding> = self
@@ -684,6 +747,18 @@ impl State {
             | TxKind::LockStake { amount, .. } => *amount,
             TxKind::Propose { deposit, .. } => *deposit,
             TxKind::Bond { amount } => *amount,
+            TxKind::PoolDeposit { asset, amount } if asset.is_zero() => *amount,
+            // Compra: o ZERO do limite é reservado na colocação.
+            TxKind::PlaceOrder {
+                side: Side::Buy,
+                amount,
+                price,
+                ..
+            } => quote_ceil(*amount, *price).ok_or(TxError::Overflow)?,
+            TxKind::PoolDeposit { .. }
+            | TxKind::PlaceOrder { .. }
+            | TxKind::TransferAsset { .. }
+            | TxKind::CancelOrder { .. } => 0,
             TxKind::Unlock { .. }
             | TxKind::Vote { .. }
             | TxKind::ReportEquivocation { .. }
@@ -708,6 +783,7 @@ impl State {
             shielded_supply: self.shielded_supply,
             fee: tx.body.fee,
             gov: None,
+            market: None,
         };
         let g = &self.params.governance;
 
@@ -894,6 +970,91 @@ impl State {
                 effect.gov = Some(GovEffect::Slash(key, evidence));
                 effect.accounts.push((sender, sender_acc));
             }
+            TxKind::TransferAsset { asset, to, amount } => {
+                self.registered(asset)?;
+                if self.market.balance(&sender, asset) < *amount {
+                    return Err(TxError::Market("saldo do ativo insuficiente"));
+                }
+                effect.market = Some(MarketEffect::Transfer {
+                    asset: *asset,
+                    from: sender,
+                    to: *to,
+                    amount: *amount,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::PoolDeposit { asset, amount } => {
+                if !asset.is_zero() {
+                    self.registered(asset)?;
+                    if self.market.balance(&sender, asset) < *amount {
+                        return Err(TxError::Market("saldo do ativo insuficiente"));
+                    }
+                }
+                effect.market = Some(MarketEffect::PoolDeposit {
+                    asset: *asset,
+                    from: sender,
+                    amount: *amount,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::PlaceOrder {
+                asset,
+                side,
+                amount,
+                price,
+                expires_at,
+            } => {
+                self.registered(asset)?;
+                let mp = &self.params.market;
+                if *expires_at <= p.height
+                    || *expires_at > p.height.saturating_add(mp.order_lifetime_blocks)
+                {
+                    return Err(TxError::Market("validade fora dos limites"));
+                }
+                if self.market.orders.len() >= mp.max_open_orders as usize {
+                    return Err(TxError::Market("livro de ordens cheio"));
+                }
+                if self.market.orders_of(&sender) >= mp.max_orders_per_account as usize {
+                    return Err(TxError::Market("ordens demais para esta conta"));
+                }
+                // Ordem com valor nulo no limite (poeira) nunca executaria.
+                if quote_floor(*amount, *price).ok_or(TxError::Overflow)? == 0 {
+                    return Err(TxError::Market("ordem abaixo do valor mínimo"));
+                }
+                let escrow = match side {
+                    Side::Buy => quote_ceil(*amount, *price).ok_or(TxError::Overflow)?,
+                    Side::Sell => {
+                        if self.market.balance(&sender, asset) < *amount {
+                            return Err(TxError::Market("saldo do ativo insuficiente"));
+                        }
+                        *amount
+                    }
+                };
+                effect.market = Some(MarketEffect::Place(Order {
+                    id: tx.id().0,
+                    owner: sender,
+                    asset: *asset,
+                    side: *side,
+                    price: *price,
+                    remaining: *amount,
+                    escrow,
+                    placed_at: p.height,
+                    expires_at: *expires_at,
+                }));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::CancelOrder { order } => {
+                // Só o autor cancela (THR-MKT-002, AT-MKT-004).
+                match self.market.orders.get(order) {
+                    None => return Err(TxError::Market("ordem inexistente")),
+                    Some(o) if o.owner != sender => {
+                        return Err(TxError::Market("ordem pertence a outra conta"))
+                    }
+                    Some(_) => {}
+                }
+                effect.market = Some(MarketEffect::Cancel(*order));
+                effect.accounts.push((sender, sender_acc));
+            }
             TxKind::Bond { amount } => {
                 let key = tx.body.sender;
                 if self.jailed.contains(&key) {
@@ -1033,7 +1194,166 @@ impl State {
             shielded_supply,
             fee: tx.fee,
             gov: None,
+            market: None,
         })
+    }
+}
+
+impl State {
+    fn registered(&self, asset: &AssetId) -> Result<(), TxError> {
+        if asset.is_zero() || !self.market.assets.contains_key(asset) {
+            return Err(TxError::Market("ativo externo não registrado"));
+        }
+        Ok(())
+    }
+
+    fn add_asset(&mut self, owner: Address, asset: AssetId, amount: u64) -> Result<(), StateError> {
+        let b = self.market.balances.entry((owner, asset)).or_default();
+        *b = b.checked_add(amount).ok_or(StateError::Overflow)?;
+        Ok(())
+    }
+
+    fn sub_asset(&mut self, owner: Address, asset: AssetId, amount: u64) -> Result<(), StateError> {
+        let key = (owner, asset);
+        let b = self.market.balances.get(&key).copied().unwrap_or(0);
+        let left = b.checked_sub(amount).ok_or(StateError::Overflow)?;
+        if left == 0 {
+            self.market.balances.remove(&key);
+        } else {
+            self.market.balances.insert(key, left);
+        }
+        Ok(())
+    }
+
+    /// O Pool só cresce: esta é a única função que o altera.
+    fn add_to_pool(&mut self, asset: AssetId, amount: u64) -> Result<(), StateError> {
+        let v = self.market.pool.entry(asset).or_default();
+        *v = v.checked_add(amount).ok_or(StateError::Overflow)?;
+        Ok(())
+    }
+
+    /// Devolve o valor ainda reservado por uma ordem que sai do livro.
+    fn refund_order(&mut self, o: &Order) -> Result<(), StateError> {
+        match o.side {
+            Side::Buy => self.credit_fees(o.owner, o.escrow),
+            Side::Sell => self.add_asset(o.owner, o.asset, o.escrow),
+        }
+    }
+
+    fn apply_market(&mut self, m: MarketEffect) -> Result<(), StateError> {
+        match m {
+            MarketEffect::Transfer {
+                asset,
+                from,
+                to,
+                amount,
+            } => {
+                self.sub_asset(from, asset, amount)?;
+                self.add_asset(to, asset, amount)
+            }
+            MarketEffect::PoolDeposit {
+                asset,
+                from,
+                amount,
+            } => {
+                if !asset.is_zero() {
+                    self.sub_asset(from, asset, amount)?;
+                }
+                self.add_to_pool(asset, amount)
+            }
+            MarketEffect::Place(o) => {
+                if o.side == Side::Sell {
+                    self.sub_asset(o.owner, o.asset, o.escrow)?;
+                }
+                self.market.dirty.insert(o.asset);
+                self.market.orders.insert(o.id, o);
+                Ok(())
+            }
+            MarketEffect::Cancel(id) => {
+                let o = self.market.orders.remove(&id).ok_or(StateError::Overflow)?;
+                self.market.dirty.insert(o.asset);
+                self.refund_order(&o)
+            }
+        }
+    }
+
+    /// Fim de bloco do Grande Mercado: ordens vencidas saem do livro com
+    /// reembolso; cada livro alterado passa pelo leilão de preço uniforme.
+    fn settle_market(&mut self, height: u64) -> Result<(), StateError> {
+        let expired: Vec<Hash32> = self
+            .market
+            .orders
+            .values()
+            .filter(|o| o.expires_at <= height)
+            .map(|o| o.id)
+            .collect();
+        for id in expired {
+            if let Some(o) = self.market.orders.remove(&id) {
+                self.refund_order(&o)?;
+            }
+        }
+        let dirty = std::mem::take(&mut self.market.dirty);
+        let fee_bps = self.params.market.fee_bps as u128;
+        for asset in dirty {
+            let auction = market::clear(self.market.orders.values().filter(|o| o.asset == asset));
+            let Some(price) = auction.price else {
+                continue;
+            };
+            for f in auction.fills {
+                // Comprador: recebe o ativo, paga do valor reservado.
+                let buyer = {
+                    let o = self
+                        .market
+                        .orders
+                        .get_mut(&f.buy)
+                        .ok_or(StateError::Overflow)?;
+                    o.remaining = o
+                        .remaining
+                        .checked_sub(f.base)
+                        .ok_or(StateError::Overflow)?;
+                    o.escrow = o.escrow.checked_sub(f.quote).ok_or(StateError::Overflow)?;
+                    o.owner
+                };
+                self.add_asset(buyer, asset, f.base)?;
+                // Vendedor: entrega o ativo reservado, recebe ZERO menos a
+                // tarifa, que vai para o Pool permanente.
+                let seller = {
+                    let o = self
+                        .market
+                        .orders
+                        .get_mut(&f.sell)
+                        .ok_or(StateError::Overflow)?;
+                    o.remaining = o
+                        .remaining
+                        .checked_sub(f.base)
+                        .ok_or(StateError::Overflow)?;
+                    o.escrow = o.escrow.checked_sub(f.base).ok_or(StateError::Overflow)?;
+                    o.owner
+                };
+                let fee = (f.quote as u128 * fee_bps / 10_000) as u64;
+                self.credit_fees(seller, f.quote - fee)?;
+                if fee > 0 {
+                    self.add_to_pool(AssetId::ZERO, fee)?;
+                }
+            }
+            // Executadas por completo, ou com restante de valor nulo ao
+            // próprio limite (poeira que nunca executaria).
+            let done: Vec<Hash32> = self
+                .market
+                .orders
+                .values()
+                .filter(|o| o.asset == asset && (o.remaining == 0 || market::is_dust(o)))
+                .map(|o| o.id)
+                .collect();
+            for id in done {
+                if let Some(o) = self.market.orders.remove(&id) {
+                    // Sobra de reserva de compras executadas abaixo do limite.
+                    self.refund_order(&o)?;
+                }
+            }
+            self.market.last_price.insert(asset, price);
+        }
+        Ok(())
     }
 }
 

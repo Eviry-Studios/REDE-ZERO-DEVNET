@@ -112,6 +112,8 @@ pub struct ProtocolParams {
     pub max_block_txs: u32,
     pub governance: GovernanceParams,
     pub consensus: crate::consensus::ConsensusParams,
+    /// Grande Mercado (ADR-0014).
+    pub market: crate::market::MarketParams,
 }
 
 impl ProtocolParams {
@@ -120,6 +122,7 @@ impl ProtocolParams {
             return Err("max_block_txs fora dos limites");
         }
         self.consensus.validate()?;
+        self.market.validate()?;
         self.governance.validate()
     }
 }
@@ -129,7 +132,8 @@ impl Encode for ProtocolParams {
         e.u64(self.min_fee)
             .u32(self.max_block_txs)
             .put(&self.governance)
-            .put(&self.consensus);
+            .put(&self.consensus)
+            .put(&self.market);
     }
 }
 
@@ -140,6 +144,7 @@ impl Decode for ProtocolParams {
             max_block_txs: d.u32()?,
             governance: d.get()?,
             consensus: d.get()?,
+            market: d.get()?,
         })
     }
 }
@@ -243,6 +248,9 @@ pub enum ParamChange {
     TimeoutPrevote(u64),
     TimeoutPrecommit(u64),
     TimeoutDelta(u64),
+    // Grande Mercado (ADR-0014); constitucionais.
+    MarketFeeBps(u64),
+    MarketOrderLifetime(u64),
 }
 
 impl ParamChange {
@@ -275,6 +283,8 @@ impl ParamChange {
             ParamChange::TimeoutPrevote(_) => 17,
             ParamChange::TimeoutPrecommit(_) => 18,
             ParamChange::TimeoutDelta(_) => 19,
+            ParamChange::MarketFeeBps(_) => 20,
+            ParamChange::MarketOrderLifetime(_) => 21,
         }
     }
 
@@ -300,6 +310,8 @@ impl ParamChange {
             ParamChange::TimeoutPrevote(_) => "timeout_prevote_ms",
             ParamChange::TimeoutPrecommit(_) => "timeout_precommit_ms",
             ParamChange::TimeoutDelta(_) => "timeout_delta_ms",
+            ParamChange::MarketFeeBps(_) => "market_fee_bps",
+            ParamChange::MarketOrderLifetime(_) => "market_order_lifetime_blocks",
         }
     }
 
@@ -327,6 +339,8 @@ impl ParamChange {
             "timeout_prevote_ms" => ParamChange::TimeoutPrevote(v),
             "timeout_precommit_ms" => ParamChange::TimeoutPrecommit(v),
             "timeout_delta_ms" => ParamChange::TimeoutDelta(v),
+            "market_fee_bps" => ParamChange::MarketFeeBps(v),
+            "market_order_lifetime_blocks" => ParamChange::MarketOrderLifetime(v),
             _ => return None,
         })
     }
@@ -352,7 +366,9 @@ impl ParamChange {
             | ParamChange::TimeoutPropose(v)
             | ParamChange::TimeoutPrevote(v)
             | ParamChange::TimeoutPrecommit(v)
-            | ParamChange::TimeoutDelta(v) => v,
+            | ParamChange::TimeoutDelta(v)
+            | ParamChange::MarketFeeBps(v)
+            | ParamChange::MarketOrderLifetime(v) => v,
         }
     }
 
@@ -382,6 +398,8 @@ impl ParamChange {
             ParamChange::TimeoutPrevote(v) => p.consensus.timeout_prevote_ms = v,
             ParamChange::TimeoutPrecommit(v) => p.consensus.timeout_precommit_ms = v,
             ParamChange::TimeoutDelta(v) => p.consensus.timeout_delta_ms = v,
+            ParamChange::MarketFeeBps(v) => p.market.fee_bps = u32::try_from(v).unwrap_or(u32::MAX),
+            ParamChange::MarketOrderLifetime(v) => p.market.order_lifetime_blocks = v,
         }
     }
 }
@@ -423,6 +441,8 @@ impl Decode for ParamChange {
             17 => ParamChange::TimeoutPrevote(d.u64()?),
             18 => ParamChange::TimeoutPrecommit(d.u64()?),
             19 => ParamChange::TimeoutDelta(d.u64()?),
+            20 => ParamChange::MarketFeeBps(d.u64()?),
+            21 => ParamChange::MarketOrderLifetime(d.u64()?),
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }
@@ -1008,6 +1028,7 @@ mod tests {
             max_block_txs: 10,
             governance: g(),
             consensus: crate::consensus::ConsensusParams::fast(200),
+            market: crate::market::MarketParams::default(),
         };
         assert!(check_proposal_shape(Category::Ordinary, &[ParamChange::MinFee(5)], &cur).is_ok());
         // Parâmetro constitucional com categoria ordinária: inválido.

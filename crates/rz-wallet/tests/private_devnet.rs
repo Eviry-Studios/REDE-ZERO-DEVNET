@@ -45,6 +45,7 @@ fn genesis() -> Genesis {
             amount: 1_000_000,
         }],
         governance: rz_core::GovernanceParams::default(),
+        assets: vec![],
     }
 }
 

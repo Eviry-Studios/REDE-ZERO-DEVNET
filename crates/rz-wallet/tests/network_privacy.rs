@@ -37,6 +37,7 @@ fn genesis() -> Genesis {
             amount: 1_000,
         }],
         governance: GovernanceParams::default(),
+        assets: vec![],
     }
 }
 

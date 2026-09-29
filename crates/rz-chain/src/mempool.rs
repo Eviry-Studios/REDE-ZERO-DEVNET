@@ -230,6 +230,7 @@ mod tests {
                 amount: 1_000,
             }],
             governance: rz_core::GovernanceParams::default(),
+            assets: vec![],
         }
     }
 

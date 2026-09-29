@@ -48,6 +48,7 @@ fn genesis(n: u8) -> Genesis {
             amount: 1_000_000_000,
         }],
         governance: rz_core::GovernanceParams::default(),
+        assets: vec![],
     }
 }
 
@@ -136,11 +137,18 @@ fn devnet_end_to_end() {
             "divergência na altura finalizada"
         );
     }
-    // Todos os validadores produziram ao menos um bloco.
-    let producers: std::collections::HashSet<_> = (1..=fin)
-        .map(|h| n1.block_at(h).unwrap().header.proposer)
-        .collect();
-    assert_eq!(producers.len(), 3);
+    // Todos os validadores produzem blocos: o proponente é sorteado com peso
+    // igual, então em algumas alturas todos aparecem.
+    assert!(
+        wait_until(Duration::from_secs(60), || {
+            let producers: std::collections::HashSet<_> = (1..=n1.status().height)
+                .filter_map(|h| n1.block_at(h))
+                .map(|b| b.header.proposer)
+                .collect();
+            producers.len() == 3
+        }),
+        "algum validador nunca propôs"
+    );
 
     // Fluxo de transação: Wallet assina localmente e envia a um Node.
     let bob = SecretKey::from_seed([201; 32]).public_key().address();

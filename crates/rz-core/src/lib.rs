@@ -12,6 +12,9 @@ pub mod governance;
 #[cfg(test)]
 mod governance_tests;
 pub mod limits;
+pub mod market;
+#[cfg(test)]
+mod market_tests;
 pub mod private;
 pub mod state;
 pub mod tx;

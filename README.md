@@ -80,6 +80,27 @@ target/release/rede-zero-node run --genesis $G --data devnet-data/node-novo \
 
 Todo bloco é final assim que recebe pré-compromissos de mais de 2/3 do poder de voto. Não há reorganização. Votar duas vezes na mesma rodada queima parte do vínculo e exclui o validador (`spec/CONSENSUS.md §6`).
 
+### Grande Mercado e Pool permanente
+
+Crie a DEVNET com um ativo **de teste** (não representa nada na rede de origem; pontes estão A DEFINIR):
+
+```bash
+rm -rf devnet-data && RZ_TEST_ASSET=testnet-externa:ATV scripts/devnet.sh 4
+# (em outro terminal)
+$W assets --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key
+# O faucet vende 100 ATV a 2 ZERO cada; um validador (que tem ZERO transparente) compra
+$W order  --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key \
+          --asset testnet-externa:ATV --side venda --amount 100 --price 2
+$W order  --genesis $G --node 127.0.0.1:7100 --key devnet-data/validator-1.key \
+          --asset testnet-externa:ATV --side compra --amount 50 --price 3
+$W market --genesis $G --node 127.0.0.1:7100 --asset testnet-externa:ATV
+# Depósito PERMANENTE no Pool: não existe operação de retirada
+$W pool-deposit --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key \
+          --asset ZERO --amount 10 --permanente
+```
+
+As ordens que cruzam num bloco executam todas ao mesmo preço (leilão por bloco): a ordem das transações no bloco não dá vantagem a ninguém. Ordens e depósitos são públicos.
+
 ### Privacidade do seu IP
 
 Por padrão a Wallet só conecta a nodes **locais**. Para usar um node remoto sem expor seu IP, use Tor:
@@ -124,12 +145,12 @@ scripts/devnet.sh     DEVNET local com N validadores
 |---|---|---|
 | [Manifesto Exonet](docs/Manifesto_Exonet.pdf) | Por quê? | inicial |
 | [REQUIREMENTS.md](docs/REQUIREMENTS.md) | O que deve existir? | 0.2.0 |
-| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.4.0 |
+| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.5.0 |
 | [DEMOCRACIA_ORGANICA.md](docs/DEMOCRACIA_ORGANICA.md) | Como indivíduos e Comunidades participam? | 0.1.0 (conceitual) |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Como os componentes se organizam? | 0.1.0 |
 | [SPECIFICATIONS.md](docs/SPECIFICATIONS.md) | Quais são as regras técnicas? | 0.1.0 |
 | [spec/](spec/) | Regras exatas e testáveis por componente | DEVNET 0.1.0 |
-| [AUDIT.md](docs/AUDIT.md) | O que auditar, como reproduzir e o que a revisão interna encontrou? | 0.1.0 |
+| [AUDIT.md](docs/AUDIT.md) | O que auditar, como reproduzir e o que a revisão interna encontrou? | 0.3.0 |
 | [ACCEPTANCE_CRITERIA.md](docs/ACCEPTANCE_CRITERIA.md) | Quando uma implementação é conforme? | 0.1.0 |
 | [ACCEPTANCE_TESTS.md](docs/ACCEPTANCE_TESTS.md) | Como verificar? | 0.1.0 |
 | [docs/adr/](docs/adr/) | Por que cada escolha técnica? | — |
@@ -153,7 +174,7 @@ Seguindo a ordem recomendada em `SPECIFICATIONS.md §73`:
 | Proteção do IP (canal cifrado, Tor, node privado) | ✅ DEVNET — auditoria pendente | `rz-p2p`, `rz-wallet/tests/network_privacy.rs` |
 | Governança bicameral | ✅ DEVNET ([ADR-0008](docs/adr/0008-governanca-bicameral.md)) | AT-GOV-001..005 + propriedades |
 | Exonet, Comunidades, Navegador Zero | ⏳ | — |
-| Grande Mercado e Pool | ⏳ | — |
+| Grande Mercado (leilão por bloco) e Pool permanente | ✅ DEVNET ([ADR-0014](docs/adr/0014-grande-mercado-e-pool.md)); ponte de ativos externos A DEFINIR | AT-MKT-001..004, AT-POOL-001..004, propriedades |
 | Defesa | ⏳ | — |
 
 ## Limitações conhecidas da DEVNET

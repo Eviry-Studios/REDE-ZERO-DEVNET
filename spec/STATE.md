@@ -1,6 +1,6 @@
 # spec/STATE.md — Estado e ZERO
 
-**Versão:** 0.2.0 (DEVNET)
+**Versão:** 0.3.0 (DEVNET)
 **Relacionamento:** `SPECIFICATIONS.md §12–§14, §33–§37`, ADR-0005, THR-TX-002, THR-TX-003, THR-TX-005
 **Implementação de referência:** `crates/rz-core/src/state.rs`, `crates/rz-core/src/amount.rs`
 
@@ -35,7 +35,9 @@ state_root = H(STATE_ROOT,
                u32(n) ‖
                (address ‖ u64(balance) ‖ u64(nonce))  para cada conta, em ordem crescente de address ‖
                u64(total_saídas) ‖ output_acc ‖
-               u64(total_imagens_de_chave) ‖ key_image_acc)
+               u64(total_imagens_de_chave) ‖ key_image_acc ‖
+               governance_root ‖            // spec/GOVERNANCE.md (inclui participação no consenso)
+               market_root)                 // spec/MARKET.md §8
 ```
 
 ## 4. Estado inicial
@@ -59,8 +61,17 @@ Após aplicar cada bloco:
 ```text
 Σ balance(conta) + shielded_supply
   + Σ bloqueios de governança + Σ depósitos retidos
-  + Σ vínculos de validador + Σ desvinculações pendentes      == total_supply
+  + Σ vínculos de validador + Σ desvinculações pendentes
+  + Σ ZERO reservado em compras + ZERO no Pool                == total_supply
 ```
+
+Para cada ativo externo `a` (`spec/MARKET.md §7`):
+
+```text
+Σ saldos de a + Σ reservas de venda de a + Pool[a] == supply(a)
+```
+
+E o Pool só cresce.
 
 A punição (`spec/CONSENSUS.md §6.2`) é a única operação que reduz `total_supply`: o valor queimado sai dos vínculos e da oferta ao mesmo tempo.
 
