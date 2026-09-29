@@ -22,7 +22,7 @@ fn nibble(c: u8) -> Option<u8> {
 
 pub fn decode(s: &str) -> Option<Vec<u8>> {
     let s = s.as_bytes();
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     s.chunks_exact(2)

@@ -20,6 +20,8 @@ pub enum MempoolError {
     /// Nonce já utilizado.
     Stale,
     NonceTooFar,
+    /// Nonce futuro sem a transação anterior do mesmo remetente pendente.
+    NonceGap,
     Full,
 }
 
@@ -31,6 +33,7 @@ impl fmt::Display for MempoolError {
             Self::Conflict => write!(f, "conflito com transação pendente de mesmo nonce"),
             Self::Stale => write!(f, "nonce já utilizado"),
             Self::NonceTooFar => write!(f, "nonce distante demais do atual"),
+            Self::NonceGap => write!(f, "nonce não contíguo às transações pendentes"),
             Self::Full => write!(f, "mempool cheio"),
         }
     }
@@ -67,9 +70,13 @@ impl Mempool {
         self.ids.contains(id)
     }
 
-    /// Valida e insere. Transações com nonce futuro são aceitas (até
-    /// [`MAX_NONCE_GAP`]); o saldo só é verificado de forma completa quando a
-    /// transação se torna executável.
+    /// Valida e insere.
+    ///
+    /// Uma transação com nonce futuro só é aceita se a transação anterior do
+    /// mesmo remetente já estiver pendente (nonces contíguos, até
+    /// [`MAX_NONCE_GAP`]). Assim, a primeira transação de cada sequência
+    /// sempre passa pela verificação completa de saldo, e contas sem fundos
+    /// não conseguem ocupar o mempool (THR-P2P-002).
     pub fn insert(
         &mut self,
         tx: Transaction,
@@ -97,6 +104,8 @@ impl Mempool {
             state
                 .check_transaction(&tx, params)
                 .map_err(MempoolError::Invalid)?;
+        } else if !self.txs.contains_key(&(sender, tx.body.nonce - 1)) {
+            return Err(MempoolError::NonceGap);
         }
         let key = (sender, tx.body.nonce);
         if self.txs.contains_key(&key) {
@@ -190,9 +199,8 @@ mod tests {
         let p = ExecParams::from_genesis(&g);
         let mut s = State::from_genesis(&g).unwrap();
         let mut m = Mempool::new(10);
-        // Inseridas fora de ordem.
-        m.insert(tx(1, 10), &s, &p).unwrap();
         m.insert(tx(0, 10), &s, &p).unwrap();
+        m.insert(tx(1, 10), &s, &p).unwrap();
         let sel = m.select(&s, &p, 10);
         assert_eq!(sel.iter().map(|t| t.body.nonce).collect::<Vec<_>>(), [0, 1]);
 
@@ -232,6 +240,32 @@ mod tests {
             m.insert(tx(MAX_NONCE_GAP + 1, 1), &s, &p),
             Err(MempoolError::NonceTooFar)
         );
+    }
+
+    // THR-P2P-002 — conta sem fundos não ocupa o mempool com nonces futuros.
+    #[test]
+    fn future_nonce_requires_contiguous_pending() {
+        let g = genesis();
+        let p = ExecParams::from_genesis(&g);
+        let s = State::from_genesis(&g).unwrap();
+        let mut m = Mempool::new(10);
+        assert_eq!(m.insert(tx(1, 10), &s, &p), Err(MempoolError::NonceGap));
+
+        let broke = SecretKey::from_seed([99; 32]);
+        let spam = TxBody {
+            version: 1,
+            sender: broke.public_key(),
+            nonce: 5,
+            fee: 1,
+            kind: TxKind::Transfer {
+                to: rich().public_key().address(),
+                amount: 1,
+            },
+        }
+        .sign(&broke, "rede-zero-devnet-test")
+        .unwrap();
+        assert_eq!(m.insert(spam, &s, &p), Err(MempoolError::NonceGap));
+        assert!(m.is_empty());
     }
 
     #[test]
