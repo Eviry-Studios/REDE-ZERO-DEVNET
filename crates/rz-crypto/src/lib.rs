@@ -9,6 +9,7 @@
 
 pub mod context;
 pub mod hex;
+pub mod keyfile;
 
 mod hash;
 mod keys;

@@ -4,11 +4,13 @@
 //! locais de proteção (limite de taxa e pontuação). A orquestração de
 //! conexões fica no Node.
 
+mod client;
 mod frame;
 mod message;
 mod ratelimit;
 mod score;
 
+pub use client::{Client, ClientError};
 pub use frame::{read_frame, write_frame, FrameError, MAX_FRAME_SIZE};
 pub use message::{
     check_hello, Hello, HelloError, Message, PeerAddr, MAX_BLOCKS_PER_MSG, MAX_PEERS_PER_MSG,

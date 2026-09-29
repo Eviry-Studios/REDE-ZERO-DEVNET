@@ -281,6 +281,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rz-node"
+version = "0.1.0"
+dependencies = [
+ "rz-chain",
+ "rz-codec",
+ "rz-core",
+ "rz-crypto",
+ "rz-p2p",
+]
+
+[[package]]
 name = "rz-p2p"
 version = "0.1.0"
 dependencies = [
