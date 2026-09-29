@@ -395,6 +395,17 @@ fn cmd_lock(args: &Args) -> Result<(), String> {
         .map_err(|_| "--blocks: número inválido")?;
     let (mut client, genesis) = open(args)?;
     let (_, _, height) = account(&mut client, keys.address())?;
+    let g = governance(&mut client, None)?.params.governance;
+    if blocks < g.lock_min_blocks || blocks > g.lock_max_blocks {
+        let slot_s = genesis.slot_duration_ms as f64 / 1000.0;
+        return Err(format!(
+            "--blocks deve estar entre {} e {} blocos (~{:.0} a {:.0} dias nesta rede)",
+            g.lock_min_blocks,
+            g.lock_max_blocks,
+            g.lock_min_blocks as f64 * slot_s / 86_400.0,
+            g.lock_max_blocks as f64 * slot_s / 86_400.0
+        ));
+    }
     let fee = fee(args, &genesis)?;
     // A transação entra, no mínimo, na altura seguinte.
     let unlock_height = height + 1 + blocks;
