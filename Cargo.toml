@@ -13,6 +13,7 @@ rz-codec = { path = "crates/rz-codec" }
 rz-crypto = { path = "crates/rz-crypto" }
 rz-core = { path = "crates/rz-core" }
 rz-chain = { path = "crates/rz-chain" }
+rz-p2p = { path = "crates/rz-p2p" }
 ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize", "rand_core", "fast"] }
 blake3 = { version = "1", default-features = false, features = ["std"] }
 rand_core = { version = "0.6", features = ["getrandom"] }

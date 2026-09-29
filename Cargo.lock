@@ -281,6 +281,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rz-p2p"
+version = "0.1.0"
+dependencies = [
+ "rz-codec",
+ "rz-core",
+ "rz-crypto",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
