@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.2.0
-**Status:** Modelo de ameaças — fase de definição (0.2.0: privacidade transacional e de rede implementadas na DEVNET)
+**Versão:** 0.3.0
+**Status:** Modelo de ameaças — fase de definição (0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -492,7 +492,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Mitigações:**
 
 * dois blocos assinados pela mesma identidade para a mesma altura/rodada constituem evidência objetiva e verificável;
-* penalização protocolar baseada nessa evidência (`SPEC §49`).
+* penalização protocolar baseada nessa evidência (`SPEC §49`): a transação `ReportEquivocation` zera os pontos de contribuição do produtor (spec/GOVERNANCE.md §3). A perda de participação no consenso fica para o mecanismo definitivo.
 
 ### THR-CON-005 — Bloco malformado ou excessivo
 
@@ -561,7 +561,9 @@ Classificação de severidade (inicial, sujeita a revisão):
 ### THR-P2P-005 — Man-in-the-middle
 
 **Severidade:** MÉDIA
-**Mitigações:** conteúdo protocolar autenticado por assinaturas; canais cifrados e autenticados entre Nodes (**A DEFINIR**); a integridade do estado não depende do canal.
+**Mitigações:** conteúdo protocolar autenticado por assinaturas; canal cifrado (X25519 + ChaCha20-Poly1305) com o Node respondedor autenticado pela sua identidade e fixação opcional da identidade esperada (ADR-0011); a integridade do estado não depende do canal.
+
+**Risco residual:** sem fixação de identidade (`--node-id`) ou serviço onion, um intermediário ativo pode se passar pelo Node na primeira conexão.
 
 ### THR-P2P-006 — Incompatibilidade de versão explorável
 
@@ -586,11 +588,17 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 **Severidade:** ALTA
 **Adversários:** ADV-05, ADV-02
-**Descrição:** o primeiro Node a propagar uma transação revela a provável origem.
+**Descrição:** o primeiro Node a propagar uma transação revela a provável origem; o Node ao qual a Wallet se conecta e observadores de rede veem o IP do usuário.
 
-**Mitigações:** propagação Dandelion++ (ADR-0010): a transação percorre uma haste de Nodes antes da difusão, com relay por época e embargo aleatório. Tor/I2P permanecem complementares.
+**Mitigações:**
 
-**Risco residual:** a Wallet revela o IP ao primeiro Node; adversários que controlam muitos Nodes da haste ou observam todo o tráfego ainda podem correlacionar.
+* Dandelion++ (ADR-0010): a origem aparente é aleatória ao longo da haste;
+* canal cifrado com preenchimento (ADR-0011): observadores de rede não leem nem classificam mensagens pelo tamanho;
+* Tor/I2P via SOCKS5 e serviços onion (ADR-0011): o Node não vê o IP do usuário;
+* Node privado (`--no-listen`): a Wallet usa um Node próprio em `127.0.0.1`, que nunca é anunciado e também encaminha transações alheias;
+* a Wallet recusa, por padrão, conexão direta a Node remoto sem proxy (REQ-023).
+
+**Risco residual:** quem escolhe `--direct` expõe o IP ao Node escolhido; um Node privado expõe seu IP aos pares que disca, como qualquer participante P2P; observadores globais ou adversários com muitos Nodes da haste ainda podem correlacionar.
 
 ### THR-PRIV-003 — Metadados excessivos
 
@@ -604,7 +612,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Severidade:** MÉDIA
 **Descrição:** logs de Nodes armazenam endereços IP, relações ou atividade de usuários indefinidamente.
 
-**Mitigações:** registros mínimos por padrão; nenhuma coleta por conveniência; retenção limitada.
+**Mitigações:** endereços de clientes nunca são registrados, em nenhum nível de log; endereços de pares Node só em modo detalhado; nenhuma coleta por conveniência (ADR-0011).
 
 ### THR-PRIV-005 — Correlação por comportamento
 
@@ -885,7 +893,9 @@ Classificação de severidade (inicial, sujeita a revisão):
 | THR-P2P-004 | REQ-016 | SPEC §28 | AT-SYNC-* |
 | THR-PRIV-001 | REQ-024 | SPEC §31, spec/PRIVACY.md | rz-core private::tests, rz-wallet private_devnet |
 | THR-PRIV-002 | REQ-026 | SPEC §30, spec/P2P.md §4 | rz-node dandelion_stem_then_embargo_fluff |
-| THR-GOV-001 | REQ-044 | SPEC §47, spec/GOVERNANCE.md (proposta) | — (a implementar) |
+| THR-GOV-001 | REQ-044 | SPEC §47, spec/GOVERNANCE.md | rz-core governance_tests (neutralidade a Sybil), rz-wallet governance_devnet |
+| THR-P2P-005 | — | SPEC §30, spec/P2P.md §1.1 | rz-p2p secure::tests |
+| THR-CON-004 | REQ-049 | SPEC §49, spec/GOVERNANCE.md §3 | rz-core equivocation_report_slashes_contribution |
 | THR-POOL-001 | REQ-037, REQ-038 | SPEC §39, §40 | AT-POOL-002 |
 | THR-DEF-001 | REQ-058, REQ-059 | SPEC §53, §54 | — (a definir) |
 | THR-DEV-001 | REQ-084 | — | CI |
@@ -912,9 +922,9 @@ Ameaças aceitas **temporariamente** na DEVNET, com registro explícito:
 | --- | --- | --- |
 | THR-CON-002 | Conjunto fixo de validadores no Genesis | Algoritmo de consenso definitivo escolhido e avaliado |
 | THR-PRIV-001 | RingCT implementado **sem auditoria**; anel de 11 | Auditoria independente da implementação (ADR-0009) |
-| THR-PRIV-002 | Dandelion++ sem canal cifrado nem Tor/I2P nativo | Canal cifrado entre Nodes; avaliação de Tor/I2P (ADR-0010) |
-| THR-P2P-005 | Canal sem cifragem | Canal autenticado e cifrado entre Nodes |
-| THR-GOV-001/002 | Governança proposta (ADR-0008), ainda não implementada | Proposta aceita, simulada e implementada |
+| THR-PRIV-002 | Dandelion++, canal cifrado e Tor opcional **não auditados** | Auditoria do canal; avaliação de tráfego de cobertura (ADR-0011) |
+| THR-P2P-005 | Canal cifrado sem fixação obrigatória de identidade | Distribuição verificável de identidades de Nodes ou uso de serviços onion |
+| THR-GOV-001/002 | Governança implementada (ADR-0008); câmara de contribuição dominada pelos validadores fixos da DEVNET | Consenso definitivo e computação verificável |
 
 Nenhuma dessas aceitações temporárias pode ser herdada pela TESTNET pública ou pela MAINNET sem nova avaliação.
 
@@ -969,7 +979,7 @@ Toda alteração deverá possuir histórico, justificativa e versão (`REQ-086`,
 
 # 15. Status
 
-**THREAT_MODEL.md v0.2.0**
+**THREAT_MODEL.md v0.3.0**
 
 > **Modelo de ameaças inicial — não congelado.**
 

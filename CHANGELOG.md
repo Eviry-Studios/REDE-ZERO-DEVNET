@@ -31,7 +31,13 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Privacidade de rede Dandelion++ (ADR-0010).
 * `THREAT_MODEL.md` v0.2.0.
 
+### Adicionado — governança e proteção de IP
+
+* Governança bicameral implementada (ADR-0008 aceita): `LockStake`, `Unlock`, `Propose`, `Vote`, `ReportEquivocation`; parâmetros do protocolo no estado; apuração nas duas câmaras; depósito devolvido ou queimado; comandos de governança na Wallet.
+* Proteção do IP do usuário (ADR-0011): canal cifrado e autenticado com preenchimento; Tor/I2P via SOCKS5 com endereços `.onion`; Node privado (`--no-listen`); Wallet recusa conexão direta a Node remoto sem consentimento; logs sem endereços de clientes.
+* `THREAT_MODEL.md` v0.3.0.
+
 ### Protocolo
 
-* `PROTOCOL_VERSION = 1`, `P2P_VERSION = 1` (DEVNET, não congelados).
+* `PROTOCOL_VERSION = 1`, `P2P_VERSION = 2` (DEVNET, não congelados). O Genesis passou a incluir parâmetros de governança.
 * **Incompatível** com blocos anteriores à camada privada: `Transaction` passou a ter tag de tipo, e a raiz do estado inclui a parte privada. DEVNETs antigas devem ser recriadas (`rm -rf devnet-data`).

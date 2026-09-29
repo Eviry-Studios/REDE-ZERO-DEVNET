@@ -6,7 +6,7 @@ Implementação de referência e documentação da **Rede Zero / Exonet**, em fa
 
 A Rede Zero é uma rede descentralizada sobreposta à Internet, sem administrador central nem chave-mestra, com moeda nativa única (**ZERO**), privacidade por padrão, governança comunitária e continuidade independente de qualquer pessoa, empresa ou servidor. Veja o [Manifesto](docs/Manifesto_Exonet.pdf).
 
-> ⚠️ **DEVNET** — ambiente de desenvolvimento. O ZERO desta rede **não possui valor econômico**. Algumas propriedades exigidas pelos requisitos (consenso definitivo, canal cifrado, governança) ainda **não** estão implementadas, e a camada de privacidade ainda **não foi auditada**; veja [limitações](#limitações-conhecidas-da-devnet).
+> ⚠️ **DEVNET** — ambiente de desenvolvimento. O ZERO desta rede **não possui valor econômico**. O consenso definitivo ainda **não** está implementado, e as camadas de privacidade (transações, canal cifrado) ainda **não foram auditadas**; veja [limitações](#limitações-conhecidas-da-devnet).
 
 ---
 
@@ -45,6 +45,36 @@ $W balance --genesis $G --node 127.0.0.1:7102 --key devnet-data/alice.key
 
 Espere alguns segundos entre os comandos, para a transação anterior entrar em um bloco.
 
+### Governança
+
+```bash
+# Câmara econômica: bloqueie ZERO (1× a 4× conforme a duração)
+$W lock    --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key --amount 100000 --blocks 400000
+# Proposta ordinária (o texto fica fora da cadeia; vai só o hash)
+echo "Reduzir a taxa mínima" > proposta.txt
+$W propose --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key \
+           --category ordinaria --content proposta.txt --params min_fee=500
+# Listar propostas e votar (validadores votam na câmara de contribuição com a chave de validador)
+$W governance --genesis $G --node 127.0.0.1:7100
+$W vote    --genesis $G --node 127.0.0.1:7100 --key devnet-data/validator-0.key --proposal ID --choice sim
+```
+
+### Privacidade do seu IP
+
+Por padrão a Wallet só conecta a nodes **locais**. Para usar um node remoto sem expor seu IP, use Tor:
+
+```bash
+$W balance --genesis $G --key alice.key --proxy 127.0.0.1:9050 --node exemplo.onion:7100 --node-id ID_DO_NODE
+```
+
+Melhor ainda: rode seu próprio node privado, que não aceita conexões nem é anunciado, e aponte a Wallet para ele:
+
+```bash
+target/release/rede-zero-node run --genesis $G --data meu-node --no-listen --peer 127.0.0.1:7100 [--proxy 127.0.0.1:9050]
+```
+
+Detalhes em [ADR-0011](docs/adr/0011-protecao-do-ip.md).
+
 Chaves e dados ficam em `devnet-data/`, que **nunca** é versionado.
 
 ---
@@ -59,9 +89,9 @@ crates/
   rz-codec            codificação canônica estrita             spec/ENCODING.md
   rz-crypto           BLAKE3, Ed25519, identidades, chaves     spec/CRYPTOGRAPHY.md
   rz-privacy          endereços furtivos, Pedersen, Bulletproofs, CLSAG            spec/PRIVACY.md
-  rz-core             transações (conta e privadas), estado, ZERO, blocos, Genesis spec/TRANSACTIONS.md, STATE.md, BLOCKS.md
+  rz-core             transações, estado, ZERO, governança, blocos, Genesis      spec/TRANSACTIONS.md, STATE.md, BLOCKS.md, GOVERNANCE.md
   rz-chain            consenso (interface + DEVNET), forks, finalidade, mempool   spec/CONSENSUS.md
-  rz-p2p              mensagens, enquadramento, handshake, limites, cliente       spec/P2P.md
+  rz-p2p              canal cifrado, SOCKS5/Tor, mensagens, handshake, limites    spec/P2P.md
   rz-node             node: rede, Dandelion++, sincronização, produção de blocos, disco
   rz-wallet           wallet privada por padrão (biblioteca + CLI, separada do node)
 scripts/devnet.sh     DEVNET local com N validadores
@@ -73,7 +103,7 @@ scripts/devnet.sh     DEVNET local com N validadores
 |---|---|---|
 | [Manifesto Exonet](docs/Manifesto_Exonet.pdf) | Por quê? | inicial |
 | [REQUIREMENTS.md](docs/REQUIREMENTS.md) | O que deve existir? | 0.2.0 |
-| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.2.0 |
+| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.3.0 |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Como os componentes se organizam? | 0.1.0 |
 | [SPECIFICATIONS.md](docs/SPECIFICATIONS.md) | Quais são as regras técnicas? | 0.1.0 |
 | [spec/](spec/) | Regras exatas e testáveis por componente | DEVNET 0.1.0 |
@@ -97,7 +127,8 @@ Seguindo a ordem recomendada em `SPECIFICATIONS.md §73`:
 | Consenso | ⚠️ provisório (DEVNET apenas) | AT-CON-001..003, AT-FORK-001..002 |
 | Privacidade transacional (RingCT) | ✅ DEVNET — auditoria pendente | testes em `rz-privacy`, `rz-core`, `rz-wallet` |
 | Privacidade de rede (Dandelion++) | ✅ DEVNET | teste de haste/embargo em `rz-node` |
-| Governança | 📝 proposta ([ADR-0008](docs/adr/0008-governanca-bicameral.md)) | AT-GOV previstos |
+| Proteção do IP (canal cifrado, Tor, node privado) | ✅ DEVNET — auditoria pendente | `rz-p2p`, `rz-wallet/tests/network_privacy.rs` |
+| Governança bicameral | ✅ DEVNET ([ADR-0008](docs/adr/0008-governanca-bicameral.md)) | AT-GOV-001..005 + propriedades |
 | Exonet, Comunidades, Navegador Zero | ⏳ | — |
 | Grande Mercado e Pool | ⏳ | — |
 | Defesa | ⏳ | — |
@@ -108,8 +139,8 @@ Aceitas temporariamente e registradas em [`THREAT_MODEL.md §11`](docs/THREAT_MO
 
 * **Consenso** por autoridade rotativa com validadores fixos no Genesis ([ADR-0006](docs/adr/0006-consenso-devnet.md)) — não atende `REQ-005`.
 * **Privacidade não auditada**: RingCT ([ADR-0009](docs/adr/0009-privacidade-transacional.md)) oferece anonimato probabilístico (anel de 11), não absoluto (`REQ-028`). Blindagens e retiradas são públicas.
-* **Canal P2P sem cifragem**; Dandelion++ ([ADR-0010](docs/adr/0010-privacidade-de-rede.md)) protege a origem contra a rede, mas a Wallet revela seu IP ao primeiro node.
-* **Governança** ainda não implementada (proposta em [ADR-0008](docs/adr/0008-governanca-bicameral.md)).
+* **Canal cifrado e proteção de IP não auditados** ([ADR-0011](docs/adr/0011-protecao-do-ip.md)). Sem Tor e com `--direct`, o node escolhido vê seu IP.
+* **Governança**: enquanto os validadores forem fixos, eles dominam a câmara de contribuição; votos são públicos nesta versão.
 * **Chaves em arquivo local** sem cifragem (permissão `0600`).
 * Sem emissão após o Genesis; política monetária a definir.
 
