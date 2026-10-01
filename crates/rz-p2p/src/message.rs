@@ -5,6 +5,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 use rz_codec::{Decode, DecodeError, Decoder, Encode, Encoder};
 use rz_core::community::{Community, NameKind, MAX_NAME_LEN};
+use rz_core::defense::{Credential, DefenseMode, Incident};
 use rz_core::governance::{LockEntry, ProposalSummary, ProtocolParams};
 use rz_core::limits::MAX_NETWORK_ID_LEN;
 use rz_core::market::{AssetId, AssetView, BookLevel, Order, MAX_ASSETS};
@@ -31,6 +32,8 @@ const MAX_REASON_LEN: usize = 256;
 pub const MAX_BOOK_LEVELS: usize = 256;
 /// Ordens próprias numa resposta `MARKET`.
 pub const MAX_OWN_ORDERS: usize = 256;
+/// Credenciais numa resposta `DEFENSE`.
+pub const MAX_CREDENTIALS_PER_MSG: usize = 256;
 
 /// Comprimento máximo de um nome de host (DNS).
 pub const MAX_HOST_LEN: usize = 253;
@@ -353,6 +356,20 @@ pub enum Message {
         target: Option<Hash32>,
         owner: Option<Address>,
     },
+    /// `0x20` — consulta o estado de defesa.
+    GetDefense,
+    /// `0x21`
+    Defense {
+        height: u64,
+        mode: DefenseMode,
+        mode_since: u64,
+        mode_expires_at: u64,
+        /// Contador de decisões atestadas (necessário para atestar a próxima).
+        seq: u64,
+        incident: Option<Box<Incident>>,
+        /// Credenciais do incidente em vigor.
+        credentials: Vec<Credential>,
+    },
 }
 
 impl Encode for Message {
@@ -517,6 +534,27 @@ impl Encode for Message {
                     .option(target)
                     .option(owner);
             }
+            Message::GetDefense => {
+                e.u8(0x20);
+            }
+            Message::Defense {
+                height,
+                mode,
+                mode_since,
+                mode_expires_at,
+                seq,
+                incident,
+                credentials,
+            } => {
+                e.u8(0x21)
+                    .u64(*height)
+                    .put(mode)
+                    .u64(*mode_since)
+                    .u64(*mode_expires_at)
+                    .u64(*seq)
+                    .option(&incident.as_deref().cloned())
+                    .list(credentials);
+            }
         }
     }
 }
@@ -616,6 +654,16 @@ impl Decode for Message {
                 name: d.str(MAX_NAME_LEN)?,
                 kind: d.get()?,
             },
+            0x20 => Message::GetDefense,
+            0x21 => Message::Defense {
+                height: d.u64()?,
+                mode: d.get()?,
+                mode_since: d.u64()?,
+                mode_expires_at: d.u64()?,
+                seq: d.u64()?,
+                incident: d.option::<Incident>()?.map(Box::new),
+                credentials: d.list(MAX_CREDENTIALS_PER_MSG)?,
+            },
             0x1f => Message::Resolved {
                 height: d.u64()?,
                 name: d.str(MAX_NAME_LEN)?,
@@ -664,6 +712,8 @@ impl Message {
             Message::Community { .. } => "COMMUNITY",
             Message::Resolve { .. } => "RESOLVE",
             Message::Resolved { .. } => "RESOLVED",
+            Message::GetDefense => "GET_DEFENSE",
+            Message::Defense { .. } => "DEFENSE",
         }
     }
 }

@@ -82,6 +82,23 @@ Comunidades e nomes zero:// (ADR-0015):
   zero-wallet name-update   --genesis FILE --node ADDR --key FILE --name zero://NOME.TIPO --target HEX
                       [--new-owner HEX]
   zero-wallet resolve --genesis FILE --node ADDR --name zero://NOME.TIPO
+Defesa da Exonet (ADR-0016) — decisões exigem atestações de validadores:
+  zero-wallet defense --genesis FILE --node ADDR
+  zero-wallet defense-attest --genesis FILE --node ADDR --key VALIDADOR.key DECISÃO
+  zero-wallet defense-submit --genesis FILE --node ADDR --key FILE DECISÃO --attestations HEX,HEX,...
+  zero-wallet defense-action --genesis FILE --node ADDR --key FILE --credential HEX
+                      --scope (diagnostico|isolamento|recuperacao|coordenacao|evidencias) --subject HEX
+  DECISÃO:
+    --decision transicao --to (normal|vigilancia|incidente|guerra) --evidence HEX
+    --decision atualizar --status (contido|recuperado) --evidence HEX
+    --decision encerrar  --archive HEX
+    --decision credencial --holder CHAVE --scopes a,b --expires-at ALTURA
+    --decision revogar   --credential HEX
+    --decision contribuicao --incident HEX --holder CHAVE --role ESCOPO --evidence HEX
+  Subir para vigilância exige > 1/3 do poder; incidente, guerra, encerramento,
+  credenciais e contribuições exigem > 2/3; descer e revogar, > 1/3. Todo modo
+  vence sozinho sem renovação. Não existe operação ofensiva.
+
   O reconhecimento de uma Comunidade é uma proposta de categoria comunidade com
   --content-hash igual ao id da declaração. A posição de uma Comunidade é
   registrada, mas não altera o resultado oficial das votações.
@@ -175,6 +192,10 @@ fn main() -> ExitCode {
         "name-register" => cmd_name(&args, true),
         "name-update" => cmd_name(&args, false),
         "resolve" => cmd_resolve(&args),
+        "defense" => cmd_defense(&args),
+        "defense-attest" => cmd_defense_decision(&args, false),
+        "defense-submit" => cmd_defense_decision(&args, true),
+        "defense-action" => cmd_defense_action(&args),
         "unbond" => cmd_bond(&args, false),
         "propose" => cmd_propose(&args),
         "vote" => cmd_vote(&args),
@@ -965,6 +986,307 @@ fn cmd_resolve(args: &Args) -> Result<(), String> {
         }
         None => println!("{address} não está registrado"),
     }
+    Ok(())
+}
+
+// ------------------------------------------------------------------ Defesa
+
+fn cmd_defense(args: &Args) -> Result<(), String> {
+    let (mut client, _) = open(args)?;
+    let v = rz_wallet::defense(&mut client)?;
+    println!("altura: {}", v.height);
+    println!("modo: {} desde a altura {}", v.mode.name(), v.mode_since);
+    if v.mode != rz_core::defense::DefenseMode::Normal {
+        println!("  vence na altura {} sem renovação", v.mode_expires_at);
+    }
+    println!("sequência de decisões: {}", v.seq);
+    if let Some(i) = &v.incident {
+        println!(
+            "incidente {} ({:?}), aberto na altura {}",
+            i.id, i.status, i.opened_at
+        );
+        println!("  evidências: {}", i.evidence.len());
+        for e in &i.evidence {
+            println!("    {e}");
+        }
+        println!("  ações registradas: {}", i.actions.len());
+        for c in &v.credentials {
+            let scopes: Vec<&str> = c.scopes.iter().map(|s| s.name()).collect();
+            println!(
+                "  credencial {} → {} [{}] até {}{}",
+                c.id,
+                c.holder,
+                scopes.join(","),
+                c.expires_at,
+                if c.revoked { " (revogada)" } else { "" }
+            );
+        }
+    }
+    Ok(())
+}
+
+fn scope_arg(args: &Args, name: &str) -> Result<rz_core::defense::Scope, String> {
+    let v = args.req(name)?;
+    rz_core::defense::Scope::parse(v).ok_or_else(|| format!("--{name}: escopo desconhecido '{v}'"))
+}
+
+/// Monta a decisão pedida: o conteúdo a atestar e a transação (sem as
+/// atestações).
+fn defense_decision(args: &Args, v: &rz_wallet::DefenseView) -> Result<(Vec<u8>, TxKind), String> {
+    use rz_core::defense::{payload, DefenseMode, IncidentStatus};
+    let seq = v.seq;
+    let active = || {
+        v.incident
+            .as_ref()
+            .map(|i| i.id)
+            .ok_or_else(|| "nenhum incidente em vigor".to_string())
+    };
+    Ok(match args.req("decision")? {
+        "transicao" => {
+            let to = match args.req("to")? {
+                "normal" => DefenseMode::Normal,
+                "vigilancia" => DefenseMode::Vigilance,
+                "incidente" => DefenseMode::Incident,
+                "guerra" => DefenseMode::CyberWar,
+                other => return Err(format!("--to: modo desconhecido '{other}'")),
+            };
+            let evidence = hash_arg(args, "evidence")?;
+            (
+                payload::transition(seq, to, &evidence),
+                TxKind::DefenseTransition {
+                    to,
+                    evidence,
+                    seq,
+                    attestations: vec![],
+                },
+            )
+        }
+        "atualizar" => {
+            let status = match args.req("status")? {
+                "contido" => IncidentStatus::Contained,
+                "recuperado" => IncidentStatus::Recovered,
+                other => {
+                    return Err(format!(
+                        "--status: use contido ou recuperado, recebido '{other}'"
+                    ))
+                }
+            };
+            let incident = active()?;
+            let evidence = hash_arg(args, "evidence")?;
+            (
+                payload::incident_update(seq, &incident, status, &evidence),
+                TxKind::IncidentUpdate {
+                    incident,
+                    status,
+                    evidence,
+                    seq,
+                    attestations: vec![],
+                },
+            )
+        }
+        "encerrar" => {
+            let incident = active()?;
+            let archive = hash_arg(args, "archive")?;
+            (
+                payload::close(seq, &incident, &archive),
+                TxKind::CloseIncident {
+                    incident,
+                    archive,
+                    seq,
+                    attestations: vec![],
+                },
+            )
+        }
+        "credencial" => {
+            let incident = active()?;
+            let holder = rz_crypto::PublicKey::from_hex(args.req("holder")?)
+                .map_err(|_| "--holder: chave inválida")?;
+            let scopes = args
+                .req("scopes")?
+                .split(',')
+                .map(|s| {
+                    rz_core::defense::Scope::parse(s.trim())
+                        .ok_or_else(|| format!("escopo desconhecido '{s}'"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let expires_at: u64 = args
+                .req("expires-at")?
+                .parse()
+                .map_err(|_| "--expires-at: altura inválida")?;
+            (
+                payload::grant(seq, &incident, &holder, &scopes, expires_at),
+                TxKind::GrantCredential {
+                    incident,
+                    holder,
+                    scopes,
+                    expires_at,
+                    seq,
+                    attestations: vec![],
+                },
+            )
+        }
+        "revogar" => {
+            let credential = hash_arg(args, "credential")?;
+            (
+                payload::revoke(seq, &credential),
+                TxKind::RevokeCredential {
+                    credential,
+                    seq,
+                    attestations: vec![],
+                },
+            )
+        }
+        "contribuicao" => {
+            let incident = hash_arg(args, "incident")?;
+            let node = rz_crypto::PublicKey::from_hex(args.req("holder")?)
+                .map_err(|_| "--holder: chave inválida")?;
+            let role = scope_arg(args, "role")?;
+            let evidence = hash_arg(args, "evidence")?;
+            (
+                payload::contribution(seq, &incident, &node, role, &evidence),
+                TxKind::AttestContribution {
+                    incident,
+                    node,
+                    role,
+                    evidence,
+                    seq,
+                    attestations: vec![],
+                },
+            )
+        }
+        other => return Err(format!("--decision: decisão desconhecida '{other}'")),
+    })
+}
+
+fn with_attestations(kind: TxKind, a: Vec<rz_core::defense::Attestation>) -> TxKind {
+    match kind {
+        TxKind::DefenseTransition {
+            to, evidence, seq, ..
+        } => TxKind::DefenseTransition {
+            to,
+            evidence,
+            seq,
+            attestations: a,
+        },
+        TxKind::IncidentUpdate {
+            incident,
+            status,
+            evidence,
+            seq,
+            ..
+        } => TxKind::IncidentUpdate {
+            incident,
+            status,
+            evidence,
+            seq,
+            attestations: a,
+        },
+        TxKind::CloseIncident {
+            incident,
+            archive,
+            seq,
+            ..
+        } => TxKind::CloseIncident {
+            incident,
+            archive,
+            seq,
+            attestations: a,
+        },
+        TxKind::GrantCredential {
+            incident,
+            holder,
+            scopes,
+            expires_at,
+            seq,
+            ..
+        } => TxKind::GrantCredential {
+            incident,
+            holder,
+            scopes,
+            expires_at,
+            seq,
+            attestations: a,
+        },
+        TxKind::RevokeCredential {
+            credential, seq, ..
+        } => TxKind::RevokeCredential {
+            credential,
+            seq,
+            attestations: a,
+        },
+        TxKind::AttestContribution {
+            incident,
+            node,
+            role,
+            evidence,
+            seq,
+            ..
+        } => TxKind::AttestContribution {
+            incident,
+            node,
+            role,
+            evidence,
+            seq,
+            attestations: a,
+        },
+        other => other,
+    }
+}
+
+fn cmd_defense_decision(args: &Args, submit: bool) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let (mut client, genesis) = open(args)?;
+    let view = rz_wallet::defense(&mut client)?;
+    let (payload, kind) = defense_decision(args, &view)?;
+    if !submit {
+        let a = rz_core::defense::attest(&keys.transparent, &genesis.network_id, &payload);
+        println!("{}", rz_crypto::hex::encode(&a.to_canonical_bytes()));
+        eprintln!(
+            "atestação para a sequência {} (válida só até a próxima decisão)",
+            view.seq
+        );
+        return Ok(());
+    }
+    let attestations = args
+        .req("attestations")?
+        .split(',')
+        .map(|h| {
+            let bytes = rz_crypto::hex::decode(h.trim()).ok_or("atestação inválida")?;
+            rz_core::defense::Attestation::from_canonical_bytes(&bytes)
+                .map_err(|e| format!("atestação inválida: {e}"))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        with_attestations(kind, attestations),
+        fee,
+    )?;
+    println!("decisão de defesa enviada: {id}");
+    Ok(())
+}
+
+fn cmd_defense_action(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let credential = hash_arg(args, "credential")?;
+    let scope = scope_arg(args, "scope")?;
+    let subject = hash_arg(args, "subject")?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::DefenseAction {
+            credential,
+            scope,
+            subject,
+        },
+        fee,
+    )?;
+    println!("ação registrada: {id}");
     Ok(())
 }
 

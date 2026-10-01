@@ -189,6 +189,9 @@ struct Peer {
     listen: Option<PeerAddr>,
     /// Nodes (inclusive privados) recebem propagação; clientes (Wallets) não.
     relay: bool,
+    /// Identidade comprovada no canal cifrado (só conexões de saída: quem
+    /// conecta a este Node é anônimo, ADR-0011).
+    node_id: Option<Hash32>,
 }
 
 #[derive(Default)]
@@ -381,6 +384,15 @@ impl Node {
         self.shared.node_key.public_key().node_id()
     }
 
+    /// Identidades dos Nodes com que há conexão de saída ativa.
+    pub fn outbound_node_ids(&self) -> Vec<Hash32> {
+        lock(&self.shared.peers)
+            .conns
+            .values()
+            .filter_map(|c| c.node_id)
+            .collect()
+    }
+
     pub fn genesis(&self) -> &Genesis {
         &self.shared.genesis
     }
@@ -524,7 +536,24 @@ impl Shared {
         mempool.prune(&state, &ExecParams::at(chain.genesis(), chain.height() + 1));
         self.validator_count
             .store(state.validators().validators().len(), Ordering::Relaxed);
+        // Ações de isolamento passam a valer assim que finalizadas.
+        let isolated = state.defense().isolated(chain.height() + 1);
+        drop(guard);
+        if !isolated.is_empty() {
+            let p = lock(&self.peers);
+            for c in p.conns.values() {
+                if c.node_id.is_some_and(|id| isolated.contains(&id)) {
+                    let _ = c.stream.shutdown(Shutdown::Both);
+                }
+            }
+        }
         Ok(true)
+    }
+
+    /// Node IDs isolados por ações de defesa vigentes.
+    fn isolated(&self) -> BTreeSet<Hash32> {
+        let c = lock(&self.core);
+        c.chain.state().defense().isolated(c.chain.height() + 1)
     }
 
     // ------------------------------------------------------------- consenso
@@ -904,9 +933,16 @@ impl Shared {
         // Canal cifrado (ADR-0011): quem disca inicia; quem aceita prova sua
         // identidade de Node.
         let net = &self.genesis.network_id;
+        let mut node_id = None;
         let (mut reader, mut writer) = if outbound.is_some() {
-            let (r, w, _node) =
+            let (r, w, node) =
                 initiate(stream.try_clone()?, stream.try_clone()?, net, None).map_err(frame_io)?;
+            let id = node.node_id().0;
+            // Node isolado por ação de defesa atestada (ADR-0016).
+            if self.isolated().contains(&id) {
+                return Err(io::Error::other("par isolado por ação de defesa"));
+            }
+            node_id = Some(id);
             (r, w)
         } else {
             respond(
@@ -967,6 +1003,7 @@ impl Shared {
                     outbound_target: outbound.clone(),
                     listen: listen.clone(),
                     relay,
+                    node_id,
                 },
             );
             if let Some(l) = listen {
@@ -1339,6 +1376,34 @@ impl Shared {
                 self.send_to(ctx.id, msg);
                 Flow::Continue
             }
+            Message::GetDefense => {
+                let msg = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let d = state.defense();
+                    let incident = d.active_incident.and_then(|id| d.incidents.get(&id));
+                    Message::Defense {
+                        height: c.chain.height(),
+                        mode: d.mode,
+                        mode_since: d.mode_since,
+                        mode_expires_at: d.mode_expires_at,
+                        seq: d.seq,
+                        credentials: incident
+                            .map(|i| {
+                                d.credentials
+                                    .values()
+                                    .filter(|cr| cr.incident == i.id)
+                                    .take(rz_p2p::MAX_CREDENTIALS_PER_MSG)
+                                    .cloned()
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        incident: incident.cloned().map(Box::new),
+                    }
+                };
+                self.send_to(ctx.id, msg);
+                Flow::Continue
+            }
             Message::Reject(_) => Flow::Disconnect,
             // Respostas não solicitadas são ignoradas.
             Message::Account { .. }
@@ -1350,7 +1415,8 @@ impl Shared {
             | Message::Assets { .. }
             | Message::Market { .. }
             | Message::Community { .. }
-            | Message::Resolved { .. } => Flow::Continue,
+            | Message::Resolved { .. }
+            | Message::Defense { .. } => Flow::Continue,
         }
     }
 

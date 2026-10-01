@@ -67,12 +67,14 @@ ParamChange (tag u8): 0 min_fee u64 | 1 max_block_txs u32 | 2 gov_deposit | 3 an
                       | 17 timeout_prevote_ms | 18 timeout_precommit_ms | 19 timeout_delta_ms
                       | 20 market_fee_bps | 21 market_order_lifetime_blocks
                       | 22 name_fee | 23 community_declaration_ttl_blocks
+                      | 24 defense_vigilance_max_blocks | 25 defense_incident_max_blocks
+                      | 26 defense_war_max_blocks
                                                                      (u64, exceto tag 1)
 
 Tags 0 e 1 são da categoria ordinária; as demais, constitucional. Os parâmetros
 resultantes são validados antes de a proposta ser aceita (tags 10..19:
 spec/CONSENSUS.md §2; tags 20..21: spec/MARKET.md §6; tags 22..23:
-spec/COMMUNITIES.md §8).
+spec/COMMUNITIES.md §8; tags 24..26: spec/DEFENSE.md §6).
 
 Uma proposta da categoria Comunidade só é aceita se `content_hash` for o id
 de uma declaração de Comunidade pendente (validação técnica, N-7); na

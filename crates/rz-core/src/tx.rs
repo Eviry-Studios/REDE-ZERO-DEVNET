@@ -8,6 +8,9 @@ use rz_privacy::excess::ExcessProof;
 
 use crate::block::SignedHeader;
 use crate::community::{Approval, DecisionRule, NameKind, MAX_CONTROLLERS, MAX_NAME_LEN};
+use crate::defense::{
+    Attestation, DefenseMode, IncidentStatus, Scope, MAX_ATTESTATIONS, MAX_SCOPES,
+};
 use crate::governance::{Category, Choice, ParamChange, MAX_PARAM_CHANGES};
 use crate::market::{AssetId, Side};
 use crate::private::{PrivateTx, ShieldedOutput, MAX_OUTPUTS};
@@ -162,6 +165,62 @@ pub enum TxKind {
         target: Hash32,
         new_owner: Option<Address>,
     },
+    /// Tag `0x50` — muda (ou renova) o modo de defesa, com evidência e
+    /// atestações de validadores (ADR-0016, `SPEC §53`).
+    DefenseTransition {
+        to: DefenseMode,
+        evidence: Hash32,
+        seq: u64,
+        attestations: Vec<Attestation>,
+    },
+    /// Tag `0x51` — avança o incidente: contido, depois recuperado.
+    IncidentUpdate {
+        incident: Hash32,
+        status: IncidentStatus,
+        evidence: Hash32,
+        seq: u64,
+        attestations: Vec<Attestation>,
+    },
+    /// Tag `0x52` — encerra o incidente recuperado; o pacote de evidências
+    /// é registrado e preservado (`SPEC §56`).
+    CloseIncident {
+        incident: Hash32,
+        archive: Hash32,
+        seq: u64,
+        attestations: Vec<Attestation>,
+    },
+    /// Tag `0x53` — concede credencial defensiva temporária (`SPEC §54`).
+    GrantCredential {
+        incident: Hash32,
+        holder: PublicKey,
+        scopes: Vec<Scope>,
+        expires_at: u64,
+        seq: u64,
+        attestations: Vec<Attestation>,
+    },
+    /// Tag `0x54` — revoga uma credencial.
+    RevokeCredential {
+        credential: Hash32,
+        seq: u64,
+        attestations: Vec<Attestation>,
+    },
+    /// Tag `0x55` — o portador registra uma ação dentro do escopo da sua
+    /// credencial.
+    DefenseAction {
+        credential: Hash32,
+        scope: Scope,
+        subject: Hash32,
+    },
+    /// Tag `0x56` — registra contribuição defensiva verificada, após o
+    /// encerramento (`SPEC §57`).
+    AttestContribution {
+        incident: Hash32,
+        node: PublicKey,
+        role: Scope,
+        evidence: Hash32,
+        seq: u64,
+        attestations: Vec<Attestation>,
+    },
 }
 
 impl Encode for TxKind {
@@ -285,6 +344,90 @@ impl Encode for TxKind {
             } => {
                 e.u8(0x44).str(name).put(kind).put(target).option(new_owner);
             }
+            TxKind::DefenseTransition {
+                to,
+                evidence,
+                seq,
+                attestations,
+            } => {
+                e.u8(0x50)
+                    .put(to)
+                    .put(evidence)
+                    .u64(*seq)
+                    .list(attestations);
+            }
+            TxKind::IncidentUpdate {
+                incident,
+                status,
+                evidence,
+                seq,
+                attestations,
+            } => {
+                e.u8(0x51)
+                    .put(incident)
+                    .put(status)
+                    .put(evidence)
+                    .u64(*seq)
+                    .list(attestations);
+            }
+            TxKind::CloseIncident {
+                incident,
+                archive,
+                seq,
+                attestations,
+            } => {
+                e.u8(0x52)
+                    .put(incident)
+                    .put(archive)
+                    .u64(*seq)
+                    .list(attestations);
+            }
+            TxKind::GrantCredential {
+                incident,
+                holder,
+                scopes,
+                expires_at,
+                seq,
+                attestations,
+            } => {
+                e.u8(0x53)
+                    .put(incident)
+                    .put(holder)
+                    .list(scopes)
+                    .u64(*expires_at)
+                    .u64(*seq)
+                    .list(attestations);
+            }
+            TxKind::RevokeCredential {
+                credential,
+                seq,
+                attestations,
+            } => {
+                e.u8(0x54).put(credential).u64(*seq).list(attestations);
+            }
+            TxKind::DefenseAction {
+                credential,
+                scope,
+                subject,
+            } => {
+                e.u8(0x55).put(credential).put(scope).put(subject);
+            }
+            TxKind::AttestContribution {
+                incident,
+                node,
+                role,
+                evidence,
+                seq,
+                attestations,
+            } => {
+                e.u8(0x56)
+                    .put(incident)
+                    .put(node)
+                    .put(role)
+                    .put(evidence)
+                    .u64(*seq)
+                    .list(attestations);
+            }
         }
     }
 }
@@ -376,6 +519,51 @@ impl Decode for TxKind {
                 kind: d.get()?,
                 target: d.get()?,
                 new_owner: d.option()?,
+            }),
+            0x50 => Ok(TxKind::DefenseTransition {
+                to: d.get()?,
+                evidence: d.get()?,
+                seq: d.u64()?,
+                attestations: d.list(MAX_ATTESTATIONS)?,
+            }),
+            0x51 => Ok(TxKind::IncidentUpdate {
+                incident: d.get()?,
+                status: d.get()?,
+                evidence: d.get()?,
+                seq: d.u64()?,
+                attestations: d.list(MAX_ATTESTATIONS)?,
+            }),
+            0x52 => Ok(TxKind::CloseIncident {
+                incident: d.get()?,
+                archive: d.get()?,
+                seq: d.u64()?,
+                attestations: d.list(MAX_ATTESTATIONS)?,
+            }),
+            0x53 => Ok(TxKind::GrantCredential {
+                incident: d.get()?,
+                holder: d.get()?,
+                scopes: d.list(MAX_SCOPES)?,
+                expires_at: d.u64()?,
+                seq: d.u64()?,
+                attestations: d.list(MAX_ATTESTATIONS)?,
+            }),
+            0x54 => Ok(TxKind::RevokeCredential {
+                credential: d.get()?,
+                seq: d.u64()?,
+                attestations: d.list(MAX_ATTESTATIONS)?,
+            }),
+            0x55 => Ok(TxKind::DefenseAction {
+                credential: d.get()?,
+                scope: d.get()?,
+                subject: d.get()?,
+            }),
+            0x56 => Ok(TxKind::AttestContribution {
+                incident: d.get()?,
+                node: d.get()?,
+                role: d.get()?,
+                evidence: d.get()?,
+                seq: d.u64()?,
+                attestations: d.list(MAX_ATTESTATIONS)?,
             }),
             t => Err(DecodeError::InvalidTag(t)),
         }
@@ -577,7 +765,28 @@ impl AccountTx {
             | TxKind::PoolDeposit { .. }
             | TxKind::CancelOrder { .. }
             | TxKind::CommunityPosition { .. }
-            | TxKind::UpdateName { .. } => {}
+            | TxKind::UpdateName { .. }
+            | TxKind::RevokeCredential { .. }
+            | TxKind::DefenseAction { .. } => {}
+            // Evidência é obrigatória nas decisões de defesa (`SPEC §52`).
+            TxKind::DefenseTransition { evidence, .. }
+            | TxKind::IncidentUpdate { evidence, .. }
+            | TxKind::AttestContribution { evidence, .. }
+            | TxKind::CloseIncident {
+                archive: evidence, ..
+            } if *evidence == Hash32::ZERO => {
+                return Err(TxError::Defense("evidência ausente"));
+            }
+            TxKind::DefenseTransition { .. }
+            | TxKind::IncidentUpdate { .. }
+            | TxKind::AttestContribution { .. }
+            | TxKind::CloseIncident { .. } => {}
+            TxKind::GrantCredential { scopes, .. } => {
+                let unique: std::collections::BTreeSet<_> = scopes.iter().collect();
+                if scopes.is_empty() || unique.len() != scopes.len() {
+                    return Err(TxError::Defense("escopos vazios ou repetidos"));
+                }
+            }
             TxKind::DeclareCommunity { name, rule, .. } => {
                 crate::community::check_name(name).map_err(TxError::Community)?;
                 rule.validate().map_err(TxError::Community)?;
@@ -669,6 +878,8 @@ pub enum TxError {
     Market(&'static str),
     /// Regra de Comunidades ou de nomes violada.
     Community(&'static str),
+    /// Regra de defesa violada.
+    Defense(&'static str),
     /// Regra de staking violada.
     Staking(&'static str),
 }
@@ -702,6 +913,7 @@ impl fmt::Display for TxError {
             Self::Staking(w) => write!(f, "staking: {w}"),
             Self::Market(w) => write!(f, "mercado: {w}"),
             Self::Community(w) => write!(f, "comunidade: {w}"),
+            Self::Defense(w) => write!(f, "defesa: {w}"),
         }
     }
 }

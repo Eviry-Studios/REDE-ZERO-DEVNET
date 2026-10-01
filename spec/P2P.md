@@ -1,6 +1,6 @@
 # spec/P2P.md — Protocolo P2P da DEVNET
 
-**Versão:** 0.5.0 (DEVNET), `P2P_VERSION = 5`
+**Versão:** 0.6.0 (DEVNET), `P2P_VERSION = 6`
 **Relacionamento:** `SPECIFICATIONS.md §23–§30`, ADR-0007, ADR-0010, ADR-0011, THR-P2P-001..006, THR-PRIV-002..004
 **Implementação de referência:** `crates/rz-p2p` (mensagens) e `crates/rz-node` (orquestração)
 
@@ -73,6 +73,8 @@ m = enc(Message)
 | `0x1d` | `COMMUNITY` | `u64 height, option<Community>` (`spec/COMMUNITIES.md §1`) |
 | `0x1e` | `RESOLVE` | `string name, u8 kind` |
 | `0x1f` | `RESOLVED` | `u64 height, string name, u8 kind, option<fixed[32]> target, option<Address> owner` (`spec/NAMING.md §5`) |
+| `0x20` | `GET_DEFENSE` | vazio |
+| `0x21` | `DEFENSE` | `u64 height, u8 mode, u64 mode_since, u64 mode_expires_at, u64 seq, option<Incident> incident, list<Credential> credentials` (≤256) (`spec/DEFENSE.md §1`) |
 
 `PeerAddr` (tag `u8`):
 

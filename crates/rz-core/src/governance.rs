@@ -116,6 +116,8 @@ pub struct ProtocolParams {
     pub market: crate::market::MarketParams,
     /// Comunidades e nomes (ADR-0015).
     pub communities: crate::community::CommunityParams,
+    /// Defesa da Exonet (ADR-0016).
+    pub defense: crate::defense::DefenseParams,
 }
 
 impl ProtocolParams {
@@ -126,6 +128,7 @@ impl ProtocolParams {
         self.consensus.validate()?;
         self.market.validate()?;
         self.communities.validate()?;
+        self.defense.validate()?;
         self.governance.validate()
     }
 }
@@ -137,7 +140,8 @@ impl Encode for ProtocolParams {
             .put(&self.governance)
             .put(&self.consensus)
             .put(&self.market)
-            .put(&self.communities);
+            .put(&self.communities)
+            .put(&self.defense);
     }
 }
 
@@ -150,6 +154,7 @@ impl Decode for ProtocolParams {
             consensus: d.get()?,
             market: d.get()?,
             communities: d.get()?,
+            defense: d.get()?,
         })
     }
 }
@@ -259,6 +264,10 @@ pub enum ParamChange {
     // Comunidades e nomes (ADR-0015); constitucionais.
     NameFee(u64),
     DeclarationTtl(u64),
+    // Defesa (ADR-0016); constitucionais.
+    VigilanceMax(u64),
+    IncidentMax(u64),
+    WarMax(u64),
 }
 
 impl ParamChange {
@@ -295,6 +304,9 @@ impl ParamChange {
             ParamChange::MarketOrderLifetime(_) => 21,
             ParamChange::NameFee(_) => 22,
             ParamChange::DeclarationTtl(_) => 23,
+            ParamChange::VigilanceMax(_) => 24,
+            ParamChange::IncidentMax(_) => 25,
+            ParamChange::WarMax(_) => 26,
         }
     }
 
@@ -324,6 +336,9 @@ impl ParamChange {
             ParamChange::MarketOrderLifetime(_) => "market_order_lifetime_blocks",
             ParamChange::NameFee(_) => "name_fee",
             ParamChange::DeclarationTtl(_) => "community_declaration_ttl_blocks",
+            ParamChange::VigilanceMax(_) => "defense_vigilance_max_blocks",
+            ParamChange::IncidentMax(_) => "defense_incident_max_blocks",
+            ParamChange::WarMax(_) => "defense_war_max_blocks",
         }
     }
 
@@ -355,6 +370,9 @@ impl ParamChange {
             "market_order_lifetime_blocks" => ParamChange::MarketOrderLifetime(v),
             "name_fee" => ParamChange::NameFee(v),
             "community_declaration_ttl_blocks" => ParamChange::DeclarationTtl(v),
+            "defense_vigilance_max_blocks" => ParamChange::VigilanceMax(v),
+            "defense_incident_max_blocks" => ParamChange::IncidentMax(v),
+            "defense_war_max_blocks" => ParamChange::WarMax(v),
             _ => return None,
         })
     }
@@ -384,7 +402,10 @@ impl ParamChange {
             | ParamChange::MarketFeeBps(v)
             | ParamChange::MarketOrderLifetime(v)
             | ParamChange::NameFee(v)
-            | ParamChange::DeclarationTtl(v) => v,
+            | ParamChange::DeclarationTtl(v)
+            | ParamChange::VigilanceMax(v)
+            | ParamChange::IncidentMax(v)
+            | ParamChange::WarMax(v) => v,
         }
     }
 
@@ -418,6 +439,9 @@ impl ParamChange {
             ParamChange::MarketOrderLifetime(v) => p.market.order_lifetime_blocks = v,
             ParamChange::NameFee(v) => p.communities.name_fee = v,
             ParamChange::DeclarationTtl(v) => p.communities.declaration_ttl_blocks = v,
+            ParamChange::VigilanceMax(v) => p.defense.vigilance_max_blocks = v,
+            ParamChange::IncidentMax(v) => p.defense.incident_max_blocks = v,
+            ParamChange::WarMax(v) => p.defense.war_max_blocks = v,
         }
     }
 }
@@ -463,6 +487,9 @@ impl Decode for ParamChange {
             21 => ParamChange::MarketOrderLifetime(d.u64()?),
             22 => ParamChange::NameFee(d.u64()?),
             23 => ParamChange::DeclarationTtl(d.u64()?),
+            24 => ParamChange::VigilanceMax(d.u64()?),
+            25 => ParamChange::IncidentMax(d.u64()?),
+            26 => ParamChange::WarMax(d.u64()?),
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }
@@ -1050,6 +1077,7 @@ mod tests {
             consensus: crate::consensus::ConsensusParams::fast(200),
             market: crate::market::MarketParams::default(),
             communities: crate::community::CommunityParams::default(),
+            defense: crate::defense::DefenseParams::default(),
         };
         assert!(check_proposal_shape(Category::Ordinary, &[ParamChange::MinFee(5)], &cur).is_ok());
         // Parâmetro constitucional com categoria ordinária: inválido.

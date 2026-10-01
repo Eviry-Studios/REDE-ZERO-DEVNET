@@ -30,8 +30,9 @@ Uma decisão com escopo `DEVNET` **não** vale automaticamente para outros ambie
 | [0011](0011-protecao-do-ip.md) | Proteção do endereço IP do usuário | DEVNET | Aceita |
 | [0012](0012-consenso-zero-bft.md) | Consenso Zero-BFT | DEVNET → TESTNET | Aceita (auditoria pendente) |
 | [0013](0013-democracia-organica.md) | Democracia Orgânica: incorporação com notas de conformidade | Projeto | Aceita |
-| [0015](0015-comunidades-e-nomes.md) | Comunidades com regra de decisão declarada e nomes `zero://` | DEVNET → TESTNET | Aceita |
 | [0014](0014-grande-mercado-e-pool.md) | Grande Mercado por leilão de preço uniforme e Pool permanente sem saída | DEVNET → TESTNET | Aceita |
+| [0015](0015-comunidades-e-nomes.md) | Comunidades com regra de decisão declarada e nomes `zero://` | DEVNET → TESTNET | Aceita |
+| [0016](0016-defesa-da-exonet.md) | Defesa da Exonet por atestação de validadores, com expiração automática | DEVNET → TESTNET | Aceita |
 
 ## Modelo
 

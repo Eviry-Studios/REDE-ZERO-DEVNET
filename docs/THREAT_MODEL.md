@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.5.0
-**Status:** Modelo de ameaças — fase de definição (0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
+**Versão:** 0.6.0
+**Status:** Modelo de ameaças — fase de definição (0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -760,14 +760,14 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Severidade:** MÉDIA
 **Descrição:** acusações sem evidência, pesquisa tratada como ataque, penalização por opinião.
 
-**Mitigações:** penalização exige causa, regra, evidência verificável e efeito definido (`SPEC §49`); pesquisa não é ataque (`REQ-050`).
+**Mitigações:** penalização exige causa, regra, evidência verificável e efeito definido (`SPEC §49`); pesquisa não é ataque (`REQ-050`). Na defesa, o isolamento de um Node exige credencial atestada por > 2/3, é registrado como ação com evidência e termina com a credencial ou o incidente (`spec/DEFENSE.md §5`).
 
 ### THR-REP-003 — Marcação física de máquinas
 
 **Severidade:** ALTA
 **Descrição:** implementações tentam instalar marcas persistentes no sistema do usuário como punição.
 
-**Mitigações:** proibido pelo Manifesto; reputação acompanha a identidade criptográfica, nunca o hardware.
+**Mitigações:** proibido pelo Manifesto; reputação acompanha a identidade criptográfica, nunca o hardware. Registros de contribuição defensiva são gravados na chave pública do Node (`spec/DEFENSE.md §3`), e nenhuma operação de defesa age sobre a máquina de terceiros.
 
 ---
 
@@ -777,13 +777,13 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 **Severidade:** CRÍTICA
 **Adversários:** ADV-10
-**Mitigações:** duração máxima, revisões obrigatórias e expiração automática de modos e credenciais (`REQ-058`, `REQ-059`, `INV-010`).
+**Mitigações:** duração máxima, revisões obrigatórias e expiração automática de modos e credenciais (`REQ-058`, `REQ-059`, `INV-010`). Implementado (ADR-0016): todo modo acima de NORMAL vence e desce um nível no fim do bloco sem renovação atestada; descer exige só > 1/3 do poder, contra > 2/3 para entrar em incidente ou guerra; a duração máxima de cada modo é parâmetro constitucional. Testado em `modes_expire_without_renewal` e `at_cyber_004_credential_expires`.
 
 ### THR-DEF-002 — Abuso de credenciais defensivas
 
 **Severidade:** ALTA
 **Adversários:** ADV-10
-**Mitigações:** escopo, duração, autoridade verificável, revogação e registro (`SPEC §54`); ações de alto impacto com confirmação coletiva.
+**Mitigações:** escopo, duração, autoridade verificável, revogação e registro (`SPEC §54`); ações de alto impacto com confirmação coletiva. Implementado: credenciais concedidas por > 2/3, ligadas a um incidente, com escopos de uma lista fechada, validade máxima `credential_max_blocks`, revogáveis por > 1/3 e só para validadores ou Nodes com contribuição mínima; cada uso vira ação registrada; ao perder o incidente, todas são revogadas (`at_cyber_003`, `at_cyber_004`, `at_cyber_005`, `credential_requires_verifiable_history`).
 
 ### THR-DEF-003 — Falso incidente
 
@@ -791,19 +791,19 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Adversários:** ADV-10, ADV-11
 **Descrição:** um incidente é declarado sem base para obter privilégios.
 
-**Mitigações:** transições entre modos exigem evidência verificável e múltiplos participantes (`SPEC §52`, `SPEC §53`); o Agente Zero não declara incidentes sozinho.
+**Mitigações:** transições entre modos exigem evidência verificável e múltiplos participantes (`SPEC §52`, `SPEC §53`); o Agente Zero não declara incidentes sozinho. Implementado: atestações de validadores ponderadas por poder, com contador `seq` contra repetição; assinatura inválida, repetida ou de não validador invalida a decisão inteira (`at_def_001`, `at_def_002`, `at_def_003`). Guerra cibernética exige incidente aberto há `war_persistence_blocks` (`at_cyber_001_002`).
 
 ### THR-DEF-004 — Uso ofensivo da infraestrutura defensiva
 
 **Severidade:** CRÍTICA
 **Descrição:** ferramentas de defesa são usadas contra sistemas externos.
 
-**Mitigações:** o protocolo não possui operações ofensivas (`SPEC §55`); a defesa opera apenas dentro da Rede Zero e sistemas voluntariamente participantes.
+**Mitigações:** o protocolo não possui operações ofensivas (`SPEC §55`); a defesa opera apenas dentro da Rede Zero e sistemas voluntariamente participantes. Implementado: não existe escopo nem transação ofensiva; o isolamento só faz Nodes participantes deixarem de se conectar a uma identidade (AT-CYBER-006 em `defense::tests::scopes_are_closed_and_defensive`; `defense_devnet`).
 
 ### THR-DEF-005 — Recompensa por mera presença
 
 **Severidade:** BAIXA
-**Mitigações:** distinção entre participação e contribuição verificável (`SPEC §57`).
+**Mitigações:** distinção entre participação e contribuição verificável (`SPEC §57`). Implementado: ter credencial ou registrar ações não gera registro; só uma atestação de > 2/3 após o encerramento grava a contribuição (`contribution_record_distinct_from_participation`).
 
 ---
 
@@ -910,7 +910,11 @@ Classificação de severidade (inicial, sujeita a revisão):
 | THR-POOL-003 | REQ-039 | SPEC §41, spec/MARKET.md §1 | AT-POOL-004 |
 | THR-MKT-001 | REQ-035 | spec/MARKET.md §4 | block_order_does_not_change_market_outcome |
 | THR-MKT-002 | REQ-035 | spec/MARKET.md §2 | AT-MKT-003, AT-MKT-004 |
-| THR-DEF-001 | REQ-058, REQ-059 | SPEC §53, §54 | — (a definir) |
+| THR-DEF-001 | REQ-058, REQ-059 | SPEC §53, §54, spec/DEFENSE.md §4 | modes_expire_without_renewal, AT-CYBER-004 |
+| THR-DEF-002 | REQ-060, REQ-061 | SPEC §54, spec/DEFENSE.md §3 | AT-CYBER-003..005, credential_requires_verifiable_history |
+| THR-DEF-003 | REQ-057, REQ-060 | SPEC §52, §53, spec/DEFENSE.md §2 | AT-DEF-001..003, AT-CYBER-001/002 |
+| THR-DEF-004 | REQ-056 | SPEC §55, spec/DEFENSE.md §5 | AT-CYBER-006, defense_devnet |
+| THR-DEF-005 | REQ-062 | SPEC §57 | contribution_record_distinct_from_participation |
 | THR-DEV-001 | REQ-084 | — | CI |
 | THR-DEV-004 | REQ-090 | — | — |
 
@@ -939,6 +943,7 @@ Ameaças aceitas **temporariamente** na DEVNET, com registro explícito:
 | THR-P2P-005 | Canal cifrado sem fixação obrigatória de identidade | Distribuição verificável de identidades de Nodes ou uso de serviços onion |
 | THR-POOL-002 | Sem ponte: apenas ativos **de teste** no Genesis da DEVNET | Ponte verificável sem custodiante único (nova ADR) |
 | THR-MKT-001 | Ordens públicas antes da inclusão; omissão por um bloco possível | Avaliação de ordens cifradas até a inclusão |
+| THR-DEF-001..004 | Defesa (ADR-0016) **sem auditoria**; decisões dependem de > 2/3 dos validadores; isolamento só de conexões de saída (pares de entrada são anônimos); detecção de anomalias local | Auditoria; avaliação do isolamento de pares de entrada sem quebrar o anonimato de clientes |
 | THR-GOV-001/002 | Governança implementada (ADR-0008); a câmara de contribuição só pontua produção de blocos, então favorece validadores | Computação e contribuição defensiva verificáveis |
 
 Nenhuma dessas aceitações temporárias pode ser herdada pela TESTNET pública ou pela MAINNET sem nova avaliação.
@@ -994,7 +999,7 @@ Toda alteração deverá possuir histórico, justificativa e versão (`REQ-086`,
 
 # 15. Status
 
-**THREAT_MODEL.md v0.5.0**
+**THREAT_MODEL.md v0.6.0**
 
 > **Modelo de ameaças inicial — não congelado.**
 

@@ -23,6 +23,10 @@ use rz_privacy::{balance_holds, commitment, decode_point, excess};
 
 use crate::community::{self, Community, CommunityState, CommunityStatus, NameKind, NameRecord};
 use crate::consensus::{Validator, ValidatorSet};
+use crate::defense::{
+    self, Credential, DefenseActionRecord, DefenseMode, DefenseRecord, DefenseState, Incident,
+    IncidentStatus, Quorum,
+};
 use crate::genesis::{Genesis, GenesisError};
 use crate::governance::{
     check_proposal_shape, decide, lock_weight, Category, ChamberTally, Contribution, Lock,
@@ -133,6 +137,8 @@ pub struct State {
     market: MarketState,
     /// Comunidades e nomes `zero://` (ADR-0015).
     communities: CommunityState,
+    /// Defesa da Exonet (ADR-0016).
+    defense: DefenseState,
 }
 
 /// ZERO em período de desvinculação.
@@ -165,6 +171,40 @@ struct Effect {
     gov: Option<GovEffect>,
     market: Option<MarketEffect>,
     community: Option<CommunityEffect>,
+    defense: Option<DefenseEffect>,
+}
+
+/// Alteração de defesa produzida por uma transação. As decisões atestadas
+/// incrementam `seq`; ações de portadores de credencial, não.
+enum DefenseEffect {
+    /// Novo modo (ou renovação), evidência e, ao entrar em INCIDENTE, o
+    /// incidente aberto.
+    Mode {
+        to: DefenseMode,
+        evidence: Hash32,
+        open: Option<Hash32>,
+        height: u64,
+    },
+    Update {
+        incident: Hash32,
+        status: IncidentStatus,
+        evidence: Hash32,
+    },
+    Close {
+        incident: Hash32,
+        archive: Hash32,
+        height: u64,
+    },
+    Grant(Box<Credential>),
+    Revoke(Hash32),
+    Action {
+        incident: Hash32,
+        record: DefenseActionRecord,
+    },
+    Contribution {
+        node: rz_crypto::PublicKey,
+        record: DefenseRecord,
+    },
 }
 
 /// Alteração de Comunidades ou nomes produzida por uma transação.
@@ -260,6 +300,7 @@ impl State {
                 consensus: genesis.consensus.clone(),
                 market: MarketParams::default(),
                 communities: community::CommunityParams::default(),
+                defense: defense::DefenseParams::default(),
             },
             locks: BTreeMap::new(),
             next_lock_id: 0,
@@ -288,6 +329,7 @@ impl State {
                 m
             },
             communities: CommunityState::default(),
+            defense: DefenseState::default(),
         })
     }
 
@@ -348,6 +390,11 @@ impl State {
     /// Comunidades e nomes `zero://`.
     pub fn communities(&self) -> &CommunityState {
         &self.communities
+    }
+
+    /// Estado de defesa da Exonet.
+    pub fn defense(&self) -> &DefenseState {
+        &self.defense
     }
 
     /// Acesso de teste aos parâmetros (simula uma proposta já ativada).
@@ -482,7 +529,8 @@ impl State {
             .put(&self.key_image_acc)
             .put(&self.governance_root())
             .put(&self.market.root())
-            .put(&self.communities.root());
+            .put(&self.communities.root())
+            .put(&self.defense.root());
         hash(context::STATE_ROOT, &e.into_bytes())
     }
 
@@ -548,6 +596,9 @@ impl State {
         }
         if let Some(c) = effect.community {
             self.apply_community(c).map_err(|_| TxError::Overflow)?;
+        }
+        if let Some(d) = effect.defense {
+            self.apply_defense(d);
         }
         match effect.gov {
             None => {}
@@ -649,6 +700,8 @@ impl State {
         height: u64,
         used_validators: ValidatorSet,
     ) -> Result<(), StateError> {
+        // Defesa: modo vencido sem renovação desce um nível (REQ-059).
+        self.expire_defense(height);
         // Grande Mercado: vencimentos e leilões dos livros que mudaram.
         self.settle_market(height)?;
         // Declarações de Comunidade vencidas sem reconhecimento liberam o nome.
@@ -827,6 +880,13 @@ impl State {
             | TxKind::CommunityPosition { .. }
             | TxKind::UpdateCommunity { .. }
             | TxKind::UpdateName { .. } => 0,
+            TxKind::DefenseTransition { .. }
+            | TxKind::IncidentUpdate { .. }
+            | TxKind::CloseIncident { .. }
+            | TxKind::GrantCredential { .. }
+            | TxKind::RevokeCredential { .. }
+            | TxKind::DefenseAction { .. }
+            | TxKind::AttestContribution { .. } => 0,
             TxKind::Unlock { .. }
             | TxKind::Vote { .. }
             | TxKind::ReportEquivocation { .. }
@@ -853,6 +913,7 @@ impl State {
             gov: None,
             market: None,
             community: None,
+            defense: None,
         };
         let g = &self.params.governance;
 
@@ -1257,6 +1318,246 @@ impl State {
                 });
                 effect.accounts.push((sender, sender_acc));
             }
+            TxKind::DefenseTransition {
+                to,
+                evidence,
+                seq,
+                attestations,
+            } => {
+                let d = &self.defense;
+                let dp = &self.params.defense;
+                let cur = d.mode;
+                let quorum = if *to < cur {
+                    // Descer é fácil: uma minoria relevante encerra a
+                    // emergência (REQ-059).
+                    Quorum::OneThird
+                } else {
+                    match to {
+                        DefenseMode::Normal => {
+                            return Err(TxError::Defense("NORMAL não se renova"))
+                        }
+                        DefenseMode::Vigilance => Quorum::OneThird,
+                        DefenseMode::Incident => Quorum::TwoThirds,
+                        DefenseMode::CyberWar => {
+                            // Só a partir de um incidente persistente
+                            // (AT-CYBER-001/002).
+                            let opened = d
+                                .active_incident
+                                .and_then(|id| d.incidents.get(&id))
+                                .map(|i| i.opened_at);
+                            match opened {
+                                Some(at)
+                                    if cur >= DefenseMode::Incident
+                                        && p.height.saturating_sub(at)
+                                            >= dp.war_persistence_blocks => {}
+                                _ => {
+                                    return Err(TxError::Defense(
+                                        "guerra exige incidente aberto e persistente",
+                                    ))
+                                }
+                            }
+                            Quorum::TwoThirds
+                        }
+                    }
+                };
+                let payload = defense::payload::transition(*seq, *to, evidence);
+                self.check_attested(p.network_id, *seq, &payload, attestations, quorum)?;
+                let open = (*to >= DefenseMode::Incident && d.active_incident.is_none())
+                    .then(|| tx.id().0);
+                effect.defense = Some(DefenseEffect::Mode {
+                    to: *to,
+                    evidence: *evidence,
+                    open,
+                    height: p.height,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::IncidentUpdate {
+                incident,
+                status,
+                evidence,
+                seq,
+                attestations,
+            } => {
+                let inc = self.active_incident(incident)?;
+                let next = match inc.status {
+                    IncidentStatus::Open => IncidentStatus::Contained,
+                    IncidentStatus::Contained => IncidentStatus::Recovered,
+                    _ => return Err(TxError::Defense("incidente não pode avançar")),
+                };
+                if *status != next {
+                    return Err(TxError::Defense("estado fora de ordem"));
+                }
+                if inc.evidence.len() >= defense::MAX_EVIDENCE_PER_INCIDENT {
+                    return Err(TxError::Defense("evidências demais"));
+                }
+                let payload = defense::payload::incident_update(*seq, incident, *status, evidence);
+                self.check_attested(
+                    p.network_id,
+                    *seq,
+                    &payload,
+                    attestations,
+                    Quorum::TwoThirds,
+                )?;
+                effect.defense = Some(DefenseEffect::Update {
+                    incident: *incident,
+                    status: *status,
+                    evidence: *evidence,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::CloseIncident {
+                incident,
+                archive,
+                seq,
+                attestations,
+            } => {
+                let inc = self.active_incident(incident)?;
+                // Encerramento só com contenção e recuperação atestadas
+                // (`SPEC §56`, AT-INC-002).
+                if inc.status != IncidentStatus::Recovered {
+                    return Err(TxError::Defense("incidente ainda não contido e recuperado"));
+                }
+                let payload = defense::payload::close(*seq, incident, archive);
+                self.check_attested(
+                    p.network_id,
+                    *seq,
+                    &payload,
+                    attestations,
+                    Quorum::TwoThirds,
+                )?;
+                effect.defense = Some(DefenseEffect::Close {
+                    incident: *incident,
+                    archive: *archive,
+                    height: p.height,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::GrantCredential {
+                incident,
+                holder,
+                scopes,
+                expires_at,
+                seq,
+                attestations,
+            } => {
+                self.active_incident(incident)?;
+                let dp = &self.params.defense;
+                if *expires_at <= p.height
+                    || *expires_at > p.height.saturating_add(dp.credential_max_blocks)
+                {
+                    return Err(TxError::Defense("validade fora dos limites"));
+                }
+                // Histórico verificável: validador vigente ou pontos de
+                // contribuição suficientes (`ARCHITECTURE §38`).
+                let eligible = self.validators.contains(holder)
+                    || self.contribution(holder, p.height) >= dp.credential_min_contribution;
+                if !eligible {
+                    return Err(TxError::Defense("portador sem histórico verificável"));
+                }
+                let payload = defense::payload::grant(*seq, incident, holder, scopes, *expires_at);
+                self.check_attested(
+                    p.network_id,
+                    *seq,
+                    &payload,
+                    attestations,
+                    Quorum::TwoThirds,
+                )?;
+                effect.defense = Some(DefenseEffect::Grant(Box::new(Credential {
+                    id: tx.id().0,
+                    incident: *incident,
+                    holder: *holder,
+                    scopes: scopes.clone(),
+                    granted_at: p.height,
+                    expires_at: *expires_at,
+                    revoked: false,
+                })));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::RevokeCredential {
+                credential,
+                seq,
+                attestations,
+            } => {
+                match self.defense.credentials.get(credential) {
+                    Some(c) if !c.revoked => {}
+                    _ => return Err(TxError::Defense("credencial inexistente ou já revogada")),
+                }
+                let payload = defense::payload::revoke(*seq, credential);
+                self.check_attested(p.network_id, *seq, &payload, attestations, Quorum::OneThird)?;
+                effect.defense = Some(DefenseEffect::Revoke(*credential));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::DefenseAction {
+                credential,
+                scope,
+                subject,
+            } => {
+                let c = self
+                    .defense
+                    .credentials
+                    .get(credential)
+                    .ok_or(TxError::Defense("credencial inexistente"))?;
+                if c.holder != tx.body.sender {
+                    return Err(TxError::Defense("credencial de outro portador"));
+                }
+                // Escopo, validade e revogação (AT-CYBER-003..005).
+                if !c.allows(*scope, p.height) {
+                    return Err(TxError::Defense(
+                        "credencial vencida, revogada ou fora do escopo",
+                    ));
+                }
+                let inc = self.active_incident(&c.incident)?;
+                if inc.actions.len() >= defense::MAX_ACTIONS_PER_INCIDENT {
+                    return Err(TxError::Defense("ações demais neste incidente"));
+                }
+                effect.defense = Some(DefenseEffect::Action {
+                    incident: c.incident,
+                    record: DefenseActionRecord {
+                        credential: *credential,
+                        holder: c.holder,
+                        scope: *scope,
+                        subject: *subject,
+                        height: p.height,
+                    },
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::AttestContribution {
+                incident,
+                node,
+                role,
+                evidence,
+                seq,
+                attestations,
+            } => {
+                match self.defense.incidents.get(incident) {
+                    Some(i) if i.status == IncidentStatus::Closed => {}
+                    _ => {
+                        return Err(TxError::Defense(
+                            "contribuição só é atestada após o encerramento",
+                        ))
+                    }
+                }
+                let payload = defense::payload::contribution(*seq, incident, node, *role, evidence);
+                self.check_attested(
+                    p.network_id,
+                    *seq,
+                    &payload,
+                    attestations,
+                    Quorum::TwoThirds,
+                )?;
+                effect.defense = Some(DefenseEffect::Contribution {
+                    node: *node,
+                    record: DefenseRecord {
+                        incident: *incident,
+                        role: *role,
+                        evidence: *evidence,
+                        height: p.height,
+                    },
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
             TxKind::Bond { amount } => {
                 let key = tx.body.sender;
                 if self.jailed.contains(&key) {
@@ -1398,6 +1699,7 @@ impl State {
             gov: None,
             market: None,
             community: None,
+            defense: None,
         })
     }
 }
@@ -1628,6 +1930,173 @@ impl State {
             }
         }
         Ok(())
+    }
+}
+
+impl State {
+    fn check_attested(
+        &self,
+        network_id: &str,
+        seq: u64,
+        payload: &[u8],
+        attestations: &[defense::Attestation],
+        quorum: Quorum,
+    ) -> Result<(), TxError> {
+        if seq != self.defense.seq {
+            return Err(TxError::Defense("sequência de defesa desatualizada"));
+        }
+        // `validators` é o conjunto do próximo bloco, o vigente para esta
+        // transação.
+        let power = defense::attested_power(network_id, payload, attestations, &self.validators);
+        match power {
+            Some(p) if defense::meets(quorum, p, &self.validators) => Ok(()),
+            Some(_) => Err(TxError::Defense("atestações abaixo do limiar")),
+            None => Err(TxError::Defense("atestação inválida")),
+        }
+    }
+
+    fn active_incident(&self, id: &Hash32) -> Result<&Incident, TxError> {
+        match (self.defense.active_incident, self.defense.incidents.get(id)) {
+            (Some(a), Some(i)) if a == *id && i.status.is_active() => Ok(i),
+            _ => Err(TxError::Defense("incidente não está em vigor")),
+        }
+    }
+
+    fn mode_duration(&self, mode: DefenseMode) -> u64 {
+        let dp = &self.params.defense;
+        match mode {
+            DefenseMode::Normal => 0,
+            DefenseMode::Vigilance => dp.vigilance_max_blocks,
+            DefenseMode::Incident => dp.incident_max_blocks,
+            DefenseMode::CyberWar => dp.war_max_blocks,
+        }
+    }
+
+    /// Muda o modo; ao sair do nível de incidente, o incidente em vigor
+    /// sai de vigor (`Lapsed`) e suas credenciais são revogadas.
+    fn set_mode(&mut self, to: DefenseMode, height: u64) {
+        if to < DefenseMode::Incident {
+            if let Some(id) = self.defense.active_incident.take() {
+                if let Some(i) = self.defense.incidents.get_mut(&id) {
+                    if i.status.is_active() {
+                        i.status = IncidentStatus::Lapsed;
+                        i.closed_at = Some(height);
+                    }
+                }
+                self.revoke_incident_credentials(&id);
+            }
+        }
+        if to != self.defense.mode {
+            self.defense.mode_since = height;
+        }
+        self.defense.mode = to;
+        self.defense.mode_expires_at = match to {
+            DefenseMode::Normal => 0,
+            m => height.saturating_add(self.mode_duration(m)),
+        };
+    }
+
+    fn revoke_incident_credentials(&mut self, incident: &Hash32) {
+        for c in self.defense.credentials.values_mut() {
+            if c.incident == *incident {
+                c.revoked = true;
+            }
+        }
+    }
+
+    fn apply_defense(&mut self, e: DefenseEffect) {
+        let attested = !matches!(e, DefenseEffect::Action { .. });
+        match e {
+            DefenseEffect::Mode {
+                to,
+                evidence,
+                open,
+                height,
+            } => {
+                self.defense.mode_evidence.push((height, to, evidence));
+                if let Some(id) = open {
+                    self.defense.incidents.insert(
+                        id,
+                        Incident {
+                            id,
+                            opened_at: height,
+                            status: IncidentStatus::Open,
+                            evidence: vec![evidence],
+                            actions: Vec::new(),
+                            closed_at: None,
+                        },
+                    );
+                    self.defense.active_incident = Some(id);
+                } else if to >= DefenseMode::Incident {
+                    if let Some(i) = self
+                        .defense
+                        .active_incident
+                        .and_then(|id| self.defense.incidents.get_mut(&id))
+                    {
+                        if i.evidence.len() < defense::MAX_EVIDENCE_PER_INCIDENT {
+                            i.evidence.push(evidence);
+                        }
+                    }
+                }
+                self.set_mode(to, height);
+            }
+            DefenseEffect::Update {
+                incident,
+                status,
+                evidence,
+            } => {
+                if let Some(i) = self.defense.incidents.get_mut(&incident) {
+                    i.status = status;
+                    i.evidence.push(evidence);
+                }
+            }
+            DefenseEffect::Close {
+                incident,
+                archive,
+                height,
+            } => {
+                if let Some(i) = self.defense.incidents.get_mut(&incident) {
+                    i.status = IncidentStatus::Closed;
+                    i.closed_at = Some(height);
+                    // O pacote de evidências fica preservado (AC-DEF-010).
+                    i.evidence.push(archive);
+                }
+                self.defense.active_incident = None;
+                self.revoke_incident_credentials(&incident);
+                // Retorno gradual: encerrado o incidente, a rede fica em
+                // vigilância até vencer ou ser rebaixada (REQ-063).
+                self.set_mode(DefenseMode::Vigilance, height);
+            }
+            DefenseEffect::Grant(c) => {
+                self.defense.credentials.insert(c.id, *c);
+            }
+            DefenseEffect::Revoke(id) => {
+                if let Some(c) = self.defense.credentials.get_mut(&id) {
+                    c.revoked = true;
+                }
+            }
+            DefenseEffect::Action { incident, record } => {
+                if let Some(i) = self.defense.incidents.get_mut(&incident) {
+                    i.actions.push(record);
+                }
+            }
+            DefenseEffect::Contribution { node, record } => {
+                self.defense.records.entry(node).or_default().push(record);
+            }
+        }
+        if attested {
+            self.defense.seq += 1;
+        }
+    }
+
+    /// Fim de bloco: modo vencido desce um nível; credenciais vencidas
+    /// simplesmente deixam de autorizar (`Credential::allows`).
+    fn expire_defense(&mut self, height: u64) {
+        let d = &self.defense;
+        if d.mode != DefenseMode::Normal && height >= d.mode_expires_at {
+            let to = d.mode.step_down();
+            self.set_mode(to, height);
+        }
     }
 }
 

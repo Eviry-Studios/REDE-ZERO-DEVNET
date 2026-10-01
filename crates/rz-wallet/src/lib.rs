@@ -435,6 +435,44 @@ pub fn resolve(
         .map_err(|e| e.to_string())
 }
 
+// ------------------------------------------------------------------ Defesa
+
+/// Estado de defesa como visto por um Node.
+pub struct DefenseView {
+    pub height: u64,
+    pub mode: rz_core::defense::DefenseMode,
+    pub mode_since: u64,
+    pub mode_expires_at: u64,
+    pub seq: u64,
+    pub incident: Option<rz_core::defense::Incident>,
+    pub credentials: Vec<rz_core::defense::Credential>,
+}
+
+pub fn defense(client: &mut Client) -> Result<DefenseView, String> {
+    client
+        .request(&Message::GetDefense, |m| match m {
+            Message::Defense {
+                height,
+                mode,
+                mode_since,
+                mode_expires_at,
+                seq,
+                incident,
+                credentials,
+            } => Some(DefenseView {
+                height,
+                mode,
+                mode_since,
+                mode_expires_at,
+                seq,
+                incident: incident.map(|i| *i),
+                credentials,
+            }),
+            _ => None,
+        })
+        .map_err(|e| e.to_string())
+}
+
 /// Interpreta uma quantidade decimal de um ativo com `decimals` casas.
 pub fn parse_units(s: &str, decimals: u8) -> Option<u64> {
     let (int, frac) = s.split_once('.').unwrap_or((s, ""));

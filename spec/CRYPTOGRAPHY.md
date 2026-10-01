@@ -44,6 +44,8 @@ Todo hash protocolar **deve** usar um contexto da seção 3. O hash "puro" (sem 
 | `COMMUNITY_APPROVAL` | `rede-zero/community/v1` | Aprovações da regra de decisão de uma Comunidade |
 | `COMMUNITY_MANIFEST` | `rede-zero/community-manifest/v1` | Hash do manifesto de uma Comunidade |
 | `COMMUNITY_ROOT` | `rede-zero/community-root/v1` | Raiz da parte de Comunidades e nomes do estado |
+| `DEFENSE_ATTESTATION` | `rede-zero/defense/v1` | Atestações de validadores para decisões de defesa |
+| `DEFENSE_ROOT` | `rede-zero/defense-root/v1` | Raiz da parte de defesa do estado |
 
 Os contextos de consenso estão em `crates/rz-core/src/consensus.rs` (`spec/CONSENSUS.md`). Privacidade, governança e canal P2P usam contextos próprios, listados em `spec/PRIVACY.md`, `spec/GOVERNANCE.md` e `spec/P2P.md`.
 

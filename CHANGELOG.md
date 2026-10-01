@@ -61,6 +61,19 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Defesa da Exonet
+
+* ADR-0016 e `spec/DEFENSE.md`:
+  * modos NORMAL → VIGILÂNCIA → INCIDENTE → GUERRA_CIBERNÉTICA decididos por atestações de validadores ponderadas por poder de voto (> 1/3 para vigilância, > 2/3 para incidente e guerra; descer exige só > 1/3), com evidência obrigatória e contador contra repetição;
+  * todo modo tem duração máxima e desce um nível sozinho sem renovação (THR-DEF-001); guerra só com incidente persistente;
+  * credenciais temporárias ligadas ao incidente, com escopos fechados e defensivos (diagnóstico, isolamento, recuperação, coordenação, evidências), validade máxima, revogação e registro de cada uso; só para validadores ou Nodes com contribuição verificável;
+  * encerramento verificável Aberto → Contido → Recuperado → Encerrado, com retorno gradual à vigilância;
+  * registro de contribuição separado de participação, só após o encerramento;
+  * isolamento: Nodes deixam de se conectar à identidade isolada e derrubam conexões existentes.
+* Operações `0x50–0x56`; parâmetros constitucionais `defense_vigilance_max_blocks`, `defense_incident_max_blocks`, `defense_war_max_blocks`; consulta P2P `GET_DEFENSE`/`DEFENSE` (`P2P_VERSION = 6`); comandos da Wallet `defense`, `defense-attest`, `defense-submit`, `defense-action`.
+* Testes AT-DEF-001..003, AT-CYBER-001..006, AT-INC-001..003, vencimento dos modos, robustez e isolamento com Nodes reais.
+* `THREAT_MODEL.md` v0.6.0, `AUDIT.md` v0.4.0.
+
 ### Adicionado — Grande Mercado e Pool permanente
 
 * ADR-0014 e `spec/MARKET.md`:
@@ -95,6 +108,7 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 
 ### Protocolo
 
+* **Incompatível** com DEVNETs anteriores às Comunidades e à Defesa: parâmetros de Comunidades e defesa no estado, raiz do estado com `community_root` e `defense_root`, `P2P_VERSION = 6`.
 * **Incompatível** com DEVNETs anteriores ao Grande Mercado: Genesis com `assets`, parâmetros do mercado no estado, raiz do estado com `market_root`, `P2P_VERSION = 4`.
 * **Incompatível** com DEVNETs anteriores ao Zero-BFT: o cabeçalho troca `slot` por `round`, o Genesis troca tempo/slot/finalidade por `ConsensusParams` e validadores com vínculo, blocos trafegam com certificado e `P2P_VERSION = 3`. Recrie a DEVNET (`rm -rf devnet-data`).
 

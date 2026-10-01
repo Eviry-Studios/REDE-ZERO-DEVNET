@@ -628,6 +628,113 @@ fn corpus() -> Corpus {
         messages.push(Message::Transaction(tx.clone()));
     }
     txs.extend(community_txs);
+
+    // Defesa da Exonet (ADR-0016).
+    use rz_core::defense::{
+        attest, payload as dp, Credential, DefenseMode, Incident, IncidentStatus, Scope,
+    };
+    let inc = Hash32([0xd1; 32]);
+    let p = dp::transition(0, DefenseMode::Incident, &Hash32([9; 32]));
+    let atts = vec![attest(&validator(), NET, &p)];
+    let defense_txs = vec![
+        account_tx(
+            n,
+            TxKind::DefenseTransition {
+                to: DefenseMode::Incident,
+                evidence: Hash32([9; 32]),
+                seq: 0,
+                attestations: atts.clone(),
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::IncidentUpdate {
+                incident: inc,
+                status: IncidentStatus::Contained,
+                evidence: Hash32([9; 32]),
+                seq: 1,
+                attestations: atts.clone(),
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::CloseIncident {
+                incident: inc,
+                archive: Hash32([8; 32]),
+                seq: 2,
+                attestations: atts.clone(),
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::GrantCredential {
+                incident: inc,
+                holder: validator().public_key(),
+                scopes: vec![Scope::Isolate, Scope::Diagnose],
+                expires_at: 50,
+                seq: 3,
+                attestations: atts.clone(),
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::RevokeCredential {
+                credential: Hash32([7; 32]),
+                seq: 4,
+                attestations: atts.clone(),
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::DefenseAction {
+                credential: Hash32([7; 32]),
+                scope: Scope::Isolate,
+                subject: Hash32([6; 32]),
+            },
+        ),
+        account_tx(
+            n,
+            TxKind::AttestContribution {
+                incident: inc,
+                node: validator().public_key(),
+                role: Scope::Recover,
+                evidence: Hash32([5; 32]),
+                seq: 5,
+                attestations: atts,
+            },
+        ),
+    ];
+    messages.extend([
+        Message::GetDefense,
+        Message::Defense {
+            height: 9,
+            mode: DefenseMode::Incident,
+            mode_since: 3,
+            mode_expires_at: 40,
+            seq: 2,
+            incident: Some(Box::new(Incident {
+                id: inc,
+                opened_at: 3,
+                status: IncidentStatus::Open,
+                evidence: vec![Hash32([9; 32])],
+                actions: vec![],
+                closed_at: None,
+            })),
+            credentials: vec![Credential {
+                id: Hash32([7; 32]),
+                incident: inc,
+                holder: validator().public_key(),
+                scopes: vec![Scope::Isolate],
+                granted_at: 4,
+                expires_at: 50,
+                revoked: false,
+            }],
+        },
+    ]);
+    for tx in &defense_txs {
+        messages.push(Message::Transaction(tx.clone()));
+    }
+    txs.extend(defense_txs);
     messages.push(Message::StemTransaction(txs[1].clone()));
     txs.extend(shields.into_iter().skip(1).take(2));
 
