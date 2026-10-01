@@ -27,6 +27,8 @@ chacha20poly1305 = { version = "0.10", default-features = false, features = ["al
 # Exonet Runtime (ADR-0018): versão exata, pois faz parte do protocolo.
 wasmi = { version = "=2.0.0", default-features = false, features = ["std", "validate", "deterministic", "portable-dispatch"] }
 wat = "1"
+# Ponte (ADR-0019): SHA-256 das redes de origem (Bitcoin e afins).
+sha2 = { version = "0.10", default-features = false }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -12,6 +12,7 @@ rz-crypto.workspace = true
 rz-privacy.workspace = true
 rand_core.workspace = true
 wasmi.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 wat.workspace = true

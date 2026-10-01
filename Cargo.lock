@@ -533,6 +533,7 @@ dependencies = [
  "rz-codec",
  "rz-crypto",
  "rz-privacy",
+ "sha2",
  "wasmi",
  "wat",
 ]
