@@ -155,17 +155,21 @@ impl Mempool {
         let mut scratch = state.clone();
         let mut out = Vec::new();
         let mut bytes = 0usize;
+        let mut fuel = 0u64;
+        let max_fuel = state.params().runtime.max_block_fuel;
         for tx in self.txs.values().chain(self.private.values()) {
             if out.len() >= max {
                 break;
             }
-            // Respeita o limite de bytes do bloco (`MAX_BLOCK_TX_BYTES`).
+            // Respeita o limite de bytes do bloco (`MAX_BLOCK_TX_BYTES`) e o
+            // de combustível do Exonet Runtime.
             let size = tx.to_canonical_bytes().len();
-            if bytes + size > MAX_BLOCK_TX_BYTES {
+            if bytes + size > MAX_BLOCK_TX_BYTES || fuel.saturating_add(tx.fuel()) > max_fuel {
                 continue;
             }
             if scratch.apply_transaction(tx, params).is_ok() {
                 bytes += size;
+                fuel += tx.fuel();
                 out.push(tx.clone());
             }
         }

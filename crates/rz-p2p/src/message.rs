@@ -10,6 +10,7 @@ use rz_core::defense::{Credential, DefenseMode, Incident};
 use rz_core::governance::{LockEntry, ProposalSummary, ProtocolParams};
 use rz_core::limits::MAX_NETWORK_ID_LEN;
 use rz_core::market::{AssetId, AssetView, BookLevel, Order, MAX_ASSETS};
+use rz_core::runtime::{Receipt, MAX_ARGS, MAX_METHOD, MAX_OUTPUT};
 use rz_core::{BlockId, CommittedBlock, Proposal, Transaction, TxId, Vote};
 use rz_crypto::{Address, Hash32};
 use rz_privacy::note::OutputData;
@@ -395,6 +396,38 @@ pub enum Message {
     },
     /// `0x28` — o remetente passou a hospedar este objeto.
     HaveContent(Hash32),
+    /// `0x29` — consulta somente leitura ao módulo de uma Comunidade.
+    Query {
+        community: Hash32,
+        method: String,
+        args: Vec<u8>,
+        caller: Option<Address>,
+    },
+    /// `0x2a`
+    QueryResult {
+        height: u64,
+        ok: bool,
+        fuel_used: u64,
+        output: Vec<u8>,
+        error: String,
+    },
+    /// `0x2b` — recibo de uma chamada ao Runtime.
+    GetReceipt(Hash32),
+    /// `0x2c`
+    Receipt {
+        height: u64,
+        receipt: Option<Box<Receipt>>,
+    },
+    /// `0x2d` — módulo vinculado a uma Comunidade.
+    GetModuleInfo(Hash32),
+    /// `0x2e`
+    ModuleInfo {
+        height: u64,
+        community: Hash32,
+        module: Option<Hash32>,
+        seq: u32,
+        usage: u64,
+    },
 }
 
 fn put_opt_bytes(e: &mut Encoder, v: &Option<Vec<u8>>) {
@@ -622,6 +655,55 @@ impl Encode for Message {
             Message::HaveContent(id) => {
                 e.u8(0x28).put(id);
             }
+            Message::Query {
+                community,
+                method,
+                args,
+                caller,
+            } => {
+                e.u8(0x29)
+                    .put(community)
+                    .str(method)
+                    .bytes(args)
+                    .option(caller);
+            }
+            Message::QueryResult {
+                height,
+                ok,
+                fuel_used,
+                output,
+                error,
+            } => {
+                e.u8(0x2a)
+                    .u64(*height)
+                    .bool(*ok)
+                    .u64(*fuel_used)
+                    .bytes(output)
+                    .str(error);
+            }
+            Message::GetReceipt(tx) => {
+                e.u8(0x2b).put(tx);
+            }
+            Message::Receipt { height, receipt } => {
+                e.u8(0x2c).u64(*height).option(&receipt.as_deref().cloned());
+            }
+            Message::GetModuleInfo(c) => {
+                e.u8(0x2d).put(c);
+            }
+            Message::ModuleInfo {
+                height,
+                community,
+                module,
+                seq,
+                usage,
+            } => {
+                e.u8(0x2e)
+                    .u64(*height)
+                    .put(community)
+                    .option(module)
+                    .u32(*seq)
+                    .u64(*usage);
+            }
         }
     }
 }
@@ -751,6 +833,32 @@ impl Decode for Message {
                 data: get_opt_bytes(d, CHUNK_SIZE)?,
             },
             0x28 => Message::HaveContent(d.get()?),
+            0x29 => Message::Query {
+                community: d.get()?,
+                method: d.str(MAX_METHOD)?,
+                args: d.bytes(MAX_ARGS)?,
+                caller: d.option()?,
+            },
+            0x2a => Message::QueryResult {
+                height: d.u64()?,
+                ok: d.bool()?,
+                fuel_used: d.u64()?,
+                output: d.bytes(MAX_OUTPUT)?,
+                error: d.str(256)?,
+            },
+            0x2b => Message::GetReceipt(d.get()?),
+            0x2c => Message::Receipt {
+                height: d.u64()?,
+                receipt: d.option::<Receipt>()?.map(Box::new),
+            },
+            0x2d => Message::GetModuleInfo(d.get()?),
+            0x2e => Message::ModuleInfo {
+                height: d.u64()?,
+                community: d.get()?,
+                module: d.option()?,
+                seq: d.u32()?,
+                usage: d.u64()?,
+            },
             0x1f => Message::Resolved {
                 height: d.u64()?,
                 name: d.str(MAX_NAME_LEN)?,
@@ -808,6 +916,12 @@ impl Message {
             Message::GetChunk { .. } => "GET_CHUNK",
             Message::Chunk { .. } => "CHUNK",
             Message::HaveContent(_) => "HAVE_CONTENT",
+            Message::Query { .. } => "QUERY",
+            Message::QueryResult { .. } => "QUERY_RESULT",
+            Message::GetReceipt(_) => "GET_RECEIPT",
+            Message::Receipt { .. } => "RECEIPT",
+            Message::GetModuleInfo(_) => "GET_MODULE_INFO",
+            Message::ModuleInfo { .. } => "MODULE_INFO",
         }
     }
 }

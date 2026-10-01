@@ -21,6 +21,7 @@ pub mod market;
 #[cfg(test)]
 mod market_tests;
 pub mod private;
+pub mod runtime;
 pub mod state;
 pub mod tx;
 

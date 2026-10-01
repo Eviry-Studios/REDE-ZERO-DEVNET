@@ -23,6 +23,7 @@ A operação `TxKind::Shield` (tag `0x01`) está descrita em `spec/PRIVACY.md §
 | `0x30–0x33` | Grande Mercado e Pool (`TransferAsset`, `PoolDeposit`, `PlaceOrder`, `CancelOrder`) | `spec/MARKET.md` |
 | `0x40–0x42` | Comunidades (`DeclareCommunity`, `CommunityPosition`, `UpdateCommunity`) | `spec/COMMUNITIES.md` |
 | `0x43–0x44` | nomes `zero://` (`RegisterName`, `UpdateName`) | `spec/NAMING.md` |
+| `0x60–0x62` | Exonet Runtime (`PublishModule`, `BindModule`, `CallModule`) | `spec/RUNTIME.md` |
 | `0x50–0x56` | Defesa da Exonet (`DefenseTransition`, `IncidentUpdate`, `CloseIncident`, `GrantCredential`, `RevokeCredential`, `DefenseAction`, `AttestContribution`) | `spec/DEFENSE.md` |
 
 Qualquer outra tag é inválida.

@@ -1,6 +1,6 @@
 # spec/P2P.md — Protocolo P2P da DEVNET
 
-**Versão:** 0.7.0 (DEVNET), `P2P_VERSION = 7`
+**Versão:** 0.8.0 (DEVNET), `P2P_VERSION = 8`
 **Relacionamento:** `SPECIFICATIONS.md §23–§30`, ADR-0007, ADR-0010, ADR-0011, THR-P2P-001..006, THR-PRIV-002..004
 **Implementação de referência:** `crates/rz-p2p` (mensagens) e `crates/rz-node` (orquestração)
 
@@ -82,6 +82,12 @@ m = enc(Message)
 | `0x26` | `GET_CHUNK` | `fixed[32] id, u32 index` |
 | `0x27` | `CHUNK` | `fixed[32] id, u32 index, option<bytes> (≤1 MiB)` |
 | `0x28` | `HAVE_CONTENT` | `fixed[32] id` |
+| `0x29` | `QUERY` | `fixed[32] community, string method (≤64), bytes args (≤16 KiB), option<Address> caller` |
+| `0x2a` | `QUERY_RESULT` | `u64 height, bool ok, u64 fuel_used, bytes output (≤16 KiB), string error (≤256)` (`spec/RUNTIME.md §7`) |
+| `0x2b` | `GET_RECEIPT` | `fixed[32] tx` |
+| `0x2c` | `RECEIPT` | `u64 height, option<Receipt>` |
+| `0x2d` | `GET_MODULE_INFO` | `fixed[32] community` |
+| `0x2e` | `MODULE_INFO` | `u64 height, fixed[32] community, option<fixed[32]> module, u32 seq, u64 usage` |
 
 `PeerAddr` (tag `u8`):
 
@@ -160,6 +166,7 @@ Um par que envia blocos inválidos é penalizado (seção 6) — nenhum estado �
 | Limite de consenso por conexão (`n` validadores) | balde de `max(200, 32·n)`, recarga de `max(50, 8·n)`/s; excedente descartado sem penalidade |
 | Pedidos de pedaços de conteúdo por conexão | balde de 32, recarga de 8/s; excedente respondido sem dados |
 | Downloads de conteúdo | 4 simultâneos, 1 por conexão, 15 s sem progresso ou 120 s no total (`spec/CONTENT.md §5`) |
+| Consultas ao Exonet Runtime por conexão | balde de 16, recarga de 4/s; excedente respondido com erro, sem execução |
 | Conexões de entrada | 32 |
 | Conexões de saída | 8 |
 | Quarentena após banimento | 10 minutos |

@@ -243,6 +243,14 @@ fn execute(
     if bytes > crate::limits::MAX_BLOCK_TX_BYTES {
         return Err(BlockError::TooLarge(bytes));
     }
+    // Combustível do Exonet Runtime limitado por bloco (ADR-0018).
+    let fuel = txs
+        .iter()
+        .try_fold(0u64, |acc, t| acc.checked_add(t.fuel()))
+        .ok_or(BlockError::Overflow)?;
+    if fuel > parent_state.params().runtime.max_block_fuel {
+        return Err(BlockError::FuelExceeded(fuel));
+    }
     let params = ExecParams::at(genesis, height);
     let mut state = parent_state.clone();
     let mut fees: u64 = 0;
@@ -312,6 +320,8 @@ pub enum BlockError {
     TooManyTransactions(usize),
     /// Transações somam mais que `MAX_BLOCK_TX_BYTES`.
     TooLarge(usize),
+    /// Combustível reservado acima de `runtime.max_block_fuel`.
+    FuelExceeded(u64),
     Transaction {
         index: usize,
         error: TxError,
@@ -336,6 +346,9 @@ impl fmt::Display for BlockError {
             Self::Signature => write!(f, "assinatura do bloco inválida"),
             Self::TooManyTransactions(n) => write!(f, "transações demais: {n}"),
             Self::TooLarge(n) => write!(f, "transações somam {n} bytes, acima do limite"),
+            Self::FuelExceeded(n) => {
+                write!(f, "combustível reservado {n} acima do limite do bloco")
+            }
             Self::Transaction { index, error } => write!(f, "transação {index} inválida: {error}"),
             Self::State(e) => write!(f, "estado inválido: {e}"),
             Self::Overflow => write!(f, "overflow aritmético"),

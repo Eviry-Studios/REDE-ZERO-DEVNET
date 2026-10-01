@@ -417,6 +417,39 @@ impl Navegador {
                     Err(e) => Response::json(400, format!("{{\"erro\":{}}}", html::json_str(&e))),
                 }
             }
+            // Consulta somente leitura ao módulo da Comunidade (sem aprovação:
+            // não assina nada nem grava nada).
+            ("POST", "consulta") => {
+                if req.header("origin") != Some(o.url(self.port).as_str()) {
+                    return Response::json(403, "{\"erro\":\"origem inválida\"}");
+                }
+                let mut f = req.form();
+                self.default_community(o, &mut f);
+                match self.query(&f) {
+                    Ok(json) => Response::json(200, json),
+                    Err(e) => Response::json(400, format!("{{\"erro\":{}}}", html::json_str(&e))),
+                }
+            }
+            ("GET", p) if p.starts_with("recibo/") => {
+                let Some(tx) = Hash32::from_hex(&p["recibo/".len()..]) else {
+                    return Response::json(400, "{\"erro\":\"transação inválida\"}");
+                };
+                match self.with_client(|c| rz_wallet::receipt(c, tx)) {
+                    Ok(Some(r)) => Response::json(
+                        200,
+                        format!(
+                            "{{\"ok\":{},\"altura\":{},\"combustivel\":{},{},\"erro\":{}}}",
+                            r.ok,
+                            r.height,
+                            r.fuel_used,
+                            output_json(&r.output),
+                            html::json_str(&r.error)
+                        ),
+                    ),
+                    Ok(None) => Response::json(404, "{\"erro\":\"recibo ainda não disponível\"}"),
+                    Err(e) => Response::json(502, format!("{{\"erro\":{}}}", html::json_str(&e))),
+                }
+            }
             ("GET", p) if p.starts_with("pedido/") => {
                 let id = &p["pedido/".len()..];
                 match lock(&self.pedidos).items.get(id) {
@@ -433,16 +466,51 @@ impl Navegador {
         origin: Origin,
         form: &BTreeMap<String, String>,
     ) -> Result<String, String> {
-        let op = pedido::parse(form, || {
-            self.with_client(|c| rz_wallet::assets(c, None))
-                .map(|v| v.assets)
-        })?;
+        let mut form = form.clone();
+        self.default_community(&origin, &mut form);
+        let op = pedido::parse(&form, self)?;
         if matches!(op, Operation::Sign { .. }) && origin == Origin::Ui {
             return Err("autenticação só faz sentido para uma publicação".into());
         }
         let id = random_hex(16);
         lock(&self.pedidos).add(id.clone(), origin, op)?;
         Ok(id)
+    }
+
+    /// Numa publicação de Comunidade, `comunidade` é ela mesma por padrão.
+    fn default_community(&self, o: &Origin, f: &mut BTreeMap<String, String>) {
+        if let Origin::Named {
+            name,
+            kind: NameKind::Community,
+        } = o
+        {
+            let empty = f.get("comunidade").is_none_or(|v| v.trim().is_empty());
+            if empty {
+                f.insert("comunidade".into(), name.clone());
+            }
+        }
+    }
+
+    fn query(&self, f: &BTreeMap<String, String>) -> Result<String, String> {
+        let spec = f
+            .get("comunidade")
+            .filter(|v| !v.trim().is_empty())
+            .ok_or("campo 'comunidade' ausente")?;
+        let method = f.get("metodo").ok_or("campo 'metodo' ausente")?;
+        rz_core::runtime::check_method(method)?;
+        let args = pedido::args_of(f)?;
+        let v = self.with_client(|c| {
+            let id = rz_wallet::community_id(c, spec)?;
+            rz_wallet::query(c, id, method, &args, None)
+        })?;
+        Ok(format!(
+            "{{\"ok\":{},\"altura\":{},\"combustivel\":{},{},\"erro\":{}}}",
+            v.ok,
+            v.height,
+            v.fuel_used,
+            output_json(&v.output),
+            html::json_str(&v.error)
+        ))
     }
 
     /// Executa um pedido aprovado pela pessoa na interface.
@@ -480,8 +548,16 @@ impl Navegador {
                 signature: Some(sig.to_hex()),
             });
         }
-        let fee = self.genesis.min_fee;
         let txid = self.with_client(|c| {
+            let params = rz_wallet::governance(c, None)?.params;
+            let fuel_fee = match op {
+                Operation::Call { fuel, .. } => params
+                    .runtime
+                    .fuel_fee(*fuel)
+                    .ok_or("combustível grande demais")?,
+                _ => 0,
+            };
+            let fee = params.min_fee.saturating_add(fuel_fee);
             let (_, _, height) = rz_wallet::account(c, keys.address())?;
             let kind = op.tx_kind(height).ok_or("operação sem transação")?;
             rz_wallet::send_account(c, &self.genesis, keys, kind, fee)
@@ -492,6 +568,30 @@ impl Navegador {
             signature: None,
         })
     }
+}
+
+impl pedido::Lookup for Navegador {
+    fn assets(&self) -> Result<Vec<rz_core::market::AssetView>, String> {
+        self.with_client(|c| rz_wallet::assets(c, None))
+            .map(|v| v.assets)
+    }
+
+    fn community(&self, spec: &str) -> Result<Hash32, String> {
+        self.with_client(|c| rz_wallet::community_id(c, spec))
+    }
+}
+
+/// `"saida_hex": ..., "saida_texto": ...` (texto só se for UTF-8 imprimível).
+fn output_json(out: &[u8]) -> String {
+    let text = match std::str::from_utf8(out) {
+        Ok(t) if !t.chars().any(char::is_control) => html::json_str(t),
+        _ => "null".into(),
+    };
+    format!(
+        "\"saida_hex\":{},\"saida_texto\":{}",
+        html::json_str(&rz_crypto::hex::encode(out)),
+        text
+    )
 }
 
 fn serve_file(o: &Origin, id: &Hash32, bundle: &Bundle, path: &str) -> Response {

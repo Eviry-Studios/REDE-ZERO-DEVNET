@@ -221,6 +221,24 @@ pub enum TxKind {
         seq: u64,
         attestations: Vec<Attestation>,
     },
+    /// Tag `0x60` — publica um módulo do Exonet Runtime (ADR-0018). A taxa
+    /// por byte vai para o Pool permanente.
+    PublishModule { code: Vec<u8> },
+    /// Tag `0x61` — vincula (ou desvincula) o módulo de uma Comunidade
+    /// reconhecida, com aprovações da regra de decisão dela.
+    BindModule {
+        community: Hash32,
+        module: Option<Hash32>,
+        approvals: Vec<Approval>,
+    },
+    /// Tag `0x62` — chama um método do módulo de uma Comunidade, reservando
+    /// `fuel` de combustível (pago na taxa, mesmo se a chamada falhar).
+    CallModule {
+        community: Hash32,
+        method: String,
+        args: Vec<u8>,
+        fuel: u64,
+    },
 }
 
 impl Encode for TxKind {
@@ -428,6 +446,24 @@ impl Encode for TxKind {
                     .u64(*seq)
                     .list(attestations);
             }
+            TxKind::PublishModule { code } => {
+                e.u8(0x60).bytes(code);
+            }
+            TxKind::BindModule {
+                community,
+                module,
+                approvals,
+            } => {
+                e.u8(0x61).put(community).option(module).list(approvals);
+            }
+            TxKind::CallModule {
+                community,
+                method,
+                args,
+                fuel,
+            } => {
+                e.u8(0x62).put(community).str(method).bytes(args).u64(*fuel);
+            }
         }
     }
 }
@@ -565,6 +601,20 @@ impl Decode for TxKind {
                 seq: d.u64()?,
                 attestations: d.list(MAX_ATTESTATIONS)?,
             }),
+            0x60 => Ok(TxKind::PublishModule {
+                code: d.bytes(crate::runtime::MAX_CODE)?,
+            }),
+            0x61 => Ok(TxKind::BindModule {
+                community: d.get()?,
+                module: d.option()?,
+                approvals: d.list(MAX_CONTROLLERS)?,
+            }),
+            0x62 => Ok(TxKind::CallModule {
+                community: d.get()?,
+                method: d.str(crate::runtime::MAX_METHOD)?,
+                args: d.bytes(crate::runtime::MAX_ARGS)?,
+                fuel: d.u64()?,
+            }),
             t => Err(DecodeError::InvalidTag(t)),
         }
     }
@@ -673,6 +723,17 @@ impl Decode for Transaction {
 }
 
 impl Transaction {
+    /// Combustível reservado (só chamadas ao Exonet Runtime).
+    pub fn fuel(&self) -> u64 {
+        match self {
+            Transaction::Account(a) => match &a.body.kind {
+                TxKind::CallModule { fuel, .. } => *fuel,
+                _ => 0,
+            },
+            Transaction::Private(_) => 0,
+        }
+    }
+
     pub fn id(&self) -> TxId {
         match self {
             Transaction::Account(a) => a.id(),
@@ -808,6 +869,18 @@ impl AccountTx {
                 return Err(TxError::Market("preço nulo"));
             }
             TxKind::PlaceOrder { .. } => {}
+            TxKind::PublishModule { code } => {
+                if code.is_empty() {
+                    return Err(TxError::Runtime("módulo vazio"));
+                }
+            }
+            TxKind::BindModule { .. } => {}
+            TxKind::CallModule { method, fuel, .. } => {
+                crate::runtime::check_method(method).map_err(TxError::Runtime)?;
+                if *fuel == 0 {
+                    return Err(TxError::Runtime("combustível nulo"));
+                }
+            }
         }
         if self.body.fee < min_fee {
             return Err(TxError::FeeTooLow {
@@ -882,6 +955,8 @@ pub enum TxError {
     Defense(&'static str),
     /// Regra de staking violada.
     Staking(&'static str),
+    /// Regra do Exonet Runtime violada.
+    Runtime(&'static str),
 }
 
 impl fmt::Display for TxError {
@@ -914,6 +989,7 @@ impl fmt::Display for TxError {
             Self::Market(w) => write!(f, "mercado: {w}"),
             Self::Community(w) => write!(f, "comunidade: {w}"),
             Self::Defense(w) => write!(f, "defesa: {w}"),
+            Self::Runtime(w) => write!(f, "runtime: {w}"),
         }
     }
 }

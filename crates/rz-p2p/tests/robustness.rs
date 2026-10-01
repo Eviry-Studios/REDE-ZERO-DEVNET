@@ -768,6 +768,83 @@ fn corpus() -> Corpus {
         },
         Message::HaveContent(info.id()),
     ]);
+    // Exonet Runtime (ADR-0018): um módulo mínimo válido (memória exportada).
+    let module_code: Vec<u8> = vec![
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, // cabeçalho
+        0x05, 0x03, 0x01, 0x00, 0x01, // memória 1 página
+        0x07, 0x0a, 0x01, 0x06, b'm', b'e', b'm', b'o', b'r', b'y', 0x02, 0x00, // export
+    ];
+    rz_core::runtime::validate_module(&module_code).expect("módulo mínimo válido");
+    let rt_community = Hash32([0xc0; 32]);
+    let defense_txs: Vec<Transaction> = defense_txs
+        .into_iter()
+        .chain([
+            account_tx(
+                n,
+                TxKind::PublishModule {
+                    code: module_code.clone(),
+                },
+            ),
+            account_tx(
+                n,
+                TxKind::BindModule {
+                    community: rt_community,
+                    module: Some(rz_core::runtime::module_id(&module_code)),
+                    approvals: vec![rz_core::community::approve(
+                        &validator(),
+                        NET,
+                        &rz_core::runtime::bind_payload(&rt_community, &None, 0),
+                    )],
+                },
+            ),
+            account_tx(
+                n,
+                TxKind::CallModule {
+                    community: rt_community,
+                    method: "incrementar".into(),
+                    args: vec![1, 2, 3],
+                    fuel: 1_000,
+                },
+            ),
+        ])
+        .collect();
+    messages.extend([
+        Message::Query {
+            community: rt_community,
+            method: "ler".into(),
+            args: vec![9],
+            caller: None,
+        },
+        Message::QueryResult {
+            height: 4,
+            ok: true,
+            fuel_used: 77,
+            output: vec![1, 0, 0, 0],
+            error: String::new(),
+        },
+        Message::GetReceipt(Hash32([3; 32])),
+        Message::Receipt {
+            height: 4,
+            receipt: Some(Box::new(rz_core::runtime::Receipt {
+                tx: Hash32([3; 32]),
+                community: rt_community,
+                method: "incrementar".into(),
+                ok: false,
+                fuel_used: 1_000,
+                output: vec![],
+                error: "combustível esgotado".into(),
+                height: 4,
+            })),
+        },
+        Message::GetModuleInfo(rt_community),
+        Message::ModuleInfo {
+            height: 4,
+            community: rt_community,
+            module: Some(Hash32([2; 32])),
+            seq: 1,
+            usage: 9,
+        },
+    ]);
     for tx in &defense_txs {
         messages.push(Message::Transaction(tx.clone()));
     }

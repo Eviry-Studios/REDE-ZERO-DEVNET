@@ -118,6 +118,8 @@ pub struct ProtocolParams {
     pub communities: crate::community::CommunityParams,
     /// Defesa da Exonet (ADR-0016).
     pub defense: crate::defense::DefenseParams,
+    /// Exonet Runtime (ADR-0018).
+    pub runtime: crate::runtime::RuntimeParams,
 }
 
 impl ProtocolParams {
@@ -129,6 +131,7 @@ impl ProtocolParams {
         self.market.validate()?;
         self.communities.validate()?;
         self.defense.validate()?;
+        self.runtime.validate()?;
         self.governance.validate()
     }
 }
@@ -141,7 +144,8 @@ impl Encode for ProtocolParams {
             .put(&self.consensus)
             .put(&self.market)
             .put(&self.communities)
-            .put(&self.defense);
+            .put(&self.defense)
+            .put(&self.runtime);
     }
 }
 
@@ -155,6 +159,7 @@ impl Decode for ProtocolParams {
             market: d.get()?,
             communities: d.get()?,
             defense: d.get()?,
+            runtime: d.get()?,
         })
     }
 }
@@ -268,6 +273,12 @@ pub enum ParamChange {
     VigilanceMax(u64),
     IncidentMax(u64),
     WarMax(u64),
+    // Exonet Runtime (ADR-0018); constitucionais.
+    FuelPrice(u64),
+    MaxCallFuel(u64),
+    MaxBlockFuel(u64),
+    ModuleByteFee(u64),
+    StorageQuota(u64),
 }
 
 impl ParamChange {
@@ -307,6 +318,11 @@ impl ParamChange {
             ParamChange::VigilanceMax(_) => 24,
             ParamChange::IncidentMax(_) => 25,
             ParamChange::WarMax(_) => 26,
+            ParamChange::FuelPrice(_) => 27,
+            ParamChange::MaxCallFuel(_) => 28,
+            ParamChange::MaxBlockFuel(_) => 29,
+            ParamChange::ModuleByteFee(_) => 30,
+            ParamChange::StorageQuota(_) => 31,
         }
     }
 
@@ -339,6 +355,11 @@ impl ParamChange {
             ParamChange::VigilanceMax(_) => "defense_vigilance_max_blocks",
             ParamChange::IncidentMax(_) => "defense_incident_max_blocks",
             ParamChange::WarMax(_) => "defense_war_max_blocks",
+            ParamChange::FuelPrice(_) => "runtime_fuel_price",
+            ParamChange::MaxCallFuel(_) => "runtime_max_call_fuel",
+            ParamChange::MaxBlockFuel(_) => "runtime_max_block_fuel",
+            ParamChange::ModuleByteFee(_) => "runtime_module_byte_fee",
+            ParamChange::StorageQuota(_) => "runtime_storage_quota",
         }
     }
 
@@ -373,6 +394,11 @@ impl ParamChange {
             "defense_vigilance_max_blocks" => ParamChange::VigilanceMax(v),
             "defense_incident_max_blocks" => ParamChange::IncidentMax(v),
             "defense_war_max_blocks" => ParamChange::WarMax(v),
+            "runtime_fuel_price" => ParamChange::FuelPrice(v),
+            "runtime_max_call_fuel" => ParamChange::MaxCallFuel(v),
+            "runtime_max_block_fuel" => ParamChange::MaxBlockFuel(v),
+            "runtime_module_byte_fee" => ParamChange::ModuleByteFee(v),
+            "runtime_storage_quota" => ParamChange::StorageQuota(v),
             _ => return None,
         })
     }
@@ -405,7 +431,12 @@ impl ParamChange {
             | ParamChange::DeclarationTtl(v)
             | ParamChange::VigilanceMax(v)
             | ParamChange::IncidentMax(v)
-            | ParamChange::WarMax(v) => v,
+            | ParamChange::WarMax(v)
+            | ParamChange::FuelPrice(v)
+            | ParamChange::MaxCallFuel(v)
+            | ParamChange::MaxBlockFuel(v)
+            | ParamChange::ModuleByteFee(v)
+            | ParamChange::StorageQuota(v) => v,
         }
     }
 
@@ -442,6 +473,11 @@ impl ParamChange {
             ParamChange::VigilanceMax(v) => p.defense.vigilance_max_blocks = v,
             ParamChange::IncidentMax(v) => p.defense.incident_max_blocks = v,
             ParamChange::WarMax(v) => p.defense.war_max_blocks = v,
+            ParamChange::FuelPrice(v) => p.runtime.fuel_price = v,
+            ParamChange::MaxCallFuel(v) => p.runtime.max_call_fuel = v,
+            ParamChange::MaxBlockFuel(v) => p.runtime.max_block_fuel = v,
+            ParamChange::ModuleByteFee(v) => p.runtime.module_byte_fee = v,
+            ParamChange::StorageQuota(v) => p.runtime.storage_quota = v,
         }
     }
 }
@@ -490,6 +526,11 @@ impl Decode for ParamChange {
             24 => ParamChange::VigilanceMax(d.u64()?),
             25 => ParamChange::IncidentMax(d.u64()?),
             26 => ParamChange::WarMax(d.u64()?),
+            27 => ParamChange::FuelPrice(d.u64()?),
+            28 => ParamChange::MaxCallFuel(d.u64()?),
+            29 => ParamChange::MaxBlockFuel(d.u64()?),
+            30 => ParamChange::ModuleByteFee(d.u64()?),
+            31 => ParamChange::StorageQuota(d.u64()?),
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }
@@ -1078,6 +1119,7 @@ mod tests {
             market: crate::market::MarketParams::default(),
             communities: crate::community::CommunityParams::default(),
             defense: crate::defense::DefenseParams::default(),
+            runtime: crate::runtime::RuntimeParams::default(),
         };
         assert!(check_proposal_shape(Category::Ordinary, &[ParamChange::MinFee(5)], &cur).is_ok());
         // Parâmetro constitucional com categoria ordinária: inválido.

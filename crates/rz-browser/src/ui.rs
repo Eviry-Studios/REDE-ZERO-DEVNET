@@ -502,6 +502,23 @@ fn community(nav: &Navegador, name: &str) -> (String, String) {
                 }
                 Err(e) => b.push_str(&err_box(&e)),
             }
+            // Módulo do Exonet Runtime: o vínculo na cadeia é o que vale.
+            if let Ok((module, seq, usage)) = nav.with_client(|cl| rz_wallet::module_info(cl, c.id))
+            {
+                b.push_str(&kv(&[
+                    (
+                        "Módulo vinculado (Exonet Runtime)",
+                        module.map(code).unwrap_or("nenhum".into()),
+                    ),
+                    ("Vinculações", seq.to_string()),
+                    ("Armazenamento usado", format!("{usage} bytes")),
+                ]));
+                if let Ok(Some(m)) = nav.manifest(&c.manifest_hash) {
+                    if m.module.is_some() && m.module != module {
+                        b.push_str("<div class=\"box warn\">O módulo citado no manifesto difere do vinculado na cadeia.</div>");
+                    }
+                }
+            }
             b.push_str("<h3>Histórico de versões</h3><table>");
             for (v, h, at) in &c.history {
                 b.push_str(&format!(

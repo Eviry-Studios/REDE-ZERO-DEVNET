@@ -47,6 +47,11 @@ const GENERAL_PER_SEC: u32 = 200;
 /// Balde de pedidos de pedaços de conteúdo por conexão (1 MiB cada).
 const CHUNK_BURST: u32 = 32;
 const CHUNK_PER_SEC: u32 = 8;
+/// Consultas ao Exonet Runtime por conexão (cada uma executa um módulo).
+const QUERY_BURST: u32 = 16;
+const QUERY_PER_SEC: u32 = 4;
+/// Combustível de uma consulta somente leitura.
+const QUERY_FUEL: u64 = 10_000_000;
 
 /// Balde de consenso por conexão para `n` validadores: cada validador emite
 /// até dois votos por rodada, repassados uma vez por conexão, mais a
@@ -463,6 +468,7 @@ struct ConnCtx {
     consensus_sized_for: usize,
     /// Pedidos de pedaços de conteúdo.
     chunk_bucket: TokenBucket,
+    query_bucket: TokenBucket,
     peer_height: u64,
     last_request_from: Option<u64>,
 }
@@ -1054,6 +1060,7 @@ impl Shared {
             },
             consensus_sized_for: 0,
             chunk_bucket: TokenBucket::new(CHUNK_BURST, CHUNK_PER_SEC),
+            query_bucket: TokenBucket::new(QUERY_BURST, QUERY_PER_SEC),
             peer_height: hello.height,
             last_request_from: None,
         };
@@ -1430,7 +1437,10 @@ impl Shared {
             | Message::Market { .. }
             | Message::Community { .. }
             | Message::Resolved { .. }
-            | Message::Defense { .. } => Flow::Continue,
+            | Message::Defense { .. }
+            | Message::QueryResult { .. }
+            | Message::Receipt { .. }
+            | Message::ModuleInfo { .. } => Flow::Continue,
             Message::GetManifest(h) => self.handle_get_manifest(ctx, h),
             Message::Manifest { hash, bytes } => self.handle_manifest(ctx, hash, bytes),
             Message::GetContent(id) => self.handle_get_content(ctx, id),
@@ -1449,6 +1459,118 @@ impl Shared {
                 if ctx.relay && self.content_wanted_from(ctx.id, id) {
                     self.send_to(ctx.id, Message::GetContent(id));
                 }
+                Flow::Continue
+            }
+            Message::Query {
+                community,
+                method,
+                args,
+                caller,
+            } => {
+                let reply = if !ctx.query_bucket.try_take(1) {
+                    Message::QueryResult {
+                        height: 0,
+                        ok: false,
+                        fuel_used: 0,
+                        output: vec![],
+                        error: "consultas demais; tente em instantes".into(),
+                    }
+                } else {
+                    // Copia só o necessário (código, armazenamento da
+                    // Comunidade) e executa fora do lock.
+                    let prepared = {
+                        let c = lock(&self.core);
+                        let state = c.chain.state();
+                        let rt = state.runtime();
+                        let quota = state.params().runtime.storage_quota;
+                        let fuel = QUERY_FUEL.min(state.params().runtime.max_call_fuel);
+                        let found = rz_core::runtime::check_method(&method)
+                            .and_then(|_| {
+                                rt.module_of(&community)
+                                    .ok_or("Comunidade sem módulo vinculado")
+                            })
+                            .and_then(|m| {
+                                rt.modules
+                                    .get(&m)
+                                    .map(|r| (m, r.code.clone()))
+                                    .ok_or("módulo ausente")
+                            });
+                        (
+                            found.map(|(m, code)| (m, code, rt.storage.get(&community).cloned())),
+                            c.chain.height(),
+                            quota,
+                            fuel,
+                        )
+                    };
+                    let (found, height, quota, fuel) = prepared;
+                    match found {
+                        Ok((module, code, storage)) => {
+                            let o = rz_core::runtime::execute(
+                                &module,
+                                &code,
+                                storage.as_ref(),
+                                &rz_core::runtime::Call {
+                                    community,
+                                    caller: caller.unwrap_or(Address(Hash32::ZERO)),
+                                    height: height + 1,
+                                    method: &method,
+                                    input: &args,
+                                    fuel,
+                                    quota,
+                                },
+                            );
+                            Message::QueryResult {
+                                height,
+                                ok: o.ok,
+                                fuel_used: o.fuel_used,
+                                output: o.output,
+                                error: o.error,
+                            }
+                        }
+                        Err(e) => Message::QueryResult {
+                            height,
+                            ok: false,
+                            fuel_used: 0,
+                            output: vec![],
+                            error: e.into(),
+                        },
+                    }
+                };
+                self.send_to(ctx.id, reply);
+                Flow::Continue
+            }
+            Message::GetReceipt(tx) => {
+                let msg = {
+                    let c = lock(&self.core);
+                    Message::Receipt {
+                        height: c.chain.height(),
+                        receipt: c
+                            .chain
+                            .state()
+                            .runtime()
+                            .receipt(&tx)
+                            .cloned()
+                            .map(Box::new),
+                    }
+                };
+                self.send_to(ctx.id, msg);
+                Flow::Continue
+            }
+            Message::GetModuleInfo(community) => {
+                let msg = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let rt = state.runtime();
+                    let b = rt.bindings.get(&community).cloned().unwrap_or_default();
+                    Message::ModuleInfo {
+                        height: c.chain.height(),
+                        community,
+                        module: b.module,
+                        seq: b.seq,
+                        usage: rt.usage(&community),
+                    }
+                };
+                self.send_to(ctx.id, msg);
                 Flow::Continue
             }
         }

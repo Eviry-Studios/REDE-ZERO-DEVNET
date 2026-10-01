@@ -18,6 +18,7 @@ rand_core.workspace = true
 
 [dev-dependencies]
 rz-node.workspace = true
+wat.workspace = true
 
 [lib]
 path = "src/lib.rs"

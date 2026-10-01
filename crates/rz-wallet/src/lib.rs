@@ -602,6 +602,137 @@ pub fn fetch_manifest(
     }
 }
 
+// --------------------------------------------------------- Exonet Runtime
+
+/// Resultado de uma consulta somente leitura.
+pub struct QueryView {
+    pub height: u64,
+    pub ok: bool,
+    pub fuel_used: u64,
+    pub output: Vec<u8>,
+    pub error: String,
+}
+
+pub fn query(
+    client: &mut Client,
+    community: Hash32,
+    method: &str,
+    args: &[u8],
+    caller: Option<Address>,
+) -> Result<QueryView, String> {
+    client
+        .request(
+            &Message::Query {
+                community,
+                method: method.into(),
+                args: args.to_vec(),
+                caller,
+            },
+            |m| match m {
+                Message::QueryResult {
+                    height,
+                    ok,
+                    fuel_used,
+                    output,
+                    error,
+                } => Some(QueryView {
+                    height,
+                    ok,
+                    fuel_used,
+                    output,
+                    error,
+                }),
+                _ => None,
+            },
+        )
+        .map_err(|e| e.to_string())
+}
+
+pub fn receipt(
+    client: &mut Client,
+    tx: Hash32,
+) -> Result<Option<rz_core::runtime::Receipt>, String> {
+    client
+        .request(&Message::GetReceipt(tx), |m| match m {
+            Message::Receipt { receipt, .. } => Some(receipt.map(|r| *r)),
+            _ => None,
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// `(módulo, contador de vinculações, bytes usados)` de uma Comunidade.
+pub fn module_info(
+    client: &mut Client,
+    community: Hash32,
+) -> Result<(Option<Hash32>, u32, u64), String> {
+    client
+        .request(&Message::GetModuleInfo(community), |m| match m {
+            Message::ModuleInfo {
+                community: c,
+                module,
+                seq,
+                usage,
+                ..
+            } if c == community => Some((module, seq, usage)),
+            _ => None,
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// Identificador de uma Comunidade a partir do nome ou do próprio id (HEX).
+pub fn community_id(client: &mut Client, spec: &str) -> Result<Hash32, String> {
+    if let Some(h) = Hash32::from_hex(spec) {
+        return Ok(h);
+    }
+    let name = spec
+        .strip_prefix("zero://")
+        .unwrap_or(spec)
+        .trim_end_matches(".comunidade");
+    community(client, name)?
+        .1
+        .map(|c| c.id)
+        .ok_or_else(|| format!("Comunidade não encontrada: {spec}"))
+}
+
+/// Envia uma chamada com a taxa exata para o combustível reservado e aguarda
+/// o recibo.
+pub fn call_module(
+    client: &mut Client,
+    genesis: &Genesis,
+    keys: &Keys,
+    community: Hash32,
+    method: &str,
+    args: &[u8],
+    fuel: u64,
+) -> Result<(TxId, rz_core::runtime::Receipt), String> {
+    let params = governance(client, None)?.params;
+    let fee = params
+        .runtime
+        .fuel_fee(fuel)
+        .and_then(|f| f.checked_add(params.min_fee))
+        .ok_or("combustível grande demais")?;
+    let id = send_account(
+        client,
+        genesis,
+        keys,
+        TxKind::CallModule {
+            community,
+            method: method.into(),
+            args: args.to_vec(),
+            fuel,
+        },
+        fee,
+    )?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while std::time::Instant::now() < deadline {
+        if let Some(r) = receipt(client, id.0)? {
+            return Ok((id, r));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    Err(format!("chamada {id} enviada, mas sem recibo até agora"))
+}
+
 // ------------------------------------------------------------------ Defesa
 
 /// Estado de defesa como visto por um Node.

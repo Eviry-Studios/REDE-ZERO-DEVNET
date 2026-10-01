@@ -153,6 +153,23 @@ target/release/zero-navegador --genesis $G --node 127.0.0.1:7100 --key alice.key
 
 Cada publicação abre numa origem própria (`laboratorio.app.localhost:7300`), verificada pedaço a pedaço contra o identificador registrado, isolada das outras e sem acesso a servidores externos. Assim, ela não revela seu IP a terceiros. As chaves nunca chegam às publicações: quando um site pede uma operação, você revisa e aprova em **Pedidos**, na interface do Navegador. Cada site vê uma identidade diferente, que não revela sua Wallet.
 
+### Lógica de Comunidades (Exonet Runtime)
+
+```bash
+# Módulo WebAssembly de exemplo (compile o .wat com wasm-tools ou outra ferramenta)
+wasm-tools parse examples/runtime/contador.wat -o contador.wasm
+$W module-check --file contador.wasm
+$W module-publish --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key --file contador.wasm
+# Duas das chaves da Comunidade aprovam o vínculo; qualquer conta envia
+$W module-bind-approve --genesis $G --node 127.0.0.1:7100 --key chave1.key --community cientistas --module ID_DO_MODULO
+$W module-bind --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key --community cientistas \
+    --module ID_DO_MODULO --approvals APROV1,APROV2
+$W call  --genesis $G --node 127.0.0.1:7100 --key alice.key --community cientistas --method incrementar
+$W query --genesis $G --node 127.0.0.1:7100 --community cientistas --method ler
+```
+
+O módulo roda isolado e de forma determinística em todos os validadores, pagando combustível. Ele só enxerga o armazenamento da própria Comunidade: não existe função para mexer em saldos, ZERO, consenso, governança ou outras Comunidades. No Navegador Zero, a interface da Comunidade consulta o módulo livremente e pede chamadas, que você aprova em **Pedidos**.
+
 ### Privacidade do seu IP
 
 Por padrão a Wallet só conecta a nodes **locais**. Para usar um node remoto sem expor seu IP, use Tor:
@@ -190,6 +207,7 @@ crates/
   rz-wallet           wallet privada por padrão (biblioteca + CLI, separada do node)
   rz-browser          Navegador Zero: interface local para a Exonet (zero-navegador)
 scripts/devnet.sh     DEVNET local com N validadores
+examples/runtime/     módulo de exemplo do Exonet Runtime
 ```
 
 ## Documentos
@@ -198,12 +216,12 @@ scripts/devnet.sh     DEVNET local com N validadores
 |---|---|---|
 | [Manifesto Exonet](docs/Manifesto_Exonet.pdf) | Por quê? | inicial |
 | [REQUIREMENTS.md](docs/REQUIREMENTS.md) | O que deve existir? | 0.2.0 |
-| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.7.0 |
+| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.8.0 |
 | [DEMOCRACIA_ORGANICA.md](docs/DEMOCRACIA_ORGANICA.md) | Como indivíduos e Comunidades participam? | 0.1.0 (conceitual) |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Como os componentes se organizam? | 0.1.0 |
 | [SPECIFICATIONS.md](docs/SPECIFICATIONS.md) | Quais são as regras técnicas? | 0.1.0 |
 | [spec/](spec/) | Regras exatas e testáveis por componente | DEVNET 0.1.0 |
-| [AUDIT.md](docs/AUDIT.md) | O que auditar, como reproduzir e o que a revisão interna encontrou? | 0.5.0 |
+| [AUDIT.md](docs/AUDIT.md) | O que auditar, como reproduzir e o que a revisão interna encontrou? | 0.6.0 |
 | [ACCEPTANCE_CRITERIA.md](docs/ACCEPTANCE_CRITERIA.md) | Quando uma implementação é conforme? | 0.1.0 |
 | [ACCEPTANCE_TESTS.md](docs/ACCEPTANCE_TESTS.md) | Como verificar? | 0.1.0 |
 | [docs/adr/](docs/adr/) | Por que cada escolha técnica? | — |
@@ -228,7 +246,7 @@ Seguindo a ordem recomendada em `SPECIFICATIONS.md §73`:
 | Governança bicameral | ✅ DEVNET ([ADR-0008](docs/adr/0008-governanca-bicameral.md)) | AT-GOV-001..005 + propriedades |
 | Comunidades (declaração, reconhecimento, posição, versões) e nomes `zero://` | ✅ DEVNET ([ADR-0015](docs/adr/0015-comunidades-e-nomes.md)) | AT-COM-001..004 |
 | Navegador Zero (origens isoladas, pedidos aprovados na interface, identidade por site) e conteúdo endereçado por hash replicado entre Nodes | ✅ DEVNET — auditoria pendente ([ADR-0017](docs/adr/0017-navegador-zero-e-conteudo.md)) | AT-BRW-001..003 |
-| Exonet Runtime | ⏳ | — |
+| Exonet Runtime (WebAssembly determinístico, isolado por Comunidade, combustível pago) | ✅ DEVNET — auditoria pendente ([ADR-0018](docs/adr/0018-exonet-runtime.md)) | AT-COM-003, teste de isolamento §73 |
 | Grande Mercado (leilão por bloco) e Pool permanente | ✅ DEVNET ([ADR-0014](docs/adr/0014-grande-mercado-e-pool.md)); ponte de ativos externos A DEFINIR | AT-MKT-001..004, AT-POOL-001..004, propriedades |
 | Defesa da Exonet (modos atestados com prazo, credenciais temporárias, isolamento, encerramento verificável) | ✅ DEVNET — auditoria pendente ([ADR-0016](docs/adr/0016-defesa-da-exonet.md)) | AT-DEF-001..003, AT-CYBER-001..006, AT-INC-001..003 |
 
@@ -239,6 +257,7 @@ Aceitas temporariamente e registradas em [`THREAT_MODEL.md §11`](docs/THREAT_MO
 * **Consenso Zero-BFT não auditado** ([ADR-0012](docs/adr/0012-consenso-zero-bft.md)): tolera menos de 1/3 do poder bizantino; com 1/3 ou mais offline a rede para (segurança antes de disponibilidade). Sem checkpoints contra ataque de longo alcance; o poder inicial vem do Genesis.
 * **Privacidade não auditada**: RingCT ([ADR-0009](docs/adr/0009-privacidade-transacional.md)) oferece anonimato probabilístico (anel de 11), não absoluto (`REQ-028`). Blindagens e retiradas são públicas.
 * **Canal cifrado e proteção de IP não auditados** ([ADR-0011](docs/adr/0011-protecao-do-ip.md)). Sem Tor e com `--direct`, o node escolhido vê seu IP.
+* **Exonet Runtime não auditado** ([ADR-0018](docs/adr/0018-exonet-runtime.md)): depende do interpretador `wasmi` na versão fixada; sem chamadas entre módulos nem aluguel de armazenamento.
 * **Navegador Zero não auditado** ([ADR-0017](docs/adr/0017-navegador-zero-e-conteudo.md)): o isolamento depende do navegador do sistema; envios privados ainda pela `zero-wallet`; links para a web comum saem da Exonet.
 * **Defesa não auditada** ([ADR-0016](docs/adr/0016-defesa-da-exonet.md)): depende de > 2/3 dos validadores; o isolamento só alcança conexões de saída, porque pares de entrada são anônimos; a detecção de anomalias é local.
 * **Governança**: a câmara de contribuição só pontua a produção de blocos, o que favorece validadores; votos são públicos nesta versão.

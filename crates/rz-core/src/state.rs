@@ -39,6 +39,7 @@ use crate::private::{
     accumulate, context as pctx, min_ring_size, shield_message, PrivateTx, ShieldedOutput,
     PRIVATE_TX_VERSION, RING_SIZE,
 };
+use crate::runtime::{self, ModuleRecord, Receipt, RuntimeState};
 use crate::tx::{AccountTx, Transaction, TxError, TxKind};
 
 /// Conta: saldo em unidades mínimas e contador de transações.
@@ -139,6 +140,8 @@ pub struct State {
     communities: CommunityState,
     /// Defesa da Exonet (ADR-0016).
     defense: DefenseState,
+    /// Exonet Runtime (ADR-0018).
+    runtime: RuntimeState,
 }
 
 /// ZERO em período de desvinculação.
@@ -172,6 +175,31 @@ struct Effect {
     market: Option<MarketEffect>,
     community: Option<CommunityEffect>,
     defense: Option<DefenseEffect>,
+    runtime: Option<RuntimeEffect>,
+}
+
+/// Alteração do Exonet Runtime produzida por uma transação. Chamadas são
+/// executadas na aplicação; uma falha dentro do módulo não invalida a
+/// transação (a taxa e o combustível reservado são pagos).
+enum RuntimeEffect {
+    /// A taxa por byte (já debitada) vai para o Pool.
+    Publish {
+        id: Hash32,
+        record: ModuleRecord,
+        fee: u64,
+    },
+    Bind {
+        community: Hash32,
+        module: Option<Hash32>,
+    },
+    Call {
+        community: Hash32,
+        module: Hash32,
+        method: String,
+        args: Vec<u8>,
+        fuel: u64,
+        caller: Address,
+    },
 }
 
 /// Alteração de defesa produzida por uma transação. As decisões atestadas
@@ -301,6 +329,7 @@ impl State {
                 market: MarketParams::default(),
                 communities: community::CommunityParams::default(),
                 defense: defense::DefenseParams::default(),
+                runtime: runtime::RuntimeParams::default(),
             },
             locks: BTreeMap::new(),
             next_lock_id: 0,
@@ -330,6 +359,7 @@ impl State {
             },
             communities: CommunityState::default(),
             defense: DefenseState::default(),
+            runtime: RuntimeState::default(),
         })
     }
 
@@ -393,6 +423,10 @@ impl State {
     }
 
     /// Estado de defesa da Exonet.
+    pub fn runtime(&self) -> &RuntimeState {
+        &self.runtime
+    }
+
     pub fn defense(&self) -> &DefenseState {
         &self.defense
     }
@@ -530,7 +564,8 @@ impl State {
             .put(&self.governance_root())
             .put(&self.market.root())
             .put(&self.communities.root())
-            .put(&self.defense.root());
+            .put(&self.defense.root())
+            .put(&self.runtime.root());
         hash(context::STATE_ROOT, &e.into_bytes())
     }
 
@@ -599,6 +634,10 @@ impl State {
         }
         if let Some(d) = effect.defense {
             self.apply_defense(d);
+        }
+        if let Some(r) = effect.runtime {
+            self.apply_runtime(r, tx.id().0, p.height)
+                .map_err(|_| TxError::Overflow)?;
         }
         match effect.gov {
             None => {}
@@ -887,6 +926,10 @@ impl State {
             | TxKind::RevokeCredential { .. }
             | TxKind::DefenseAction { .. }
             | TxKind::AttestContribution { .. } => 0,
+            TxKind::PublishModule { code } => (code.len() as u64)
+                .checked_mul(self.params.runtime.module_byte_fee)
+                .ok_or(TxError::Overflow)?,
+            TxKind::BindModule { .. } | TxKind::CallModule { .. } => 0,
             TxKind::Unlock { .. }
             | TxKind::Vote { .. }
             | TxKind::ReportEquivocation { .. }
@@ -914,6 +957,7 @@ impl State {
             market: None,
             community: None,
             defense: None,
+            runtime: None,
         };
         let g = &self.params.governance;
 
@@ -1294,6 +1338,83 @@ impl State {
                         registered_at: p.height,
                     },
                     fee: self.params.communities.name_fee,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::PublishModule { code } => {
+                let id = runtime::module_id(code);
+                if self.runtime.modules.contains_key(&id) {
+                    return Err(TxError::Runtime("módulo já publicado"));
+                }
+                runtime::validate_module(code).map_err(|_| {
+                    TxError::Runtime("módulo recusado: formato, ponto flutuante ou importações")
+                })?;
+                effect.runtime = Some(RuntimeEffect::Publish {
+                    id,
+                    record: ModuleRecord {
+                        code: code.clone(),
+                        publisher: sender,
+                        published_at: p.height,
+                    },
+                    fee: amount,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::BindModule {
+                community,
+                module,
+                approvals,
+            } => {
+                let c = self.recognized(community)?;
+                if let Some(m) = module {
+                    if !self.runtime.modules.contains_key(m) {
+                        return Err(TxError::Runtime("módulo não publicado"));
+                    }
+                }
+                let seq = self.runtime.bindings.get(community).map_or(0, |b| b.seq);
+                let payload = runtime::bind_payload(community, module, seq);
+                if !c.rule.verify(p.network_id, &payload, approvals) {
+                    return Err(TxError::Runtime(
+                        "vinculação sem aprovação válida da regra da Comunidade",
+                    ));
+                }
+                effect.runtime = Some(RuntimeEffect::Bind {
+                    community: *community,
+                    module: *module,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::CallModule {
+                community,
+                method,
+                args,
+                fuel,
+            } => {
+                let rp = &self.params.runtime;
+                if *fuel > rp.max_call_fuel {
+                    return Err(TxError::Runtime("combustível acima do limite por chamada"));
+                }
+                let needed = rp
+                    .fuel_fee(*fuel)
+                    .and_then(|f| f.checked_add(self.params.min_fee))
+                    .ok_or(TxError::Overflow)?;
+                if tx.body.fee < needed {
+                    return Err(TxError::FeeTooLow {
+                        fee: tx.body.fee,
+                        min: needed,
+                    });
+                }
+                let module = self
+                    .runtime
+                    .module_of(community)
+                    .ok_or(TxError::Runtime("Comunidade sem módulo vinculado"))?;
+                effect.runtime = Some(RuntimeEffect::Call {
+                    community: *community,
+                    module,
+                    method: method.clone(),
+                    args: args.clone(),
+                    fuel: *fuel,
+                    caller: sender,
                 });
                 effect.accounts.push((sender, sender_acc));
             }
@@ -1700,6 +1821,7 @@ impl State {
             market: None,
             community: None,
             defense: None,
+            runtime: None,
         })
     }
 }
@@ -2091,6 +2213,105 @@ impl State {
 
     /// Fim de bloco: modo vencido desce um nível; credenciais vencidas
     /// simplesmente deixam de autorizar (`Credential::allows`).
+    fn apply_runtime(
+        &mut self,
+        e: RuntimeEffect,
+        tx: Hash32,
+        height: u64,
+    ) -> Result<(), StateError> {
+        match e {
+            RuntimeEffect::Publish { id, record, fee } => {
+                self.runtime.modules.insert(id, record);
+                self.add_to_pool(AssetId::ZERO, fee)?;
+            }
+            RuntimeEffect::Bind { community, module } => {
+                let b = self.runtime.bindings.entry(community).or_default();
+                b.module = module;
+                b.seq = b.seq.saturating_add(1);
+            }
+            RuntimeEffect::Call {
+                community,
+                module,
+                method,
+                args,
+                fuel,
+                caller,
+            } => {
+                let Some(code) = self.runtime.modules.get(&module).map(|m| m.code.clone()) else {
+                    return Ok(());
+                };
+                let o = runtime::execute(
+                    &module,
+                    &code,
+                    self.runtime.storage.get(&community),
+                    &runtime::Call {
+                        community,
+                        caller,
+                        height,
+                        method: &method,
+                        input: &args,
+                        fuel,
+                        quota: self.params.runtime.storage_quota,
+                    },
+                );
+                if o.ok {
+                    self.runtime.commit(community, o.writes);
+                }
+                let mut output = o.output;
+                output.truncate(runtime::MAX_RECEIPT_OUTPUT);
+                self.runtime.push_receipt(Receipt {
+                    tx,
+                    community,
+                    method,
+                    ok: o.ok,
+                    fuel_used: o.fuel_used,
+                    output,
+                    error: o.error,
+                    height,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Consulta somente leitura ao módulo de uma Comunidade (interfaces).
+    /// Nada é gravado.
+    pub fn query_module(
+        &self,
+        community: &Hash32,
+        method: &str,
+        input: &[u8],
+        caller: Address,
+        height: u64,
+        fuel: u64,
+    ) -> Result<runtime::Outcome, &'static str> {
+        runtime::check_method(method)?;
+        let module = self
+            .runtime
+            .module_of(community)
+            .ok_or("Comunidade sem módulo vinculado")?;
+        let code = &self
+            .runtime
+            .modules
+            .get(&module)
+            .ok_or("módulo ausente")?
+            .code;
+        Ok(runtime::execute(
+            &module,
+            code,
+            self.runtime.storage.get(community),
+            &runtime::Call {
+                community: *community,
+                caller,
+                height,
+                method,
+                input,
+                fuel,
+                quota: self.params.runtime.storage_quota,
+            },
+        ))
+    }
+
     fn expire_defense(&mut self, height: u64) {
         let d = &self.defense;
         if d.mode != DefenseMode::Normal && height >= d.mode_expires_at {

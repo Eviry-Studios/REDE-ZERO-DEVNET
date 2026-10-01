@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.7.0
-**Status:** Modelo de ameaças — fase de definição (0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
+**Versão:** 0.8.0
+**Status:** Modelo de ameaças — fase de definição (0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -718,7 +718,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 **Severidade:** ALTA
 **Adversários:** ADV-08
-**Mitigações:** sandbox (`SPEC §62`): no Navegador Zero, cada publicação roda numa origem própria, sem acesso a outras publicações, à interface, a servidores externos ou a dispositivos (`spec/BROWSER.md §3`, ADR-0017); lógica em Exonet Runtime A DEFINIR; menor privilégio; nenhuma autoridade sobre consenso, saldos, regras monetárias ou outras Comunidades (`SPEC §61`). Não existe operação de Comunidade sobre esses domínios; testado com chaves de controle comprometidas em `at_com_003_compromised_community_isolated`. A assinatura de operações é sempre confirmada pela Wallet, fora do controle da Comunidade.
+**Mitigações:** sandbox (`SPEC §62`): no Navegador Zero, cada publicação roda numa origem própria, sem acesso a outras publicações, à interface, a servidores externos ou a dispositivos (`spec/BROWSER.md §3`, ADR-0017); lógica no Exonet Runtime (ADR-0018): o módulo só alcança o armazenamento da própria Comunidade, não existe função para saldos, ZERO, consenso, governança ou outras Comunidades, e módulos que tentem importá-las são recusados (`test_73_malicious_community_module_isolated`); menor privilégio; nenhuma autoridade sobre consenso, saldos, regras monetárias ou outras Comunidades (`SPEC §61`). Não existe operação de Comunidade sobre esses domínios; testado com chaves de controle comprometidas em `at_com_003_compromised_community_isolated`. A assinatura de operações é sempre confirmada pela Wallet, fora do controle da Comunidade.
 
 ### THR-COM-002 — Atualização maliciosa de Comunidade
 
@@ -747,6 +747,21 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Descrição:** uma publicação tenta carregar recursos de servidores externos para obter o IP do leitor, ler dados de outras publicações, usar câmera ou localização, ou aprovar operações em nome do leitor.
 
 **Mitigações:** origem própria por publicação; política de conteúdo restrita à própria origem, sem quadros, plugins, dispositivos nem referenciador; interface sem scripts; formulários da interface exigem origem e token; host e porta verificados contra DNS rebinding; identidade diferente por site, que não revela a Wallet nem permite correlação entre sites (`spec/BROWSER.md`, `spec/CONTENT.md §6`). **Risco residual:** links para a web comum, se clicados, saem da Exonet; vulnerabilidades do navegador do sistema.
+
+### THR-RT-001 — Esgotamento de validadores por código de Comunidade
+
+**Severidade:** ALTA
+**Adversários:** ADV-08, ADV-01
+**Descrição:** módulos com laços longos, uso excessivo de memória, recursão profunda ou crescimento ilimitado do armazenamento tornam a validação de blocos lenta ou inflam o estado.
+
+**Mitigações:** combustível medido por instrução e pago na taxa, mesmo em falha; limite por chamada e por bloco (teto absoluto); memória de até 4 MiB, recursão de até 1 024 níveis, limites estritos de estrutura; cota de armazenamento por Comunidade e custo por byte escrito; publicação paga por byte; consultas com limite de taxa (`spec/RUNTIME.md`).
+
+### THR-RT-002 — Divergência de execução entre Nodes
+
+**Severidade:** CRÍTICA
+**Descrição:** o mesmo módulo produz resultados diferentes em Nodes diferentes e divide a rede.
+
+**Mitigações:** sem ponto flutuante nem SIMD; despacho portátil do interpretador (não depende de otimização); limites fixos; pilha nativa fixa por execução; versão exata do interpretador fixada e tratada como parte do protocolo (`runtime_block_replay_is_deterministic`, `long_loop_ends_by_fuel_without_native_overflow`). **Risco residual:** defeitos do interpretador; exige auditoria.
 
 ### THR-CNT-001 — Abuso do armazenamento de conteúdo
 
@@ -932,6 +947,9 @@ Classificação de severidade (inicial, sujeita a revisão):
 | THR-BRW-002 | REQ-067 | spec/NAMING.md §3, spec/BROWSER.md §4 | names_registered_resolved_and_protected, browser_devnet |
 | THR-BRW-001 | REQ-065, INV-008 | SPEC §58, spec/BROWSER.md §5 | browser_devnet (pedidos) |
 | THR-BRW-003 | REQ-023, SPEC §62 | spec/BROWSER.md §3 | browser_devnet (cabeçalhos, origens) |
+| THR-COM-001 | SPEC §61, §62 | spec/RUNTIME.md §5 | test_73_malicious_community_module_isolated, runtime_devnet |
+| THR-RT-001 | REQ-053 | spec/RUNTIME.md §3, §4 | runtime_fees_and_fuel_limits, storage_quota_enforced |
+| THR-RT-002 | REQ-016 | spec/RUNTIME.md §8 | runtime_block_replay_is_deterministic |
 | THR-CNT-001/002 | REQ-070 | spec/CONTENT.md §2, §5 | rz-node content::tests, community_devnet, browser_devnet |
 | THR-POOL-001 | REQ-037, REQ-038 | SPEC §39, §40, spec/MARKET.md §5 | AT-POOL-002, AT-POOL-003, randomized_market_invariants |
 | THR-POOL-003 | REQ-039 | SPEC §41, spec/MARKET.md §1 | AT-POOL-004 |
@@ -971,6 +989,7 @@ Ameaças aceitas **temporariamente** na DEVNET, com registro explícito:
 | THR-POOL-002 | Sem ponte: apenas ativos **de teste** no Genesis da DEVNET | Ponte verificável sem custodiante único (nova ADR) |
 | THR-MKT-001 | Ordens públicas antes da inclusão; omissão por um bloco possível | Avaliação de ordens cifradas até a inclusão |
 | THR-DEF-001..004 | Defesa (ADR-0016) **sem auditoria**; decisões dependem de > 2/3 dos validadores; isolamento só de conexões de saída (pares de entrada são anônimos); detecção de anomalias local | Auditoria; avaliação do isolamento de pares de entrada sem quebrar o anonimato de clientes |
+| THR-RT-001/002 | Exonet Runtime (ADR-0018) **sem auditoria** do interpretador na configuração usada nem da tabela de combustível | Auditoria do `wasmi` e da tabela de custos; avaliação de aluguel de armazenamento |
 | THR-BRW-003 | Navegador Zero (ADR-0017) **sem auditoria**; isolamento depende do navegador do sistema; links para a web comum saem da Exonet | Auditoria; casca nativa com política de navegação |
 | THR-GOV-001/002 | Governança implementada (ADR-0008); a câmara de contribuição só pontua produção de blocos, então favorece validadores | Computação e contribuição defensiva verificáveis |
 
@@ -1027,7 +1046,7 @@ Toda alteração deverá possuir histórico, justificativa e versão (`REQ-086`,
 
 # 15. Status
 
-**THREAT_MODEL.md v0.7.0**
+**THREAT_MODEL.md v0.8.0**
 
 > **Modelo de ameaças inicial — não congelado.**
 

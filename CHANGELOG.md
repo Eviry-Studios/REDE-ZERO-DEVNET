@@ -61,6 +61,19 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Exonet Runtime
+
+* ADR-0018 e `spec/RUNTIME.md`:
+  * lógica de Comunidades em **WebAssembly** executado por `wasmi` 2.0.0 (versão fixada, parte do protocolo), sem ponto flutuante, com despacho portátil, limites fixos de memória e pilha, e combustível medido por instrução;
+  * módulos publicados na cadeia (taxa por byte para o Pool) e vinculados pela regra de decisão da Comunidade reconhecida, com contador contra repetição;
+  * chamadas como transações: combustível pago mesmo em falha; falhas não gravam nada nem invalidam o bloco; recibos no estado; limite de combustível por chamada e por bloco;
+  * cada módulo só alcança o armazenamento da própria Comunidade, com cota; não existe função sobre saldos, ZERO, consenso, governança ou outras Comunidades.
+* Operações `PublishModule` (0x60), `BindModule` (0x61), `CallModule` (0x62); parâmetros constitucionais `runtime_*` (tags 27–31); mensagens `QUERY`/`QUERY_RESULT`, `GET_RECEIPT`/`RECEIPT`, `GET_MODULE_INFO`/`MODULE_INFO` (`P2P_VERSION = 8`).
+* Wallet: `module-check`, `module-publish`, `module-bind-approve`, `module-bind`, `call`, `query`, `receipt`. Navegador: `/.zero/consulta`, `/.zero/recibo/TX` e pedidos `tipo=chamada`.
+* Exemplo `examples/runtime/contador.wat`, testado de ponta a ponta.
+* Testes do teste de isolamento §73, determinismo na reaplicação do bloco, limites e falhas.
+* `THREAT_MODEL.md` v0.8.0 (THR-RT-001/002), `AUDIT.md` v0.6.0.
+
 ### Adicionado — Navegador Zero e conteúdo da Exonet
 
 * ADR-0017, `spec/CONTENT.md` e `spec/BROWSER.md`:
@@ -120,6 +133,7 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 
 ### Protocolo
 
+* **Incompatível** com DEVNETs anteriores ao Exonet Runtime: parâmetros do Runtime no estado, raiz do estado com `runtime_root`, `P2P_VERSION = 8`.
 * **Incompatível** com Nodes anteriores ao Navegador Zero: novas mensagens de conteúdo, `P2P_VERSION = 7` (o estado não muda).
 * **Incompatível** com DEVNETs anteriores às Comunidades e à Defesa: parâmetros de Comunidades e defesa no estado, raiz do estado com `community_root` e `defense_root`, `P2P_VERSION = 6`.
 * **Incompatível** com DEVNETs anteriores ao Grande Mercado: Genesis com `assets`, parâmetros do mercado no estado, raiz do estado com `market_root`, `P2P_VERSION = 4`.

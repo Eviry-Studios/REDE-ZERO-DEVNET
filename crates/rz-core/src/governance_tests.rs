@@ -1128,3 +1128,397 @@ fn double_proposal_slashes_even_for_reproposal() {
         Err(TxError::InvalidEvidence("infração já punida"))
     );
 }
+
+// --------------------------------------------------------- Exonet Runtime
+// ADR-0018, spec/RUNTIME.md, SPEC §61–§62, ACCEPTANCE_TESTS §73.
+
+impl Sim {
+    fn tx_fee(&self, key: &SecretKey, kind: TxKind, fee: u64) -> Transaction {
+        TxBody {
+            version: TX_VERSION,
+            sender: key.public_key(),
+            nonce: self.state.account(&key.public_key().address()).nonce,
+            fee,
+            kind,
+        }
+        .sign(key, &self.g.network_id)
+        .unwrap()
+    }
+
+    fn call(&self, key: &SecretKey, community: Hash32, method: &str, fuel: u64) -> Transaction {
+        let fee = self.state.params().min_fee + self.state.params().runtime.fuel_fee(fuel).unwrap();
+        self.tx_fee(
+            key,
+            TxKind::CallModule {
+                community,
+                method: method.into(),
+                args: vec![],
+                fuel,
+            },
+            fee,
+        )
+    }
+
+    fn receipt(&self, tx: &Transaction) -> crate::runtime::Receipt {
+        self.state.runtime().receipt(&tx.id().0).unwrap().clone()
+    }
+}
+
+fn publish(sim: &mut Sim, code: &[u8]) -> Hash32 {
+    let tx = sim.tx(
+        &rich(),
+        TxKind::PublishModule {
+            code: code.to_vec(),
+        },
+    );
+    sim.block(vec![tx]);
+    crate::runtime::module_id(code)
+}
+
+fn bind(sim: &mut Sim, community: Hash32, module: Option<Hash32>, keys: &[SecretKey]) {
+    let seq = sim
+        .state
+        .runtime()
+        .bindings
+        .get(&community)
+        .map_or(0, |b| b.seq);
+    let payload = crate::runtime::bind_payload(&community, &module, seq);
+    let approvals = keys
+        .iter()
+        .map(|k| crate::community::approve(k, &sim.g.network_id, &payload))
+        .collect();
+    let tx = sim.tx(
+        &poor(),
+        TxKind::BindModule {
+            community,
+            module,
+            approvals,
+        },
+    );
+    sim.check(&tx).unwrap();
+    sim.block(vec![tx]);
+}
+
+fn counter_of(sim: &Sim, community: &Hash32) -> u64 {
+    sim.state
+        .runtime()
+        .storage
+        .get(community)
+        .and_then(|s| s.get(b"n".as_slice()))
+        .map(|v| u64::from_le_bytes(v.as_slice().try_into().unwrap()))
+        .unwrap_or(0)
+}
+
+#[test]
+fn runtime_publish_bind_call_query() {
+    let mut sim = Sim::new();
+    let ks = controllers();
+    let cid = recognize(&mut sim, "contadores", &ks);
+    let code = crate::runtime::tests::contador();
+    let pool_before = sim
+        .state
+        .market()
+        .pool_balance(&crate::market::AssetId::ZERO);
+    let module = publish(&mut sim, &code);
+    // A taxa por byte vai para o Pool permanente.
+    assert_eq!(
+        sim.state
+            .market()
+            .pool_balance(&crate::market::AssetId::ZERO)
+            - pool_before,
+        code.len() as u64 * sim.state.params().runtime.module_byte_fee
+    );
+    // Republicar o mesmo módulo é recusado.
+    let again = sim.tx(&rich(), TxKind::PublishModule { code: code.clone() });
+    assert!(matches!(sim.check(&again), Err(TxError::Runtime(_))));
+
+    bind(&mut sim, cid, Some(module), &ks[..2]);
+    assert_eq!(sim.state.runtime().module_of(&cid), Some(module));
+
+    for expected in 1..=2u64 {
+        let tx = sim.call(&rich(), cid, "incrementar", 1_000_000);
+        sim.block(vec![tx.clone()]);
+        let r = sim.receipt(&tx);
+        assert!(r.ok, "{}", r.error);
+        assert_eq!(r.output, expected.to_le_bytes());
+        assert_eq!(counter_of(&sim, &cid), expected);
+    }
+    // Consulta somente leitura: lê sem gravar.
+    let root = sim.state.root();
+    let o = sim
+        .state
+        .query_module(
+            &cid,
+            "incrementar",
+            &[],
+            rz_crypto::Address(Hash32::ZERO),
+            99,
+            1_000_000,
+        )
+        .unwrap();
+    assert_eq!(o.output, 3u64.to_le_bytes());
+    assert_eq!(sim.state.root(), root);
+    assert_eq!(counter_of(&sim, &cid), 2);
+}
+
+#[test]
+fn runtime_failed_call_pays_fee_and_writes_nothing() {
+    let mut sim = Sim::new();
+    let ks = controllers();
+    let cid = recognize(&mut sim, "falhas", &ks);
+    let module = publish(&mut sim, &crate::runtime::tests::contador());
+    bind(&mut sim, cid, Some(module), &ks[..2]);
+    let who = rich().public_key().address();
+    let before = sim.state.account(&who);
+    let tx = sim.call(&rich(), cid, "incrementar_e_abortar", 1_000_000);
+    let fee = match &tx {
+        Transaction::Account(a) => a.body.fee,
+        Transaction::Private(_) => unreachable!(),
+    };
+    sim.block(vec![tx.clone()]);
+    let r = sim.receipt(&tx);
+    assert!(!r.ok);
+    assert!(r.error.contains("falhou de proposito"));
+    assert_eq!(counter_of(&sim, &cid), 0);
+    let after = sim.state.account(&who);
+    assert_eq!(after.nonce, before.nonce + 1);
+    assert_eq!(after.balance, before.balance - fee);
+    // Laço infinito: termina por combustível e consome o reservado.
+    let tx = sim.call(&rich(), cid, "girar", 100_000);
+    sim.block(vec![tx.clone()]);
+    let r = sim.receipt(&tx);
+    assert!(!r.ok);
+    assert_eq!(r.fuel_used, 100_000);
+}
+
+#[test]
+fn runtime_binding_rules() {
+    let mut sim = Sim::new();
+    let ks = controllers();
+    let cid = recognize(&mut sim, "vinculos", &ks);
+    let declared = declare(&mut sim, "pendente", &ks);
+    let module = publish(&mut sim, &crate::runtime::tests::contador());
+    let net = sim.g.network_id.clone();
+    let make =
+        |sim: &Sim, community: Hash32, module: Option<Hash32>, seq: u32, keys: &[SecretKey]| {
+            let payload = crate::runtime::bind_payload(&community, &module, seq);
+            sim.tx(
+                &poor(),
+                TxKind::BindModule {
+                    community,
+                    module,
+                    approvals: keys
+                        .iter()
+                        .map(|k| crate::community::approve(k, &net, &payload))
+                        .collect(),
+                },
+            )
+        };
+    // Comunidade não reconhecida.
+    assert!(sim
+        .check(&make(&sim, declared, Some(module), 0, &ks[..2]))
+        .is_err());
+    // Aprovações insuficientes ou de outras chaves.
+    assert!(sim
+        .check(&make(&sim, cid, Some(module), 0, &ks[..1]))
+        .is_err());
+    let strangers: Vec<SecretKey> = (70..73).map(|i| SecretKey::from_seed([i; 32])).collect();
+    assert!(sim
+        .check(&make(&sim, cid, Some(module), 0, &strangers))
+        .is_err());
+    // Módulo inexistente.
+    assert!(sim
+        .check(&make(&sim, cid, Some(Hash32([5; 32])), 0, &ks[..2]))
+        .is_err());
+    // Vinculação válida; a mesma aprovação não pode ser reaproveitada depois
+    // (o contador de vinculações mudou).
+    let first = make(&sim, cid, Some(module), 0, &ks[..2]);
+    sim.block(vec![first]);
+    bind(&mut sim, cid, None, &ks[..2]);
+    assert_eq!(sim.state.runtime().module_of(&cid), None);
+    let replay = make(&sim, cid, Some(module), 0, &ks[..2]);
+    assert!(sim.check(&replay).is_err());
+    // Sem módulo vinculado, chamadas são recusadas.
+    assert!(matches!(
+        sim.check(&sim.call(&rich(), cid, "incrementar", 1_000)),
+        Err(TxError::Runtime(_))
+    ));
+}
+
+#[test]
+fn runtime_fees_and_fuel_limits() {
+    let mut sim = Sim::new();
+    let ks = controllers();
+    let cid = recognize(&mut sim, "limites", &ks);
+    let module = publish(&mut sim, &crate::runtime::tests::contador());
+    bind(&mut sim, cid, Some(module), &ks[..2]);
+    let rp = sim.state.params().runtime.clone();
+    // Taxa sem o combustível: recusada.
+    let cheap = sim.tx(
+        &rich(),
+        TxKind::CallModule {
+            community: cid,
+            method: "incrementar".into(),
+            args: vec![],
+            fuel: rp.max_call_fuel,
+        },
+    );
+    assert!(matches!(sim.check(&cheap), Err(TxError::FeeTooLow { .. })));
+    // Acima do limite por chamada.
+    let big = sim.call(&rich(), cid, "incrementar", rp.max_call_fuel + 1);
+    assert!(matches!(sim.check(&big), Err(TxError::Runtime(_))));
+    // Método com nome inválido.
+    let bad = sim.call(&rich(), cid, "Incrementar", 1_000);
+    assert!(matches!(sim.check(&bad), Err(TxError::Runtime(_))));
+    // Limite por bloco: a soma do combustível reservado não pode passar.
+    sim.state.params_mut().runtime.max_block_fuel = rp.max_call_fuel;
+    let a = sim.call(&rich(), cid, "incrementar", rp.max_call_fuel);
+    let b = sim.tx_fee(
+        &validator(),
+        TxKind::CallModule {
+            community: cid,
+            method: "incrementar".into(),
+            args: vec![],
+            fuel: 1,
+        },
+        sim.state.params().min_fee + 1,
+    );
+    let err = Block::build(
+        &sim.g,
+        sim.parent,
+        sim.height,
+        &sim.state,
+        sim.height + 1,
+        vec![a, b],
+        &validator(),
+    )
+    .unwrap_err();
+    assert!(matches!(err, crate::block::BlockError::FuelExceeded(_)));
+}
+
+// ACCEPTANCE_TESTS §73 — Comunidade maliciosa tenta alterar saldo, modificar
+// consenso, alterar outra Comunidade, criar ZERO e alterar governança.
+#[test]
+fn test_73_malicious_community_module_isolated() {
+    let mut sim = Sim::new();
+    let attacker: Vec<SecretKey> = (60..63).map(|i| SecretKey::from_seed([i; 32])).collect();
+    let victim_keys = controllers();
+    let bad = recognize(&mut sim, "maliciosa", &attacker);
+    let victim = recognize(&mut sim, "honesta", &victim_keys);
+
+    // Módulos que pedem acesso a saldos, emissão, consenso, governança ou a
+    // outra Comunidade não são publicáveis: essas funções não existem.
+    for f in [
+        "transferir",
+        "saldo",
+        "emitir_zero",
+        "votar",
+        "validadores",
+        "storage_set_de",
+    ] {
+        let w = format!(
+            r#"(module (import "zero" "{f}" (func (param i32 i32))) (memory (export "memory") 1))"#
+        );
+        let tx = sim.tx(
+            &rich(),
+            TxKind::PublishModule {
+                code: wat::parse_str(&w).unwrap(),
+            },
+        );
+        assert!(matches!(sim.check(&tx), Err(TxError::Runtime(_))), "{f}");
+    }
+
+    // O mesmo módulo vinculado às duas Comunidades: cada chamada só alcança o
+    // armazenamento da Comunidade chamada.
+    let module = publish(&mut sim, &crate::runtime::tests::contador());
+    bind(&mut sim, bad, Some(module), &attacker[..2]);
+    bind(&mut sim, victim, Some(module), &victim_keys[..2]);
+    let honest = sim.call(&rich(), victim, "incrementar", 1_000_000);
+    sim.block(vec![honest]);
+
+    let third_before = sim.state.account(&poor().public_key().address());
+    let supply = sim.state.total_supply();
+    let validators = sim.state.validators().clone();
+    let params = sim.state.params().clone();
+    let proposals: Vec<_> = sim.state.proposals().cloned().collect();
+    // A Comunidade maliciosa escreve muito no próprio espaço e tenta de tudo.
+    let mut txs = Vec::new();
+    for (i, m) in [
+        "incrementar",
+        "encher",
+        "incrementar_e_abortar",
+        "fora",
+        "girar",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let tx = sim.tx_fee(
+            &rich(),
+            TxKind::CallModule {
+                community: bad,
+                method: (*m).into(),
+                args: vec![],
+                fuel: 1_000_000,
+            },
+            params.min_fee + params.runtime.fuel_fee(1_000_000).unwrap(),
+        );
+        // Nonces sequenciais no mesmo bloco.
+        let tx = match tx {
+            Transaction::Account(a) => {
+                let mut body = a.body.clone();
+                body.nonce += i as u64;
+                body.sign(&rich(), &sim.g.network_id).unwrap()
+            }
+            Transaction::Private(_) => unreachable!(),
+        };
+        txs.push(tx);
+    }
+    sim.block(txs);
+
+    assert_eq!(counter_of(&sim, &victim), 1, "outra Comunidade intocada");
+    assert_eq!(
+        sim.state.account(&poor().public_key().address()),
+        third_before,
+        "saldo de terceiros intocado"
+    );
+    assert_eq!(sim.state.total_supply(), supply, "nenhum ZERO criado");
+    assert_eq!(sim.state.validators(), &validators, "consenso intocado");
+    assert_eq!(sim.state.params(), &params, "regras intocadas");
+    assert_eq!(
+        sim.state.proposals().cloned().collect::<Vec<_>>(),
+        proposals,
+        "governança intocada"
+    );
+    sim.state.check_supply().unwrap();
+}
+
+/// O resultado das chamadas é determinístico: outro Node que reaplica o
+/// bloco chega ao mesmo estado.
+#[test]
+fn runtime_block_replay_is_deterministic() {
+    let mut sim = Sim::new();
+    let ks = controllers();
+    let cid = recognize(&mut sim, "replay", &ks);
+    let module = publish(&mut sim, &crate::runtime::tests::contador());
+    bind(&mut sim, cid, Some(module), &ks[..2]);
+    let parent_state = sim.state.clone();
+    let (parent, parent_h) = (sim.parent, sim.height);
+    let txs = vec![
+        sim.call(&rich(), cid, "incrementar", 500_000),
+        sim.call(&poor(), cid, "girar", 70_000),
+    ];
+    let (b, s) = Block::build(
+        &sim.g,
+        parent,
+        parent_h,
+        &parent_state,
+        parent_h + 1,
+        txs,
+        &validator(),
+    )
+    .unwrap();
+    let replayed = crate::block::apply_block(&sim.g, parent, parent_h, &parent_state, &b).unwrap();
+    assert_eq!(replayed.root(), s.root());
+    assert_eq!(replayed.runtime(), s.runtime());
+}

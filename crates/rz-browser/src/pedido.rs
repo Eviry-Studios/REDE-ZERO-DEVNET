@@ -50,6 +50,38 @@ pub enum Operation {
     Sign {
         message: String,
     },
+    /// Chamada ao módulo de uma Comunidade (Exonet Runtime).
+    Call {
+        community: Hash32,
+        label: String,
+        method: String,
+        args: Vec<u8>,
+        fuel: u64,
+    },
+}
+
+/// Consultas ao Node necessárias para interpretar um pedido.
+pub trait Lookup {
+    fn assets(&self) -> Result<Vec<rz_core::market::AssetView>, String>;
+    fn community(&self, spec: &str) -> Result<Hash32, String>;
+}
+
+/// Bytes de argumento: `args` (texto) ou `args_hex`.
+pub fn args_of(f: &BTreeMap<String, String>) -> Result<Vec<u8>, String> {
+    match (f.get("args"), f.get("args_hex").filter(|h| !h.is_empty())) {
+        (_, Some(h)) => {
+            rz_crypto::hex::decode(h.trim()).ok_or_else(|| "campo 'args_hex' inválido".into())
+        }
+        (Some(t), None) => Ok(t.as_bytes().to_vec()),
+        (None, None) => Ok(Vec::new()),
+    }
+    .and_then(|a| {
+        if a.len() > rz_core::runtime::MAX_ARGS {
+            Err("argumentos longos demais".into())
+        } else {
+            Ok(a)
+        }
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,6 +169,33 @@ impl Operation {
                 ),
                 l("Privacidade", "votos são públicos nesta versão".into()),
             ],
+            Operation::Call {
+                community,
+                label,
+                method,
+                args,
+                fuel,
+            } => vec![
+                l("Operação", "chamada ao módulo de uma Comunidade".into()),
+                l("Comunidade", format!("{label} ({community})")),
+                l("Método", method.clone()),
+                l(
+                    "Argumentos",
+                    match std::str::from_utf8(args) {
+                        Ok(t) if !t.chars().any(char::is_control) => t.to_string(),
+                        _ => rz_crypto::hex::encode(args),
+                    },
+                ),
+                l(
+                    "Combustível reservado",
+                    format!("{fuel} (pago mesmo se a chamada falhar)"),
+                ),
+                l(
+                    "Alcance",
+                    "só o armazenamento desta Comunidade; nunca saldos ou outras Comunidades"
+                        .into(),
+                ),
+            ],
             Operation::Sign { message } => vec![
                 l(
                     "Operação",
@@ -173,6 +232,18 @@ impl Operation {
                 proposal: *proposal,
                 choice: *choice,
             },
+            Operation::Call {
+                community,
+                method,
+                args,
+                fuel,
+                ..
+            } => TxKind::CallModule {
+                community: *community,
+                method: method.clone(),
+                args: args.clone(),
+                fuel: *fuel,
+            },
             Operation::Sign { .. } => return None,
         })
     }
@@ -180,10 +251,7 @@ impl Operation {
 
 /// Campos de formulário → operação. Ordens precisam dos ativos registrados
 /// (casas decimais); `assets` os fornece sob demanda.
-pub fn parse(
-    f: &BTreeMap<String, String>,
-    assets: impl FnOnce() -> Result<Vec<rz_core::market::AssetView>, String>,
-) -> Result<Operation, String> {
+pub fn parse(f: &BTreeMap<String, String>, lookup: &dyn Lookup) -> Result<Operation, String> {
     let get = |k: &str| {
         f.get(k)
             .map(|s| s.trim())
@@ -211,7 +279,8 @@ pub fn parse(
                 Some((net, r)) => AssetId::external(net, r),
                 None => AssetId(Hash32::from_hex(spec).ok_or("campo 'ativo' inválido")?),
             };
-            let a = assets()?
+            let a = lookup
+                .assets()?
                 .into_iter()
                 .find(|a| a.id == id)
                 .ok_or("ativo não registrado")?;
@@ -246,6 +315,29 @@ pub fn parse(
             choice: Choice::parse(get("escolha")?)
                 .ok_or("campo 'escolha': sim, nao ou abstencao")?,
         }),
+        "chamada" => {
+            let label = get("comunidade")?.to_string();
+            let method = get("metodo")?.to_string();
+            rz_core::runtime::check_method(&method)?;
+            let fuel = match f
+                .get("combustivel")
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+            {
+                Some(v) => v.parse().map_err(|_| "campo 'combustivel' inválido")?,
+                None => 1_000_000,
+            };
+            if fuel == 0 {
+                return Err("combustível nulo".into());
+            }
+            Ok(Operation::Call {
+                community: lookup.community(&label)?,
+                label,
+                method,
+                args: args_of(f)?,
+                fuel,
+            })
+        }
         "assinatura" => {
             let message = get("mensagem")?.to_string();
             if message.len() > MAX_MESSAGE {
@@ -352,6 +444,21 @@ mod tests {
             .collect()
     }
 
+    struct NoLookup;
+
+    impl Lookup for NoLookup {
+        fn assets(&self) -> Result<Vec<rz_core::market::AssetView>, String> {
+            Err("sem Node".into())
+        }
+        fn community(&self, spec: &str) -> Result<Hash32, String> {
+            if spec == "contadores" {
+                Ok(Hash32([4; 32]))
+            } else {
+                Err("Comunidade não encontrada".into())
+            }
+        }
+    }
+
     #[test]
     fn parse_operations() {
         let to = Address(Hash32([1; 32]));
@@ -361,7 +468,7 @@ mod tests {
                 ("para", &to.to_hex()),
                 ("valor", "1.5"),
             ]),
-            || unreachable!(),
+            &NoLookup,
         )
         .unwrap();
         assert_eq!(
@@ -371,12 +478,30 @@ mod tests {
                 amount: rz_core::UNITS_PER_ZERO * 3 / 2
             }
         );
-        assert!(parse(&form(&[("tipo", "transferencia")]), || unreachable!()).is_err());
-        assert!(parse(&form(&[("tipo", "apagar-tudo")]), || unreachable!()).is_err());
+        assert!(parse(&form(&[("tipo", "transferencia")]), &NoLookup).is_err());
+        assert!(parse(&form(&[("tipo", "apagar-tudo")]), &NoLookup).is_err());
         let long = "x".repeat(MAX_MESSAGE + 1);
         assert!(parse(
             &form(&[("tipo", "assinatura"), ("mensagem", &long)]),
-            || unreachable!()
+            &NoLookup
+        )
+        .is_err());
+        let call = parse(
+            &form(&[
+                ("tipo", "chamada"),
+                ("comunidade", "contadores"),
+                ("metodo", "incrementar"),
+                ("args_hex", "0102"),
+            ]),
+            &NoLookup,
+        )
+        .unwrap();
+        assert!(
+            matches!(call, Operation::Call { ref args, fuel: 1_000_000, .. } if args == &[1, 2])
+        );
+        assert!(parse(
+            &form(&[("tipo", "chamada"), ("comunidade", "x"), ("metodo", "Mau")]),
+            &NoLookup
         )
         .is_err());
     }

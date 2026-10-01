@@ -90,6 +90,19 @@ Conteúdo da Exonet (ADR-0017) — publicações verificadas por hash:
                       [--module HEX] --out ARQUIVO          manifesto estruturado de Comunidade
   zero-wallet manifest-publish --genesis FILE --node ADDR --file ARQUIVO
   Publicar um site: content-pack → name-register --target ID → content-publish.
+Exonet Runtime (ADR-0018) — lógica de Comunidades em WebAssembly isolado:
+  zero-wallet module-check --file MODULO.wasm               valida localmente e mostra o id
+  zero-wallet module-publish --genesis FILE --node ADDR --key FILE --file MODULO.wasm
+  zero-wallet module-bind-approve --genesis FILE --node ADDR --key CHAVE_DA_COMUNIDADE
+                      --community NOME|HEX (--module HEX | --module nenhum)
+  zero-wallet module-bind --genesis FILE --node ADDR --key FILE --community NOME|HEX
+                      (--module HEX | --module nenhum) --approvals HEX,HEX,...
+  zero-wallet call  --genesis FILE --node ADDR --key FILE --community NOME|HEX --method M
+                      [--args TEXTO | --args-hex HEX] [--fuel N]
+  zero-wallet query --genesis FILE --node ADDR --community NOME|HEX --method M [--args ...]
+  zero-wallet receipt --genesis FILE --node ADDR --tx HEX
+  O módulo só alcança o armazenamento da própria Comunidade: não há acesso a saldos,
+  consenso, governança ou outras Comunidades. Chamadas que falham pagam a taxa.
   O node só hospeda conteúdo referenciado pelo estado (nome ou manifesto).
 Defesa da Exonet (ADR-0016) — decisões exigem atestações de validadores:
   zero-wallet defense --genesis FILE --node ADDR
@@ -206,6 +219,13 @@ fn main() -> ExitCode {
         "content-get" => cmd_content_get(&args),
         "manifest-new" => cmd_manifest_new(&args),
         "manifest-publish" => cmd_manifest_publish(&args),
+        "module-check" => cmd_module_check(&args),
+        "module-publish" => cmd_module_publish(&args),
+        "module-bind-approve" => cmd_module_bind(&args, false),
+        "module-bind" => cmd_module_bind(&args, true),
+        "call" => cmd_call(&args),
+        "query" => cmd_query(&args),
+        "receipt" => cmd_receipt(&args),
         "defense" => cmd_defense(&args),
         "defense-attest" => cmd_defense_decision(&args, false),
         "defense-submit" => cmd_defense_decision(&args, true),
@@ -1076,6 +1096,166 @@ fn cmd_manifest_publish(args: &Args) -> Result<(), String> {
     let (mut client, _) = open(args)?;
     let h = rz_wallet::publish_manifest(&mut client, &bytes)?;
     println!("manifesto {h} hospedado pelo node");
+    Ok(())
+}
+
+// ------------------------------------------------------- Exonet Runtime
+
+fn module_file(args: &Args) -> Result<Vec<u8>, String> {
+    let file = args.req("file")?;
+    let code = fs::read(file).map_err(|e| format!("{file}: {e}"))?;
+    rz_core::runtime::validate_module(&code)?;
+    Ok(code)
+}
+
+fn cmd_module_check(args: &Args) -> Result<(), String> {
+    let code = module_file(args)?;
+    println!("módulo válido: {} bytes", code.len());
+    println!("id: {}", rz_core::runtime::module_id(&code));
+    let fee = code.len() as u64 * rz_core::runtime::RuntimeParams::default().module_byte_fee;
+    println!(
+        "taxa de publicação (parâmetros padrão): {} ZERO, para o Pool",
+        format_zero(fee)
+    );
+    Ok(())
+}
+
+fn cmd_module_publish(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let code = module_file(args)?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::PublishModule { code: code.clone() },
+        fee,
+    )?;
+    println!("publicação {id} enviada");
+    println!("id do módulo: {}", rz_core::runtime::module_id(&code));
+    Ok(())
+}
+
+fn module_arg(args: &Args) -> Result<Option<Hash32>, String> {
+    match args.req("module")? {
+        "nenhum" => Ok(None),
+        h => Hash32::from_hex(h)
+            .map(Some)
+            .ok_or_else(|| "--module: use HEX ou nenhum".into()),
+    }
+}
+
+fn cmd_module_bind(args: &Args, submit: bool) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let module = module_arg(args)?;
+    let (mut client, genesis) = open(args)?;
+    let community = rz_wallet::community_id(&mut client, args.req("community")?)?;
+    if !submit {
+        let (_, seq, _) = rz_wallet::module_info(&mut client, community)?;
+        let payload = rz_core::runtime::bind_payload(&community, &module, seq);
+        let approval =
+            rz_core::community::approve(&keys.transparent, &genesis.network_id, &payload);
+        println!("{}", rz_crypto::hex::encode(&approval.to_canonical_bytes()));
+        return Ok(());
+    }
+    let approvals = approvals_arg(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::BindModule {
+            community,
+            module,
+            approvals,
+        },
+        fee,
+    )?;
+    println!("vinculação {id} enviada");
+    Ok(())
+}
+
+fn call_args(args: &Args) -> Result<Vec<u8>, String> {
+    match (args.get("args"), args.get("args-hex")) {
+        (Some(t), None) => Ok(t.as_bytes().to_vec()),
+        (None, Some(h)) => rz_crypto::hex::decode(h).ok_or_else(|| "--args-hex inválido".into()),
+        (None, None) => Ok(Vec::new()),
+        (Some(_), Some(_)) => Err("use --args ou --args-hex, não ambos".into()),
+    }
+}
+
+fn show_output(out: &[u8]) {
+    match std::str::from_utf8(out) {
+        Ok(t) if !t.is_empty() && t.chars().all(|c| !c.is_control() || c == '\n') => {
+            println!("saída: {t}")
+        }
+        _ => println!("saída (hex): {}", rz_crypto::hex::encode(out)),
+    }
+}
+
+fn cmd_call(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let input = call_args(args)?;
+    let fuel: u64 = match args.get("fuel") {
+        Some(f) => f.parse().map_err(|_| "--fuel: número inválido")?,
+        None => 1_000_000,
+    };
+    let (mut client, genesis) = open(args)?;
+    let community = rz_wallet::community_id(&mut client, args.req("community")?)?;
+    let (id, r) = rz_wallet::call_module(
+        &mut client,
+        &genesis,
+        &keys,
+        community,
+        args.req("method")?,
+        &input,
+        fuel,
+    )?;
+    println!("chamada {id} na altura {}", r.height);
+    println!("combustível usado: {} de {fuel}", r.fuel_used);
+    if r.ok {
+        show_output(&r.output);
+    } else {
+        println!("falhou (taxa paga, nada gravado): {}", r.error);
+    }
+    Ok(())
+}
+
+fn cmd_query(args: &Args) -> Result<(), String> {
+    let input = call_args(args)?;
+    let (mut client, _) = open(args)?;
+    let community = rz_wallet::community_id(&mut client, args.req("community")?)?;
+    let v = rz_wallet::query(&mut client, community, args.req("method")?, &input, None)?;
+    println!("altura {} | combustível {}", v.height, v.fuel_used);
+    if v.ok {
+        show_output(&v.output);
+    } else {
+        println!("falhou: {}", v.error);
+    }
+    Ok(())
+}
+
+fn cmd_receipt(args: &Args) -> Result<(), String> {
+    let tx = hash_arg(args, "tx")?;
+    let (mut client, _) = open(args)?;
+    match rz_wallet::receipt(&mut client, tx)? {
+        Some(r) => {
+            println!(
+                "{} na altura {} | método {} | combustível {}",
+                if r.ok { "sucesso" } else { "falha" },
+                r.height,
+                r.method,
+                r.fuel_used
+            );
+            if r.ok {
+                show_output(&r.output);
+            } else {
+                println!("erro: {}", r.error);
+            }
+        }
+        None => println!("sem recibo (pendente, antigo demais ou não é chamada ao Runtime)"),
+    }
     Ok(())
 }
 

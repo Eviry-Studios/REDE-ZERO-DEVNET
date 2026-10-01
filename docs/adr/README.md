@@ -34,6 +34,7 @@ Uma decisão com escopo `DEVNET` **não** vale automaticamente para outros ambie
 | [0015](0015-comunidades-e-nomes.md) | Comunidades com regra de decisão declarada e nomes `zero://` | DEVNET → TESTNET | Aceita |
 | [0016](0016-defesa-da-exonet.md) | Defesa da Exonet por atestação de validadores, com expiração automática | DEVNET → TESTNET | Aceita |
 | [0017](0017-navegador-zero-e-conteudo.md) | Navegador Zero como interface local com isolamento por origem, e conteúdo endereçado por hash | DEVNET → TESTNET | Aceita |
+| [0018](0018-exonet-runtime.md) | Exonet Runtime: WebAssembly determinístico, isolado por Comunidade | DEVNET → TESTNET | Aceita |
 
 ## Modelo
 
