@@ -731,6 +731,43 @@ fn corpus() -> Corpus {
             }],
         },
     ]);
+    // Conteúdo da Exonet (spec/CONTENT.md).
+    let blob: Vec<u8> = (0..3000u32).map(|i| i as u8).collect();
+    let info = rz_core::content::describe(&blob).expect("objeto válido");
+    let manifest = rz_core::content::Manifest {
+        name: "cientistas".into(),
+        version: 2,
+        description: "x".into(),
+        frontend: Some(info.id()),
+        module: Some(Hash32([4; 32])),
+    }
+    .to_bytes();
+    messages.extend([
+        Message::GetManifest(Hash32([5; 32])),
+        Message::Manifest {
+            hash: rz_core::content::Manifest::hash_of(&manifest),
+            bytes: Some(manifest),
+        },
+        Message::Manifest {
+            hash: Hash32([5; 32]),
+            bytes: None,
+        },
+        Message::GetContent(info.id()),
+        Message::ContentInfo {
+            id: info.id(),
+            info: Some(info.clone()),
+        },
+        Message::GetChunk {
+            id: info.id(),
+            index: 0,
+        },
+        Message::Chunk {
+            id: info.id(),
+            index: 0,
+            data: Some(blob),
+        },
+        Message::HaveContent(info.id()),
+    ]);
     for tx in &defense_txs {
         messages.push(Message::Transaction(tx.clone()));
     }

@@ -137,6 +137,22 @@ $W defense-action --genesis $G --node 127.0.0.1:7100 --key portador.key \
 
 Subir para vigilância exige mais de 1/3 do poder de voto; incidente, guerra cibernética, credenciais e encerramento exigem mais de 2/3; descer e revogar, mais de 1/3. Todo modo vence e desce um nível sozinho sem renovação, e não existe operação ofensiva.
 
+### Navegador Zero e publicações `zero://`
+
+```bash
+# Publicar um site: empacotar, registrar o nome apontando para o id, enviar ao node
+$W content-pack --dir meu-site --out site.pacote            # mostra o id do conteúdo
+$W name-register --genesis $G --node 127.0.0.1:7100 --key devnet-data/faucet.key \
+    --name zero://laboratorio.app --target ID_DO_CONTEUDO
+$W content-publish --genesis $G --node 127.0.0.1:7100 --file site.pacote
+
+# Navegar
+target/release/zero-navegador --genesis $G --node 127.0.0.1:7100 --key alice.key
+# abra http://navegador.localhost:7300 e digite zero://laboratorio.app
+```
+
+Cada publicação abre numa origem própria (`laboratorio.app.localhost:7300`), verificada pedaço a pedaço contra o identificador registrado, isolada das outras e sem acesso a servidores externos. Assim, ela não revela seu IP a terceiros. As chaves nunca chegam às publicações: quando um site pede uma operação, você revisa e aprova em **Pedidos**, na interface do Navegador. Cada site vê uma identidade diferente, que não revela sua Wallet.
+
 ### Privacidade do seu IP
 
 Por padrão a Wallet só conecta a nodes **locais**. Para usar um node remoto sem expor seu IP, use Tor:
@@ -172,6 +188,7 @@ crates/
   rz-p2p              canal cifrado, SOCKS5/Tor, mensagens, handshake, limites    spec/P2P.md
   rz-node             node: rede, Dandelion++, sincronização, produção de blocos, disco
   rz-wallet           wallet privada por padrão (biblioteca + CLI, separada do node)
+  rz-browser          Navegador Zero: interface local para a Exonet (zero-navegador)
 scripts/devnet.sh     DEVNET local com N validadores
 ```
 
@@ -181,12 +198,12 @@ scripts/devnet.sh     DEVNET local com N validadores
 |---|---|---|
 | [Manifesto Exonet](docs/Manifesto_Exonet.pdf) | Por quê? | inicial |
 | [REQUIREMENTS.md](docs/REQUIREMENTS.md) | O que deve existir? | 0.2.0 |
-| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.6.0 |
+| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.7.0 |
 | [DEMOCRACIA_ORGANICA.md](docs/DEMOCRACIA_ORGANICA.md) | Como indivíduos e Comunidades participam? | 0.1.0 (conceitual) |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Como os componentes se organizam? | 0.1.0 |
 | [SPECIFICATIONS.md](docs/SPECIFICATIONS.md) | Quais são as regras técnicas? | 0.1.0 |
 | [spec/](spec/) | Regras exatas e testáveis por componente | DEVNET 0.1.0 |
-| [AUDIT.md](docs/AUDIT.md) | O que auditar, como reproduzir e o que a revisão interna encontrou? | 0.4.0 |
+| [AUDIT.md](docs/AUDIT.md) | O que auditar, como reproduzir e o que a revisão interna encontrou? | 0.5.0 |
 | [ACCEPTANCE_CRITERIA.md](docs/ACCEPTANCE_CRITERIA.md) | Quando uma implementação é conforme? | 0.1.0 |
 | [ACCEPTANCE_TESTS.md](docs/ACCEPTANCE_TESTS.md) | Como verificar? | 0.1.0 |
 | [docs/adr/](docs/adr/) | Por que cada escolha técnica? | — |
@@ -210,7 +227,8 @@ Seguindo a ordem recomendada em `SPECIFICATIONS.md §73`:
 | Proteção do IP (canal cifrado, Tor, node privado) | ✅ DEVNET — auditoria pendente | `rz-p2p`, `rz-wallet/tests/network_privacy.rs` |
 | Governança bicameral | ✅ DEVNET ([ADR-0008](docs/adr/0008-governanca-bicameral.md)) | AT-GOV-001..005 + propriedades |
 | Comunidades (declaração, reconhecimento, posição, versões) e nomes `zero://` | ✅ DEVNET ([ADR-0015](docs/adr/0015-comunidades-e-nomes.md)) | AT-COM-001..004 |
-| Exonet Runtime, Navegador Zero | ⏳ | — |
+| Navegador Zero (origens isoladas, pedidos aprovados na interface, identidade por site) e conteúdo endereçado por hash replicado entre Nodes | ✅ DEVNET — auditoria pendente ([ADR-0017](docs/adr/0017-navegador-zero-e-conteudo.md)) | AT-BRW-001..003 |
+| Exonet Runtime | ⏳ | — |
 | Grande Mercado (leilão por bloco) e Pool permanente | ✅ DEVNET ([ADR-0014](docs/adr/0014-grande-mercado-e-pool.md)); ponte de ativos externos A DEFINIR | AT-MKT-001..004, AT-POOL-001..004, propriedades |
 | Defesa da Exonet (modos atestados com prazo, credenciais temporárias, isolamento, encerramento verificável) | ✅ DEVNET — auditoria pendente ([ADR-0016](docs/adr/0016-defesa-da-exonet.md)) | AT-DEF-001..003, AT-CYBER-001..006, AT-INC-001..003 |
 
@@ -221,6 +239,7 @@ Aceitas temporariamente e registradas em [`THREAT_MODEL.md §11`](docs/THREAT_MO
 * **Consenso Zero-BFT não auditado** ([ADR-0012](docs/adr/0012-consenso-zero-bft.md)): tolera menos de 1/3 do poder bizantino; com 1/3 ou mais offline a rede para (segurança antes de disponibilidade). Sem checkpoints contra ataque de longo alcance; o poder inicial vem do Genesis.
 * **Privacidade não auditada**: RingCT ([ADR-0009](docs/adr/0009-privacidade-transacional.md)) oferece anonimato probabilístico (anel de 11), não absoluto (`REQ-028`). Blindagens e retiradas são públicas.
 * **Canal cifrado e proteção de IP não auditados** ([ADR-0011](docs/adr/0011-protecao-do-ip.md)). Sem Tor e com `--direct`, o node escolhido vê seu IP.
+* **Navegador Zero não auditado** ([ADR-0017](docs/adr/0017-navegador-zero-e-conteudo.md)): o isolamento depende do navegador do sistema; envios privados ainda pela `zero-wallet`; links para a web comum saem da Exonet.
 * **Defesa não auditada** ([ADR-0016](docs/adr/0016-defesa-da-exonet.md)): depende de > 2/3 dos validadores; o isolamento só alcança conexões de saída, porque pares de entrada são anônimos; a detecção de anomalias é local.
 * **Governança**: a câmara de contribuição só pontua a produção de blocos, o que favorece validadores; votos são públicos nesta versão.
 * **Chaves em arquivo local** sem cifragem (permissão `0600`).

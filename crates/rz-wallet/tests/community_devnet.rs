@@ -7,12 +7,20 @@
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use rz_codec::Encode;
 use rz_core::community::{approve, position_payload, CommunityStatus, DecisionRule, NameKind};
 use rz_core::governance::{Category, Choice};
 use rz_core::{Allocation, Genesis, GovernanceParams, NetworkKind, TxKind, PROTOCOL_VERSION};
 use rz_crypto::{Hash32, SecretKey};
 use rz_node::{now_ms, LogLevel, Node, NodeConfig};
-use rz_wallet::{community, connect, governance, resolve, send_account, Keys};
+use rz_wallet::{
+    community, connect, fetch_content, fetch_manifest, governance, publish_content,
+    publish_manifest, resolve, send_account, Keys,
+};
+
+fn a_manifest(bytes: &[u8]) -> Hash32 {
+    rz_core::content::Manifest::hash_of(bytes)
+}
 
 const NET: &str = "rede-zero-devnet-com";
 
@@ -127,13 +135,30 @@ fn community_recognized_and_replicated() {
     assert!(wait_until(|| governance(&mut c, Some(f.address()))
         .map(|v| v.locks.len() == 1)
         .unwrap_or(false)));
+    // Interface e manifesto estruturado (spec/CONTENT.md).
+    let site = rz_core::content::Bundle::new(vec![rz_core::content::BundleFile {
+        path: "index.html".into(),
+        mime: "text/html; charset=utf-8".into(),
+        data: b"<h1>Cientistas</h1>".to_vec(),
+    }])
+    .unwrap()
+    .to_canonical_bytes();
+    let frontend = rz_core::content::describe(&site).unwrap().id();
+    let manifest = rz_core::content::Manifest {
+        name: "cientistas".into(),
+        version: 1,
+        description: "Comunidade de ciência aberta".into(),
+        frontend: Some(frontend),
+        module: None,
+    }
+    .to_bytes();
     let cid = send_account(
         &mut c,
         &g,
         &f,
         TxKind::DeclareCommunity {
             name: "cientistas".into(),
-            manifest_hash: Hash32([0x5c; 32]),
+            manifest_hash: rz_core::content::Manifest::hash_of(&manifest),
             rule,
         },
         10,
@@ -143,6 +168,10 @@ fn community_recognized_and_replicated() {
     assert!(wait_until(|| community(&mut c2, "cientistas")
         .map(|(_, c)| c.is_some_and(|c| c.status == CommunityStatus::Declared))
         .unwrap_or(false)));
+    // O manifesto de uma Comunidade declarada já pode ser hospedado; a
+    // interface, só depois do reconhecimento.
+    publish_manifest(&mut c, &manifest).unwrap();
+    assert!(publish_content(&mut c, &site).is_err());
 
     // 2. Reconhecimento por proposta da categoria Comunidade (N-7).
     let prop = send_account(
@@ -227,6 +256,18 @@ fn community_recognized_and_replicated() {
     )
     .map(|(t, _)| t == Some(Hash32([0x1a; 32])))
     .unwrap_or(false)));
+
+    // Interface publicada num Node e obtida pelo outro, verificada contra o
+    // manifesto registrado (replicação sob demanda).
+    assert_eq!(publish_content(&mut c, &site).unwrap(), frontend);
+    let m = fetch_manifest(&mut c2, &a_manifest(&manifest), Duration::from_secs(10))
+        .unwrap()
+        .unwrap();
+    assert_eq!(m, manifest);
+    assert_eq!(
+        fetch_content(&mut c2, &frontend, Duration::from_secs(10)).unwrap(),
+        site
+    );
 
     // AT-COM-004 — o registro da Comunidade é idêntico nos dois Nodes.
     let a = community(&mut c, "cientistas").unwrap().1.unwrap();

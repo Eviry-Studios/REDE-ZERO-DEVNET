@@ -8,6 +8,7 @@ pub mod amount;
 pub mod block;
 pub mod community;
 pub mod consensus;
+pub mod content;
 pub mod defense;
 #[cfg(test)]
 mod defense_tests;

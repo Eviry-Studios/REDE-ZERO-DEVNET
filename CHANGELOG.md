@@ -61,6 +61,18 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Navegador Zero e conteúdo da Exonet
+
+* ADR-0017, `spec/CONTENT.md` e `spec/BROWSER.md`:
+  * **conteúdo endereçado por hash**, em pedaços de 1 MiB (até 16 MiB por objeto), verificado ao chegar em cada Node e no cliente;
+  * Nodes hospedam só o que o estado referencia (alvo de nome, manifesto e interface de Comunidade reconhecida), com cota local, e replicam entre si por anúncio e sob demanda;
+  * manifesto estruturado de Comunidade com `frontend` e `module`;
+  * crate `rz-browser` (`zero-navegador`): interface local que usa o navegador do sistema, com uma origem isolada por publicação, política de conteúdo que impede servidores externos, interface sem scripts, pedidos de assinatura aprovados só na interface (origem + token), identidade por site que não revela a Wallet, fixação na primeira visita e alerta de nomes parecidos;
+  * páginas de Wallet, Grande Mercado, governança, Comunidades, defesa e pedidos.
+* Mensagens `GET_MANIFEST`/`MANIFEST`, `GET_CONTENT`/`CONTENT_INFO`, `GET_CHUNK`/`CHUNK`, `HAVE_CONTENT` (`P2P_VERSION = 7`); opção `--content-quota-mb` do Node; comandos da Wallet `content-pack`, `content-publish`, `content-get`, `manifest-new`, `manifest-publish`.
+* Testes AT-BRW-001..003, replicação de interface de Comunidade entre Nodes, robustez das novas mensagens.
+* `THREAT_MODEL.md` v0.7.0 (THR-BRW-003, THR-CNT-001/002), `AUDIT.md` v0.5.0.
+
 ### Adicionado — Defesa da Exonet
 
 * ADR-0016 e `spec/DEFENSE.md`:
@@ -108,6 +120,7 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 
 ### Protocolo
 
+* **Incompatível** com Nodes anteriores ao Navegador Zero: novas mensagens de conteúdo, `P2P_VERSION = 7` (o estado não muda).
 * **Incompatível** com DEVNETs anteriores às Comunidades e à Defesa: parâmetros de Comunidades e defesa no estado, raiz do estado com `community_root` e `defense_root`, `P2P_VERSION = 6`.
 * **Incompatível** com DEVNETs anteriores ao Grande Mercado: Genesis com `assets`, parâmetros do mercado no estado, raiz do estado com `market_root`, `P2P_VERSION = 4`.
 * **Incompatível** com DEVNETs anteriores ao Zero-BFT: o cabeçalho troca `slot` por `round`, o Genesis troca tempo/slot/finalidade por `ConsensusParams` e validadores com vínculo, blocos trafegam com certificado e `P2P_VERSION = 3`. Recrie a DEVNET (`rm -rf devnet-data`).

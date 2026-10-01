@@ -435,6 +435,173 @@ pub fn resolve(
         .map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------- Conteúdo da Exonet
+
+/// Empacota um diretório local num [`Bundle`](rz_core::content::Bundle)
+/// (arquivos ocultos são ignorados).
+pub fn pack_dir(dir: &std::path::Path) -> Result<rz_core::content::Bundle, String> {
+    use rz_core::content::{mime_for, Bundle, BundleFile};
+    fn walk(
+        base: &std::path::Path,
+        dir: &std::path::Path,
+        out: &mut Vec<BundleFile>,
+    ) -> Result<(), String> {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .map_err(|e| format!("{}: {e}", dir.display()))?
+            .filter_map(Result::ok)
+            .collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                continue;
+            }
+            let path = e.path();
+            if path.is_dir() {
+                walk(base, &path, out)?;
+            } else {
+                let rel = path
+                    .strip_prefix(base)
+                    .map_err(|e| e.to_string())?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let data = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+                out.push(BundleFile {
+                    mime: mime_for(&rel).into(),
+                    path: rel,
+                    data,
+                });
+            }
+        }
+        Ok(())
+    }
+    let mut files = Vec::new();
+    walk(dir, dir, &mut files)?;
+    Bundle::new(files).map_err(Into::into)
+}
+
+/// Envia um objeto ao Node para hospedagem. O Node só aceita objetos
+/// referenciados pelo estado (registre o nome ou o manifesto antes).
+pub fn publish_content(client: &mut Client, bytes: &[u8]) -> Result<Hash32, String> {
+    use rz_core::content::{describe, CHUNK_SIZE};
+    let info = describe(bytes)?;
+    let id = info.id();
+    client
+        .send(&Message::ContentInfo {
+            id,
+            info: Some(info),
+        })
+        .map_err(|e| e.to_string())?;
+    for (i, c) in bytes.chunks(CHUNK_SIZE).enumerate() {
+        client
+            .send(&Message::Chunk {
+                id,
+                index: i as u32,
+                data: Some(c.to_vec()),
+            })
+            .map_err(|e| e.to_string())?;
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    while std::time::Instant::now() < deadline {
+        match client.recv().map_err(|e| e.to_string())? {
+            Message::HaveContent(h) if h == id => return Ok(id),
+            Message::ContentInfo { id: h, info: None } if h == id => {
+                return Err("o node recusou o conteúdo: não referenciado pelo estado \
+                    (registre o nome ou o manifesto primeiro) ou acima da cota"
+                    .into())
+            }
+            _ => {}
+        }
+    }
+    Err("tempo esgotado ao publicar".into())
+}
+
+/// Baixa e verifica um objeto. Se o Node ainda não o hospeda, ele o procura
+/// nos pares; a busca é repetida até `wait`.
+pub fn fetch_content(client: &mut Client, id: &Hash32, wait: Duration) -> Result<Vec<u8>, String> {
+    let deadline = std::time::Instant::now() + wait;
+    let info = loop {
+        let info = client
+            .request(&Message::GetContent(*id), |m| match m {
+                Message::ContentInfo { id: h, info } if h == *id => Some(info),
+                _ => None,
+            })
+            .map_err(|e| e.to_string())?;
+        match info {
+            Some(i) if i.id() == *id => break i,
+            Some(_) => return Err("descrição de conteúdo inválida".into()),
+            None if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(300))
+            }
+            None => return Err(format!("conteúdo {id} não encontrado")),
+        }
+    };
+    let mut out = Vec::with_capacity(info.len as usize);
+    for i in 0..info.chunks.len() {
+        let data = client
+            .request(
+                &Message::GetChunk {
+                    id: *id,
+                    index: i as u32,
+                },
+                |m| match m {
+                    Message::Chunk { id: h, index, data } if h == *id && index as usize == i => {
+                        Some(data)
+                    }
+                    _ => None,
+                },
+            )
+            .map_err(|e| e.to_string())?
+            .ok_or("o node não entregou um pedaço")?;
+        if !info.check_chunk(i, &data) {
+            return Err("pedaço adulterado: hash não confere".into());
+        }
+        out.extend_from_slice(&data);
+    }
+    Ok(out)
+}
+
+/// Envia um manifesto de Comunidade para hospedagem.
+pub fn publish_manifest(client: &mut Client, bytes: &[u8]) -> Result<Hash32, String> {
+    let h = rz_core::content::Manifest::hash_of(bytes);
+    client
+        .send(&Message::Manifest {
+            hash: h,
+            bytes: Some(bytes.to_vec()),
+        })
+        .map_err(|e| e.to_string())?;
+    // Confirma lendo de volta.
+    match fetch_manifest(client, &h, Duration::ZERO)? {
+        Some(_) => Ok(h),
+        None => Err("o node recusou o manifesto: nenhuma Comunidade o referencia".into()),
+    }
+}
+
+/// Busca e verifica um manifesto pelo hash.
+pub fn fetch_manifest(
+    client: &mut Client,
+    h: &Hash32,
+    wait: Duration,
+) -> Result<Option<Vec<u8>>, String> {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        let bytes = client
+            .request(&Message::GetManifest(*h), |m| match m {
+                Message::Manifest { hash, bytes } if hash == *h => Some(bytes),
+                _ => None,
+            })
+            .map_err(|e| e.to_string())?;
+        match bytes {
+            Some(b) if rz_core::content::Manifest::hash_of(&b) == *h => return Ok(Some(b)),
+            Some(_) => return Err("manifesto adulterado: hash não confere".into()),
+            None if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(300))
+            }
+            None => return Ok(None),
+        }
+    }
+}
+
 // ------------------------------------------------------------------ Defesa
 
 /// Estado de defesa como visto por um Node.

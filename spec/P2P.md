@@ -1,6 +1,6 @@
 # spec/P2P.md — Protocolo P2P da DEVNET
 
-**Versão:** 0.6.0 (DEVNET), `P2P_VERSION = 6`
+**Versão:** 0.7.0 (DEVNET), `P2P_VERSION = 7`
 **Relacionamento:** `SPECIFICATIONS.md §23–§30`, ADR-0007, ADR-0010, ADR-0011, THR-P2P-001..006, THR-PRIV-002..004
 **Implementação de referência:** `crates/rz-p2p` (mensagens) e `crates/rz-node` (orquestração)
 
@@ -75,6 +75,13 @@ m = enc(Message)
 | `0x1f` | `RESOLVED` | `u64 height, string name, u8 kind, option<fixed[32]> target, option<Address> owner` (`spec/NAMING.md §5`) |
 | `0x20` | `GET_DEFENSE` | vazio |
 | `0x21` | `DEFENSE` | `u64 height, u8 mode, u64 mode_since, u64 mode_expires_at, u64 seq, option<Incident> incident, list<Credential> credentials` (≤256) (`spec/DEFENSE.md §1`) |
+| `0x22` | `GET_MANIFEST` | `fixed[32] hash` |
+| `0x23` | `MANIFEST` | `fixed[32] hash, option<bytes> (≤64 KiB)`; não solicitado = envio para hospedagem (`spec/CONTENT.md §5`) |
+| `0x24` | `GET_CONTENT` | `fixed[32] id` |
+| `0x25` | `CONTENT_INFO` | `fixed[32] id, option<ContentInfo>`; não solicitado = início de envio |
+| `0x26` | `GET_CHUNK` | `fixed[32] id, u32 index` |
+| `0x27` | `CHUNK` | `fixed[32] id, u32 index, option<bytes> (≤1 MiB)` |
+| `0x28` | `HAVE_CONTENT` | `fixed[32] id` |
 
 `PeerAddr` (tag `u8`):
 
@@ -151,6 +158,8 @@ Um par que envia blocos inválidos é penalizado (seção 6) — nenhum estado �
 | Tamanho máximo de mensagem | 4 MiB |
 | Limite de taxa por conexão | balde de 400 mensagens, recarga de 200/s (exceto consenso) |
 | Limite de consenso por conexão (`n` validadores) | balde de `max(200, 32·n)`, recarga de `max(50, 8·n)`/s; excedente descartado sem penalidade |
+| Pedidos de pedaços de conteúdo por conexão | balde de 32, recarga de 8/s; excedente respondido sem dados |
+| Downloads de conteúdo | 4 simultâneos, 1 por conexão, 15 s sem progresso ou 120 s no total (`spec/CONTENT.md §5`) |
 | Conexões de entrada | 32 |
 | Conexões de saída | 8 |
 | Quarentena após banimento | 10 minutos |
@@ -164,6 +173,7 @@ Pontuação local (não é reputação global):
 | Bloco inválido | 50 |
 | Violação de protocolo | 50 |
 | Excesso de taxa | 100 |
+| Manifesto, descrição ou pedaço de conteúdo que não confere com o identificador | 50 (violação de protocolo) |
 
 Com 100 pontos ou mais o par é desconectado e seu IP fica em quarentena (`SPEC §26`, `AT-P2P-005`). Exceção: um Node que anuncia endereço (serviço onion) não coloca em quarentena o IP de loopback, pelo qual chegam todas as conexões do proxy local; o par é apenas desconectado.
 

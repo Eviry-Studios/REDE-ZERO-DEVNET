@@ -49,6 +49,7 @@ USO:
       --advertise ADDR    endereço público anunciado (ex.: seu serviço nome.onion:porta)
       --max-inbound-per-ip N  conexões de entrada por IP (padrão 8)
       --validator-key F   chave do validador (omitir para node não validador)
+      --content-quota-mb N  cota de conteúdo da Exonet hospedado (padrão 1024 MiB)
       --checkpoint H:ID   ponto de verificação: o bloco da altura H deve ter o id
                           ID (obtenha de fontes em que confia; pode repetir)
       --verbose           registros detalhados (endereços de pares; nunca de clientes)
@@ -309,6 +310,8 @@ fn run(args: &Args) -> Result<(), String> {
         cfg.advertise = Some(a.parse().map_err(|e| format!("--advertise: {e}"))?);
     }
     cfg.max_inbound_per_ip = args.num("max-inbound-per-ip", cfg.max_inbound_per_ip)?;
+    let quota_mb: u64 = args.num("content-quota-mb", cfg.content_quota >> 20)?;
+    cfg.content_quota = quota_mb.saturating_mul(1 << 20);
     for p in args.all("peer") {
         cfg.bootstrap.push(
             p.parse()

@@ -46,6 +46,10 @@ Todo hash protocolar **deve** usar um contexto da seção 3. O hash "puro" (sem 
 | `COMMUNITY_ROOT` | `rede-zero/community-root/v1` | Raiz da parte de Comunidades e nomes do estado |
 | `DEFENSE_ATTESTATION` | `rede-zero/defense/v1` | Atestações de validadores para decisões de defesa |
 | `DEFENSE_ROOT` | `rede-zero/defense-root/v1` | Raiz da parte de defesa do estado |
+| `CONTENT_ID` | `rede-zero/content/v1` | Identificador de um objeto de conteúdo da Exonet |
+| `CONTENT_CHUNK` | `rede-zero/content-chunk/v1` | Hash de um pedaço de conteúdo |
+| `EXONET_IDENTITY` | `rede-zero/exonet-identity/v1` | Derivação da chave de identidade por site |
+| `EXONET_LOGIN` | `rede-zero/exonet-login/v1` | Assinaturas de autenticação em publicações |
 
 Os contextos de consenso estão em `crates/rz-core/src/consensus.rs` (`spec/CONSENSUS.md`). Privacidade, governança e canal P2P usam contextos próprios, listados em `spec/PRIVACY.md`, `spec/GOVERNANCE.md` e `spec/P2P.md`.
 

@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.6.0
-**Status:** Modelo de ameaças — fase de definição (0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
+**Versão:** 0.7.0
+**Status:** Modelo de ameaças — fase de definição (0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -603,6 +603,8 @@ Classificação de severidade (inicial, sujeita a revisão):
 * Node privado (`--no-listen`): a Wallet usa um Node próprio em `127.0.0.1`, que nunca é anunciado e também encaminha transações alheias;
 * a Wallet recusa, por padrão, conexão direta a Node remoto sem proxy (REQ-023).
 
+**Leitura de publicações:** o Node sabe quais identificadores foram pedidos, mas não por quem se o acesso for por Tor; publicações não alcançam servidores externos (`spec/BROWSER.md §3`).
+
 **Risco residual:** quem escolhe `--direct` expõe o IP ao Node escolhido; um Node privado expõe seu IP aos pares que disca, como qualquer participante P2P; observadores globais ou adversários com muitos Nodes da haste ainda podem correlacionar.
 
 ### THR-PRIV-003 — Metadados excessivos
@@ -716,14 +718,14 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 **Severidade:** ALTA
 **Adversários:** ADV-08
-**Mitigações:** sandbox (`SPEC §62`; Exonet Runtime A DEFINIR); menor privilégio; nenhuma autoridade sobre consenso, saldos, regras monetárias ou outras Comunidades (`SPEC §61`). Não existe operação de Comunidade sobre esses domínios; testado com chaves de controle comprometidas em `at_com_003_compromised_community_isolated`. A assinatura de operações é sempre confirmada pela Wallet, fora do controle da Comunidade.
+**Mitigações:** sandbox (`SPEC §62`): no Navegador Zero, cada publicação roda numa origem própria, sem acesso a outras publicações, à interface, a servidores externos ou a dispositivos (`spec/BROWSER.md §3`, ADR-0017); lógica em Exonet Runtime A DEFINIR; menor privilégio; nenhuma autoridade sobre consenso, saldos, regras monetárias ou outras Comunidades (`SPEC §61`). Não existe operação de Comunidade sobre esses domínios; testado com chaves de controle comprometidas em `at_com_003_compromised_community_isolated`. A assinatura de operações é sempre confirmada pela Wallet, fora do controle da Comunidade.
 
 ### THR-COM-002 — Atualização maliciosa de Comunidade
 
 **Severidade:** ALTA
 **Descrição:** uma Comunidade legítima publica uma versão hostil.
 
-**Mitigações:** versões identificadas por hash do manifesto; a versão só aumenta, com aprovação da regra de decisão vigente; histórico de versões no estado permite fixar versões (`spec/COMMUNITIES.md`, ADR-0015).
+**Mitigações:** versões identificadas por hash do manifesto; a versão só aumenta, com aprovação da regra de decisão vigente; histórico de versões no estado permite fixar versões (`spec/COMMUNITIES.md`, ADR-0015). O Navegador Zero fixa o manifesto na primeira visita e não abre uma versão nova sem revisão (`spec/BROWSER.md §4`); a interface é verificada contra o manifesto pedaço a pedaço (`spec/CONTENT.md`).
 
 ### THR-COM-003 — Censura arbitrária de Comunidades
 
@@ -736,14 +738,36 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Severidade:** ALTA
 **Descrição:** uma interface alternativa ou falsa induz o usuário a assinar operações diferentes das exibidas.
 
-**Mitigações:** a Wallet exibe o conteúdo canônico que será assinado; nenhuma interface possui autoridade especial (`INV-008`); verificação de releases.
+**Mitigações:** a Wallet exibe o conteúdo canônico que será assinado; nenhuma interface possui autoridade especial (`INV-008`); verificação de releases. No Navegador Zero, publicações nunca recebem chaves: operações são pedidos exibidos e aprovados na interface, outra origem sem scripts, com verificação de origem e token por execução (`spec/BROWSER.md §5`, `browser_devnet`).
+
+### THR-BRW-003 — Publicação que rastreia ou ataca o leitor
+
+**Severidade:** ALTA
+**Adversários:** ADV-08, ADV-05
+**Descrição:** uma publicação tenta carregar recursos de servidores externos para obter o IP do leitor, ler dados de outras publicações, usar câmera ou localização, ou aprovar operações em nome do leitor.
+
+**Mitigações:** origem própria por publicação; política de conteúdo restrita à própria origem, sem quadros, plugins, dispositivos nem referenciador; interface sem scripts; formulários da interface exigem origem e token; host e porta verificados contra DNS rebinding; identidade diferente por site, que não revela a Wallet nem permite correlação entre sites (`spec/BROWSER.md`, `spec/CONTENT.md §6`). **Risco residual:** links para a web comum, se clicados, saem da Exonet; vulnerabilidades do navegador do sistema.
+
+### THR-CNT-001 — Abuso do armazenamento de conteúdo
+
+**Severidade:** MÉDIA
+**Adversários:** ADV-01, ADV-03
+**Descrição:** enviar volumes grandes de dados para Nodes hospedarem, ou ocupar as transferências com anúncios que nunca se completam.
+
+**Mitigações:** só se hospeda conteúdo referenciado pelo estado (nome pago ou Comunidade); cota local por Node; objetos de até 16 MiB; 4 downloads simultâneos e 1 por conexão, com prazo sem progresso; limite de taxa para pedidos de pedaços; pedaços inválidos penalizam o par (`spec/CONTENT.md §5`).
+
+### THR-CNT-002 — Conteúdo adulterado por um Node
+
+**Severidade:** ALTA
+**Adversários:** ADV-02, ADV-06
+**Mitigações:** identificador compromete cada pedaço; verificação no cliente e em cada Node ao receber e ao recarregar do disco; o Navegador só exibe conteúdo verificado (`tampered_chunk_detected_by_client`, `store_verifies_and_reloads`).
 
 ### THR-BRW-002 — Phishing de endereços da Exonet
 
 **Severidade:** MÉDIA
 **Descrição:** identificadores visualmente parecidos com `zero://comunidade` legítimos.
 
-**Mitigações:** identificadores derivados de material criptográfico; nomes `zero://nome.tipo` como camada adicional com sufixo verificado (`spec/NAMING.md`); o protocolo rejeita nomes do mesmo tipo com o mesmo esqueleto visual (`banco`/`banc0`) e nomes parecidos com funções do protocolo; alertas de similaridade entre tipos continuam na interface.
+**Mitigações:** identificadores derivados de material criptográfico; nomes `zero://nome.tipo` como camada adicional com sufixo verificado (`spec/NAMING.md`); o protocolo rejeita nomes do mesmo tipo com o mesmo esqueleto visual (`banco`/`banc0`) e nomes parecidos com funções do protocolo; alertas de similaridade entre tipos continuam na interface: o Navegador Zero mostra o identificador e o dono, alerta nomes com o mesmo esqueleto de outros já fixados ou o mesmo nome com outro tipo, e bloqueia a abertura quando o alvo de um nome fixado muda (`spec/BROWSER.md §4`).
 
 ---
 
@@ -905,7 +929,10 @@ Classificação de severidade (inicial, sujeita a revisão):
 | THR-P2P-005 | — | SPEC §30, spec/P2P.md §1.1 | rz-p2p secure::tests |
 | THR-CON-004 | REQ-049 | SPEC §49, spec/CONSENSUS.md §6 | rz-core equivocation_report_slashes_contribution, double_vote_slashes_bond_and_jails, double_proposal_slashes_even_for_reproposal |
 | THR-COM-001 | REQ-074, SPEC §61 | spec/COMMUNITIES.md §6 | AT-COM-003 |
-| THR-BRW-002 | REQ-067 | spec/NAMING.md §3 | names_registered_resolved_and_protected |
+| THR-BRW-002 | REQ-067 | spec/NAMING.md §3, spec/BROWSER.md §4 | names_registered_resolved_and_protected, browser_devnet |
+| THR-BRW-001 | REQ-065, INV-008 | SPEC §58, spec/BROWSER.md §5 | browser_devnet (pedidos) |
+| THR-BRW-003 | REQ-023, SPEC §62 | spec/BROWSER.md §3 | browser_devnet (cabeçalhos, origens) |
+| THR-CNT-001/002 | REQ-070 | spec/CONTENT.md §2, §5 | rz-node content::tests, community_devnet, browser_devnet |
 | THR-POOL-001 | REQ-037, REQ-038 | SPEC §39, §40, spec/MARKET.md §5 | AT-POOL-002, AT-POOL-003, randomized_market_invariants |
 | THR-POOL-003 | REQ-039 | SPEC §41, spec/MARKET.md §1 | AT-POOL-004 |
 | THR-MKT-001 | REQ-035 | spec/MARKET.md §4 | block_order_does_not_change_market_outcome |
@@ -944,6 +971,7 @@ Ameaças aceitas **temporariamente** na DEVNET, com registro explícito:
 | THR-POOL-002 | Sem ponte: apenas ativos **de teste** no Genesis da DEVNET | Ponte verificável sem custodiante único (nova ADR) |
 | THR-MKT-001 | Ordens públicas antes da inclusão; omissão por um bloco possível | Avaliação de ordens cifradas até a inclusão |
 | THR-DEF-001..004 | Defesa (ADR-0016) **sem auditoria**; decisões dependem de > 2/3 dos validadores; isolamento só de conexões de saída (pares de entrada são anônimos); detecção de anomalias local | Auditoria; avaliação do isolamento de pares de entrada sem quebrar o anonimato de clientes |
+| THR-BRW-003 | Navegador Zero (ADR-0017) **sem auditoria**; isolamento depende do navegador do sistema; links para a web comum saem da Exonet | Auditoria; casca nativa com política de navegação |
 | THR-GOV-001/002 | Governança implementada (ADR-0008); a câmara de contribuição só pontua produção de blocos, então favorece validadores | Computação e contribuição defensiva verificáveis |
 
 Nenhuma dessas aceitações temporárias pode ser herdada pela TESTNET pública ou pela MAINNET sem nova avaliação.
@@ -999,7 +1027,7 @@ Toda alteração deverá possuir histórico, justificativa e versão (`REQ-086`,
 
 # 15. Status
 
-**THREAT_MODEL.md v0.6.0**
+**THREAT_MODEL.md v0.7.0**
 
 > **Modelo de ameaças inicial — não congelado.**
 

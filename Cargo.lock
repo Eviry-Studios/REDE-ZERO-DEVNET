@@ -432,6 +432,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rz-browser"
+version = "0.1.0"
+dependencies = [
+ "rand_core",
+ "rz-codec",
+ "rz-core",
+ "rz-crypto",
+ "rz-node",
+ "rz-p2p",
+ "rz-wallet",
+]
+
+[[package]]
 name = "rz-chain"
 version = "0.1.0"
 dependencies = [

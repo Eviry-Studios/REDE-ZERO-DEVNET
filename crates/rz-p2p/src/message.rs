@@ -5,6 +5,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 use rz_codec::{Decode, DecodeError, Decoder, Encode, Encoder};
 use rz_core::community::{Community, NameKind, MAX_NAME_LEN};
+use rz_core::content::{ContentInfo, CHUNK_SIZE, MAX_MANIFEST};
 use rz_core::defense::{Credential, DefenseMode, Incident};
 use rz_core::governance::{LockEntry, ProposalSummary, ProtocolParams};
 use rz_core::limits::MAX_NETWORK_ID_LEN;
@@ -370,6 +371,49 @@ pub enum Message {
         /// Credenciais do incidente em vigor.
         credentials: Vec<Credential>,
     },
+    /// `0x22` — pede o manifesto de Comunidade com este hash.
+    GetManifest(Hash32),
+    /// `0x23` — resposta, ou envio de um manifesto para hospedagem.
+    Manifest {
+        hash: Hash32,
+        bytes: Option<Vec<u8>>,
+    },
+    /// `0x24` — pede a descrição de um objeto de conteúdo.
+    GetContent(Hash32),
+    /// `0x25` — resposta, ou início do envio de um objeto para hospedagem.
+    ContentInfo {
+        id: Hash32,
+        info: Option<ContentInfo>,
+    },
+    /// `0x26` — pede um pedaço de um objeto.
+    GetChunk { id: Hash32, index: u32 },
+    /// `0x27` — um pedaço (verificado contra a descrição antes de ser aceito).
+    Chunk {
+        id: Hash32,
+        index: u32,
+        data: Option<Vec<u8>>,
+    },
+    /// `0x28` — o remetente passou a hospedar este objeto.
+    HaveContent(Hash32),
+}
+
+fn put_opt_bytes(e: &mut Encoder, v: &Option<Vec<u8>>) {
+    match v {
+        None => {
+            e.u8(0);
+        }
+        Some(b) => {
+            e.u8(1).bytes(b);
+        }
+    }
+}
+
+fn get_opt_bytes(d: &mut Decoder<'_>, max: usize) -> Result<Option<Vec<u8>>, DecodeError> {
+    match d.u8()? {
+        0 => Ok(None),
+        1 => Ok(Some(d.bytes(max)?)),
+        t => Err(DecodeError::InvalidTag(t)),
+    }
 }
 
 impl Encode for Message {
@@ -555,6 +599,29 @@ impl Encode for Message {
                     .option(&incident.as_deref().cloned())
                     .list(credentials);
             }
+            Message::GetManifest(h) => {
+                e.u8(0x22).put(h);
+            }
+            Message::Manifest { hash, bytes } => {
+                e.u8(0x23).put(hash);
+                put_opt_bytes(e, bytes);
+            }
+            Message::GetContent(id) => {
+                e.u8(0x24).put(id);
+            }
+            Message::ContentInfo { id, info } => {
+                e.u8(0x25).put(id).option(info);
+            }
+            Message::GetChunk { id, index } => {
+                e.u8(0x26).put(id).u32(*index);
+            }
+            Message::Chunk { id, index, data } => {
+                e.u8(0x27).put(id).u32(*index);
+                put_opt_bytes(e, data);
+            }
+            Message::HaveContent(id) => {
+                e.u8(0x28).put(id);
+            }
         }
     }
 }
@@ -664,6 +731,26 @@ impl Decode for Message {
                 incident: d.option::<Incident>()?.map(Box::new),
                 credentials: d.list(MAX_CREDENTIALS_PER_MSG)?,
             },
+            0x22 => Message::GetManifest(d.get()?),
+            0x23 => Message::Manifest {
+                hash: d.get()?,
+                bytes: get_opt_bytes(d, MAX_MANIFEST)?,
+            },
+            0x24 => Message::GetContent(d.get()?),
+            0x25 => Message::ContentInfo {
+                id: d.get()?,
+                info: d.option()?,
+            },
+            0x26 => Message::GetChunk {
+                id: d.get()?,
+                index: d.u32()?,
+            },
+            0x27 => Message::Chunk {
+                id: d.get()?,
+                index: d.u32()?,
+                data: get_opt_bytes(d, CHUNK_SIZE)?,
+            },
+            0x28 => Message::HaveContent(d.get()?),
             0x1f => Message::Resolved {
                 height: d.u64()?,
                 name: d.str(MAX_NAME_LEN)?,
@@ -714,6 +801,13 @@ impl Message {
             Message::Resolved { .. } => "RESOLVED",
             Message::GetDefense => "GET_DEFENSE",
             Message::Defense { .. } => "DEFENSE",
+            Message::GetManifest(_) => "GET_MANIFEST",
+            Message::Manifest { .. } => "MANIFEST",
+            Message::GetContent(_) => "GET_CONTENT",
+            Message::ContentInfo { .. } => "CONTENT_INFO",
+            Message::GetChunk { .. } => "GET_CHUNK",
+            Message::Chunk { .. } => "CHUNK",
+            Message::HaveContent(_) => "HAVE_CONTENT",
         }
     }
 }

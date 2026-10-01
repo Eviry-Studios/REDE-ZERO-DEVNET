@@ -82,6 +82,15 @@ Comunidades e nomes zero:// (ADR-0015):
   zero-wallet name-update   --genesis FILE --node ADDR --key FILE --name zero://NOME.TIPO --target HEX
                       [--new-owner HEX]
   zero-wallet resolve --genesis FILE --node ADDR --name zero://NOME.TIPO
+Conteúdo da Exonet (ADR-0017) — publicações verificadas por hash:
+  zero-wallet content-pack --dir DIRETORIO --out ARQUIVO     empacota um site e mostra o id
+  zero-wallet content-publish --genesis FILE --node ADDR --file ARQUIVO
+  zero-wallet content-get --genesis FILE --node ADDR --id HEX --out ARQUIVO
+  zero-wallet manifest-new --name NOME --version N [--description TEXTO] [--frontend HEX]
+                      [--module HEX] --out ARQUIVO          manifesto estruturado de Comunidade
+  zero-wallet manifest-publish --genesis FILE --node ADDR --file ARQUIVO
+  Publicar um site: content-pack → name-register --target ID → content-publish.
+  O node só hospeda conteúdo referenciado pelo estado (nome ou manifesto).
 Defesa da Exonet (ADR-0016) — decisões exigem atestações de validadores:
   zero-wallet defense --genesis FILE --node ADDR
   zero-wallet defense-attest --genesis FILE --node ADDR --key VALIDADOR.key DECISÃO
@@ -192,6 +201,11 @@ fn main() -> ExitCode {
         "name-register" => cmd_name(&args, true),
         "name-update" => cmd_name(&args, false),
         "resolve" => cmd_resolve(&args),
+        "content-pack" => cmd_content_pack(&args),
+        "content-publish" => cmd_content_publish(&args),
+        "content-get" => cmd_content_get(&args),
+        "manifest-new" => cmd_manifest_new(&args),
+        "manifest-publish" => cmd_manifest_publish(&args),
         "defense" => cmd_defense(&args),
         "defense-attest" => cmd_defense_decision(&args, false),
         "defense-submit" => cmd_defense_decision(&args, true),
@@ -986,6 +1000,82 @@ fn cmd_resolve(args: &Args) -> Result<(), String> {
         }
         None => println!("{address} não está registrado"),
     }
+    Ok(())
+}
+
+// ------------------------------------------------------- Conteúdo
+
+fn cmd_content_pack(args: &Args) -> Result<(), String> {
+    let dir = args.req("dir")?;
+    let out = args.req("out")?;
+    let bundle = rz_wallet::pack_dir(Path::new(dir))?;
+    let bytes = bundle.to_canonical_bytes();
+    let info = rz_core::content::describe(&bytes)?;
+    fs::write(out, &bytes).map_err(|e| format!("{out}: {e}"))?;
+    println!(
+        "{} arquivos, {} bytes em {out}",
+        bundle.files.len(),
+        bytes.len()
+    );
+    if bundle.get("index.html").is_none() {
+        println!("aviso: sem index.html, o Navegador Zero abrirá a lista de arquivos");
+    }
+    println!("id do conteúdo: {}", info.id());
+    Ok(())
+}
+
+fn cmd_content_publish(args: &Args) -> Result<(), String> {
+    let file = args.req("file")?;
+    let bytes = fs::read(file).map_err(|e| format!("{file}: {e}"))?;
+    let (mut client, _) = open(args)?;
+    let id = rz_wallet::publish_content(&mut client, &bytes)?;
+    println!("conteúdo {id} hospedado pelo node; os pares o replicam");
+    Ok(())
+}
+
+fn cmd_content_get(args: &Args) -> Result<(), String> {
+    let id = Hash32::from_hex(args.req("id")?).ok_or("--id: hash inválido")?;
+    let out = args.req("out")?;
+    let (mut client, _) = open(args)?;
+    let bytes = rz_wallet::fetch_content(&mut client, &id, std::time::Duration::from_secs(15))?;
+    fs::write(out, &bytes).map_err(|e| format!("{out}: {e}"))?;
+    println!("{} bytes verificados gravados em {out}", bytes.len());
+    Ok(())
+}
+
+fn cmd_manifest_new(args: &Args) -> Result<(), String> {
+    let opt_hash = |name: &str| -> Result<Option<Hash32>, String> {
+        args.get(name)
+            .map(|h| Hash32::from_hex(h).ok_or(format!("--{name}: hash inválido")))
+            .transpose()
+    };
+    let m = rz_core::content::Manifest {
+        name: args.req("name")?.into(),
+        version: args
+            .req("version")?
+            .parse()
+            .map_err(|_| "--version: valor inválido")?,
+        description: args.get("description").unwrap_or("").into(),
+        frontend: opt_hash("frontend")?,
+        module: opt_hash("module")?,
+    };
+    let bytes = m.to_bytes();
+    let out = args.req("out")?;
+    fs::write(out, &bytes).map_err(|e| format!("{out}: {e}"))?;
+    println!("manifesto gravado em {out}");
+    println!(
+        "hash do manifesto: {}",
+        rz_core::content::Manifest::hash_of(&bytes)
+    );
+    Ok(())
+}
+
+fn cmd_manifest_publish(args: &Args) -> Result<(), String> {
+    let file = args.req("file")?;
+    let bytes = fs::read(file).map_err(|e| format!("{file}: {e}"))?;
+    let (mut client, _) = open(args)?;
+    let h = rz_wallet::publish_manifest(&mut client, &bytes)?;
+    println!("manifesto {h} hospedado pelo node");
     Ok(())
 }
 

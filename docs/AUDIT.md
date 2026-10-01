@@ -1,6 +1,6 @@
 # AUDIT.md — Preparação para auditoria independente
 
-**Versão:** 0.4.0
+**Versão:** 0.5.0
 **Estado:** pronto para auditoria da DEVNET; nenhuma auditoria externa foi realizada
 **Relacionamento:** `THREAT_MODEL.md §11` (aceitações temporárias), ADR-0009, ADR-0011, ADR-0012, ADR-0014..0016, `SECURITY.md`
 
@@ -33,11 +33,12 @@ A revisão interna (§7) **não substitui** a auditoria externa.
 | 7 | Grande Mercado e Pool | `crates/rz-core/src/market.rs`, partes de mercado em `state.rs` | ~1 300 | leilão (preço, prioridade, arredondamento, poeira), reservas e reembolsos, conservação por ativo, Pool monotônico, limites do livro |
 | 8 | Comunidades e nomes | `crates/rz-core/src/community.rs`, partes em `state.rs` | ~900 | verificação de aprovações por limiar, reconhecimento via governança, isolamento, esqueletos de nomes |
 | 9 | Defesa da Exonet | `crates/rz-core/src/defense.rs`, partes em `state.rs`, isolamento em `rz-node/src/node.rs` | ~1 300 | soma de poder das atestações (repetição, não validador, `seq`), limiares de subida e descida, vencimento dos modos, escopos e validade das credenciais, isolamento de saída |
-| 10 | Wallet | `crates/rz-wallet` | ~1 200 | seleção de notas, recusa de conexão direta, manuseio de chaves, unidades e preços do mercado |
+| 10 | Navegador Zero e conteúdo | `crates/rz-browser`, `crates/rz-core/src/content.rs`, `crates/rz-node/src/content.rs` | ~2 300 | verificação por pedaço, aceitação só do que o estado referencia, limites de download, roteamento por host (DNS rebinding), cabeçalhos de isolamento, aprovação de pedidos (origem e token), identidade por site |
+| 11 | Wallet | `crates/rz-wallet` | ~1 200 | seleção de notas, recusa de conexão direta, manuseio de chaves, unidades e preços do mercado |
 
 ¹ Aproximado, incluindo testes internos aos arquivos.
 
-**Fora do escopo:** pontes de ativos externos (não existem; ADR-0014 §4), Agente Zero, Navegador Zero, Exonet Runtime (ainda não implementados), e a política monetária (A DEFINIR).
+**Fora do escopo:** pontes de ativos externos (não existem; ADR-0014 §4), Agente Zero, Exonet Runtime (ainda não implementados), e a política monetária (A DEFINIR).
 
 ## 3. Arquitetura e fronteiras de confiança
 
@@ -90,6 +91,8 @@ Cada invariante lista onde é aplicada e os testes que a exercitam. Uma violaç�
 | INV-18 | A posição comunitária não altera a apuração oficial | `tally` ignora `positions` | `community_position_verifiable_and_non_binding` |
 | INV-19 | Toda decisão de defesa exige atestações válidas e distintas de validadores vigentes acima do limiar (> 1/3 para vigilância, descida e revogação; > 2/3 para o resto); cada atestação vale para um único `seq` | `defense::attested_power`, `check_attested` | AT-DEF-001..003, `attestation_power_and_thresholds`, `forged_attestations_rejected` |
 | INV-20 | Nenhum modo acima de NORMAL dura além do prazo sem renovação atestada; ao sair do nível de incidente, as credenciais do incidente são revogadas | `expire_defense`, `set_mode` | `modes_expire_without_renewal`, `modes_step_down_gradually` |
+| INV-22 | Nenhum conteúdo é aceito, guardado ou exibido sem conferir com o identificador referenciado pelo estado | `ContentInfo::check_chunk`, `ContentStore`, `fetch_content` | `content::tests`, `store_verifies_and_reloads`, `tampered_chunk_detected_by_client` |
+| INV-23 | Uma publicação nunca obtém chaves nem executa operação sem aprovação na interface do Navegador | `rz-browser` (`pedido`, `ui::handle`) | `browser_devnet` |
 | INV-21 | Credenciais só autorizam escopos defensivos da lista fechada, dentro da validade, sem revogação e com incidente em vigor; não existe operação ofensiva | `Credential::allows`, `Scope` | AT-CYBER-003..006 |
 
 ## 5. Como reproduzir

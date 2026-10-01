@@ -34,6 +34,7 @@ use rz_p2p::{
     P2P_VERSION,
 };
 
+use crate::content::{ContentCtl, ContentStore, Download, MAX_DOWNLOADS};
 use crate::store::BlockStore;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -43,6 +44,9 @@ const SEND_QUEUE: usize = 1024;
 /// Balde geral por conexão (todas as mensagens exceto as de consenso).
 const GENERAL_BURST: u32 = 400;
 const GENERAL_PER_SEC: u32 = 200;
+/// Balde de pedidos de pedaços de conteúdo por conexão (1 MiB cada).
+const CHUNK_BURST: u32 = 32;
+const CHUNK_PER_SEC: u32 = 8;
 
 /// Balde de consenso por conexão para `n` validadores: cada validador emite
 /// até dois votos por rodada, repassados uma vez por conexão, mais a
@@ -98,6 +102,8 @@ pub struct NodeConfig {
     /// Pontos de verificação (altura, bloco) obtidos pelo operador de fontes
     /// em que confia (subjetividade fraca, THR-CON-001).
     pub checkpoints: Vec<(u64, BlockId)>,
+    /// Cota local de conteúdo hospedado, em bytes (`spec/CONTENT.md`).
+    pub content_quota: u64,
 }
 
 impl NodeConfig {
@@ -117,6 +123,7 @@ impl NodeConfig {
             mempool_capacity: 10_000,
             log: LogLevel::Info,
             checkpoints: Vec::new(),
+            content_quota: 1 << 30,
         }
     }
 }
@@ -225,6 +232,8 @@ struct Shared {
     /// Tamanho do conjunto de validadores vigente (dimensiona o limite de
     /// taxa de mensagens de consenso por conexão).
     validator_count: AtomicUsize,
+    /// Conteúdo hospedado e transferências (`spec/CONTENT.md`).
+    content: Mutex<ContentCtl>,
 }
 
 /// Estado local do Dandelion++.
@@ -267,6 +276,7 @@ impl Node {
         // Reprocessa blocos persistidos, verificando cada certificado e cada
         // transição de estado: o disco também é fonte não confiável.
         let (store, blocks) = BlockStore::open(&cfg.data_dir)?;
+        let content = ContentStore::open(&cfg.data_dir.join("content"), cfg.content_quota)?;
         let total = blocks.len();
         let mut rejected = 0usize;
         for cb in blocks {
@@ -324,6 +334,7 @@ impl Node {
             consensus_tx,
             seen: Mutex::new(Seen::default()),
             validator_count: AtomicUsize::new(validator_count),
+            content: Mutex::new(ContentCtl::new(content)),
             genesis: cfg.genesis,
         });
 
@@ -450,6 +461,8 @@ struct ConnCtx {
     consensus_bucket: TokenBucket,
     /// Tamanho do conjunto usado para dimensionar `consensus_bucket`.
     consensus_sized_for: usize,
+    /// Pedidos de pedaços de conteúdo.
+    chunk_bucket: TokenBucket,
     peer_height: u64,
     last_request_from: Option<u64>,
 }
@@ -1040,6 +1053,7 @@ impl Shared {
                 TokenBucket::new(burst, rate)
             },
             consensus_sized_for: 0,
+            chunk_bucket: TokenBucket::new(CHUNK_BURST, CHUNK_PER_SEC),
             peer_height: hello.height,
             last_request_from: None,
         };
@@ -1417,7 +1431,238 @@ impl Shared {
             | Message::Community { .. }
             | Message::Resolved { .. }
             | Message::Defense { .. } => Flow::Continue,
+            Message::GetManifest(h) => self.handle_get_manifest(ctx, h),
+            Message::Manifest { hash, bytes } => self.handle_manifest(ctx, hash, bytes),
+            Message::GetContent(id) => self.handle_get_content(ctx, id),
+            Message::ContentInfo { id, info } => self.handle_content_info(ctx, id, info),
+            Message::GetChunk { id, index } => {
+                let data = if ctx.chunk_bucket.try_take(1) {
+                    lock(&self.content).store.chunk(&id, index as usize)
+                } else {
+                    None
+                };
+                self.send_to(ctx.id, Message::Chunk { id, index, data });
+                Flow::Continue
+            }
+            Message::Chunk { id, index, data } => self.handle_chunk(ctx, id, index, data),
+            Message::HaveContent(id) => {
+                if ctx.relay && self.content_wanted_from(ctx.id, id) {
+                    self.send_to(ctx.id, Message::GetContent(id));
+                }
+                Flow::Continue
+            }
         }
+    }
+
+    // ------------------------------------------------- conteúdo (Exonet)
+
+    /// Manifestos referenciados por Comunidades no estado (qualquer versão do
+    /// histórico) e os das Comunidades reconhecidas.
+    fn referenced_manifests(&self) -> (BTreeSet<Hash32>, Vec<Hash32>) {
+        let c = lock(&self.core);
+        let state = c.chain.state();
+        let cs = state.communities();
+        let mut all = BTreeSet::new();
+        let mut recognized = Vec::new();
+        for com in cs.communities.values() {
+            let hashes = std::iter::once(com.manifest_hash).chain(com.history.iter().map(|h| h.1));
+            for h in hashes {
+                all.insert(h);
+                if com.status == rz_core::community::CommunityStatus::Recognized {
+                    recognized.push(h);
+                }
+            }
+        }
+        (all, recognized)
+    }
+
+    /// O objeto é alvo de um nome ou interface de uma Comunidade reconhecida.
+    fn content_referenced(&self, id: &Hash32) -> bool {
+        let named = {
+            let c = lock(&self.core);
+            let state = c.chain.state();
+            state.communities().names.values().any(|r| r.target == *id)
+        };
+        if named {
+            return true;
+        }
+        let (_, recognized) = self.referenced_manifests();
+        lock(&self.content).frontends_of(&recognized).contains(id)
+    }
+
+    /// Deve pedir este objeto à conexão `from`?
+    fn content_wanted_from(&self, _from: u64, id: Hash32) -> bool {
+        {
+            let mut ct = lock(&self.content);
+            ct.expire();
+            if ct.store.has(&id)
+                || ct.downloads.contains_key(&id)
+                || ct.wanted.contains_key(&id)
+                || ct.downloads.len() >= MAX_DOWNLOADS
+            {
+                return false;
+            }
+        }
+        if !self.content_referenced(&id) {
+            return false;
+        }
+        lock(&self.content).wanted.insert(id, Instant::now());
+        true
+    }
+
+    fn handle_get_manifest(&self, ctx: &mut ConnCtx, h: Hash32) -> Flow {
+        let bytes = lock(&self.content).store.manifest(&h);
+        let missing = bytes.is_none();
+        self.send_to(ctx.id, Message::Manifest { hash: h, bytes });
+        if missing && self.referenced_manifests().0.contains(&h) {
+            let ask = {
+                let mut ct = lock(&self.content);
+                ct.expire();
+                ct.wanted_manifests.insert(h, Instant::now()).is_none()
+            };
+            if ask {
+                self.broadcast(&Message::GetManifest(h), Some(ctx.id));
+            }
+        }
+        Flow::Continue
+    }
+
+    fn handle_manifest(&self, ctx: &mut ConnCtx, hash: Hash32, bytes: Option<Vec<u8>>) -> Flow {
+        let Some(bytes) = bytes else {
+            return Flow::Continue;
+        };
+        if rz_core::content::Manifest::hash_of(&bytes) != hash {
+            return Flow::Penalize(Offense::ProtocolViolation);
+        }
+        if lock(&self.content).store.has_manifest(&hash) {
+            return Flow::Continue;
+        }
+        if !self.referenced_manifests().0.contains(&hash) {
+            return Flow::Continue;
+        }
+        let stored = {
+            let mut ct = lock(&self.content);
+            ct.wanted_manifests.remove(&hash);
+            ct.store.put_manifest(hash, &bytes)
+        };
+        match stored {
+            Ok(true) => self.debug(format!("manifesto {hash} hospedado")),
+            Ok(false) => self.debug("manifesto recusado (cota)"),
+            Err(e) => self.info(format!("falha ao gravar manifesto: {e}")),
+        }
+        let _ = ctx;
+        Flow::Continue
+    }
+
+    fn handle_get_content(&self, ctx: &mut ConnCtx, id: Hash32) -> Flow {
+        let info = lock(&self.content).store.info(&id);
+        let missing = info.is_none();
+        self.send_to(ctx.id, Message::ContentInfo { id, info });
+        // Não hospedado ainda: procura nos pares (replicação sob demanda).
+        if missing && self.content_wanted_from(ctx.id, id) {
+            self.broadcast(&Message::GetContent(id), Some(ctx.id));
+        }
+        Flow::Continue
+    }
+
+    /// Descrição recebida: resposta a um pedido nosso (pede os pedaços) ou
+    /// início de um envio para hospedagem (aguarda os pedaços).
+    fn handle_content_info(
+        &self,
+        ctx: &mut ConnCtx,
+        id: Hash32,
+        info: Option<rz_core::content::ContentInfo>,
+    ) -> Flow {
+        let Some(info) = info else {
+            return Flow::Continue;
+        };
+        if info.id() != id {
+            return Flow::Penalize(Offense::ProtocolViolation);
+        }
+        let requested = {
+            let mut ct = lock(&self.content);
+            ct.expire();
+            if ct.store.has(&id) || ct.downloads.contains_key(&id) {
+                return Flow::Continue;
+            }
+            ct.wanted.remove(&id).is_some()
+        };
+        if !requested && !self.content_referenced(&id) {
+            self.send_to(ctx.id, Message::ContentInfo { id, info: None });
+            return Flow::Continue;
+        }
+        let accepted = {
+            let mut ct = lock(&self.content);
+            let room = ct.store.fits(info.len.saturating_add(ct.reserved()));
+            if room
+                && ct.downloads.len() < MAX_DOWNLOADS
+                && ct.downloads_by(ctx.id) == 0
+                && !ct.downloads.contains_key(&id)
+            {
+                ct.downloads.insert(id, Download::new(info.clone(), ctx.id));
+                true
+            } else {
+                false
+            }
+        };
+        if !accepted {
+            self.send_to(ctx.id, Message::ContentInfo { id, info: None });
+            return Flow::Continue;
+        }
+        if requested {
+            for index in 0..info.chunks.len() as u32 {
+                self.send_to(ctx.id, Message::GetChunk { id, index });
+            }
+        }
+        Flow::Continue
+    }
+
+    fn handle_chunk(
+        &self,
+        ctx: &mut ConnCtx,
+        id: Hash32,
+        index: u32,
+        data: Option<Vec<u8>>,
+    ) -> Flow {
+        let finished = {
+            let mut ct = lock(&self.content);
+            let Some(d) = ct.downloads.get_mut(&id) else {
+                return Flow::Continue;
+            };
+            if d.source != ctx.id {
+                return Flow::Continue;
+            }
+            let Some(data) = data else {
+                // A origem não tem o pedaço: abandona o download.
+                ct.downloads.remove(&id);
+                return Flow::Continue;
+            };
+            let i = index as usize;
+            if !d.info.check_chunk(i, &data) {
+                ct.downloads.remove(&id);
+                return Flow::Penalize(Offense::ProtocolViolation);
+            }
+            d.chunks[i] = Some(data);
+            d.last_progress = Instant::now();
+            if !d.complete() {
+                return Flow::Continue;
+            }
+            let Some(d) = ct.downloads.remove(&id) else {
+                return Flow::Continue;
+            };
+            let bytes = d.assemble();
+            ct.store.put_object(d.info, &bytes)
+        };
+        match finished {
+            Ok(true) => {
+                self.debug(format!("conteúdo {id} hospedado"));
+                self.send_to(ctx.id, Message::HaveContent(id));
+                self.broadcast(&Message::HaveContent(id), Some(ctx.id));
+            }
+            Ok(false) => self.send_to(ctx.id, Message::ContentInfo { id, info: None }),
+            Err(e) => self.info(format!("falha ao gravar conteúdo: {e}")),
+        }
+        Flow::Continue
     }
 
     // ------------------------------------------------ transações (Dandelion++)
