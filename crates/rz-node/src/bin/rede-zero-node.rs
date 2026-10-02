@@ -224,6 +224,7 @@ fn init_devnet(args: &Args) -> Result<(), String> {
         allocations,
         governance: rz_core::GovernanceParams::for_block_ms(block_ms),
         assets,
+        bridges: vec![],
     };
     genesis.validate().map_err(|e| e.to_string())?;
     let genesis_path = out.join("genesis.bin");

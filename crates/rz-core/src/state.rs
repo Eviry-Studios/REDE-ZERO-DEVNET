@@ -21,6 +21,7 @@ use rz_privacy::clsag::{self, RingMember};
 use rz_privacy::note::OutputData;
 use rz_privacy::{balance_holds, commitment, decode_point, excess};
 
+use crate::bridge::{self as bridge, BridgeState, Burn, ChainState, HeaderRec, Htlc, Settled};
 use crate::community::{self, Community, CommunityState, CommunityStatus, NameKind, NameRecord};
 use crate::consensus::{Validator, ValidatorSet};
 use crate::defense::{
@@ -142,6 +143,8 @@ pub struct State {
     defense: DefenseState,
     /// Exonet Runtime (ADR-0018).
     runtime: RuntimeState,
+    /// Ponte e trocas atômicas (ADR-0019).
+    bridge: BridgeState,
 }
 
 /// ZERO em período de desvinculação.
@@ -176,6 +179,29 @@ struct Effect {
     community: Option<CommunityEffect>,
     defense: Option<DefenseEffect>,
     runtime: Option<RuntimeEffect>,
+    bridge: Option<BridgeEffect>,
+}
+
+/// Alteração da ponte ou de trocas atômicas produzida por uma transação.
+enum BridgeEffect {
+    Headers {
+        chain: String,
+        recs: Vec<(Hash32, HeaderRec)>,
+        best: Option<Hash32>,
+    },
+    /// Cunha a representação do ativo queimado na origem.
+    Deposit {
+        chain: String,
+        asset: AssetId,
+        burn: Burn,
+    },
+    /// Para ZERO, o valor já foi debitado da conta.
+    Lock(Htlc),
+    Claim {
+        id: Hash32,
+        preimage: Vec<u8>,
+    },
+    Refund(Hash32),
 }
 
 /// Alteração do Exonet Runtime produzida por uma transação. Chamadas são
@@ -348,6 +374,18 @@ impl State {
             last_validators: initial,
             market: {
                 let mut m = MarketState::default();
+                for c in &genesis.bridges {
+                    m.assets.insert(
+                        c.asset(),
+                        crate::market::AssetInfo {
+                            network: c.name.clone(),
+                            asset_ref: c.asset_ref.clone(),
+                            decimals: c.decimals,
+                            verification: crate::market::Verification::LightClientBurn,
+                            supply: 0,
+                        },
+                    );
+                }
                 for a in &genesis.assets {
                     let id = a.id();
                     m.assets.insert(id, a.info().map_err(StateError::Genesis)?);
@@ -360,6 +398,14 @@ impl State {
             communities: CommunityState::default(),
             defense: DefenseState::default(),
             runtime: RuntimeState::default(),
+            bridge: BridgeState {
+                chains: genesis
+                    .bridges
+                    .iter()
+                    .map(|c| (c.name.clone(), ChainState::new(c.clone())))
+                    .collect(),
+                ..BridgeState::default()
+            },
         })
     }
 
@@ -423,6 +469,10 @@ impl State {
     }
 
     /// Estado de defesa da Exonet.
+    pub fn bridge(&self) -> &BridgeState {
+        &self.bridge
+    }
+
     pub fn runtime(&self) -> &RuntimeState {
         &self.runtime
     }
@@ -565,7 +615,8 @@ impl State {
             .put(&self.market.root())
             .put(&self.communities.root())
             .put(&self.defense.root())
-            .put(&self.runtime.root());
+            .put(&self.runtime.root())
+            .put(&self.bridge.root());
         hash(context::STATE_ROOT, &e.into_bytes())
     }
 
@@ -582,8 +633,9 @@ impl State {
             + self.deposits_held()
             + self.staked_total()
             + self.market.zero_escrow()
-            + self.market.pool_balance(&AssetId::ZERO) as u128;
-        if let Err(asset) = self.market.check_assets() {
+            + self.market.pool_balance(&AssetId::ZERO) as u128
+            + self.bridge.zero_escrow();
+        if let Err(asset) = self.market.check_assets(&self.bridge.asset_escrow()) {
             return Err(StateError::AssetMismatch(asset));
         }
         if actual != self.total_supply as u128 {
@@ -634,6 +686,10 @@ impl State {
         }
         if let Some(d) = effect.defense {
             self.apply_defense(d);
+        }
+        if let Some(b) = effect.bridge {
+            self.apply_bridge(b, p.height)
+                .map_err(|_| TxError::Overflow)?;
         }
         if let Some(r) = effect.runtime {
             self.apply_runtime(r, tx.id().0, p.height)
@@ -930,6 +986,12 @@ impl State {
                 .checked_mul(self.params.runtime.module_byte_fee)
                 .ok_or(TxError::Overflow)?,
             TxKind::BindModule { .. } | TxKind::CallModule { .. } => 0,
+            TxKind::HtlcLock { asset, amount, .. } if asset.is_zero() => *amount,
+            TxKind::HtlcLock { .. }
+            | TxKind::HtlcClaim { .. }
+            | TxKind::HtlcRefund { .. }
+            | TxKind::BridgeHeaders { .. }
+            | TxKind::BridgeDeposit { .. } => 0,
             TxKind::Unlock { .. }
             | TxKind::Vote { .. }
             | TxKind::ReportEquivocation { .. }
@@ -958,6 +1020,7 @@ impl State {
             community: None,
             defense: None,
             runtime: None,
+            bridge: None,
         };
         let g = &self.params.governance;
 
@@ -1339,6 +1402,104 @@ impl State {
                     },
                     fee: self.params.communities.name_fee,
                 });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::BridgeHeaders { chain, headers } => {
+                let c = self
+                    .bridge
+                    .chains
+                    .get(chain)
+                    .ok_or(TxError::Bridge("rede de origem desconhecida"))?;
+                let (recs, best) = c.check_headers(headers).map_err(TxError::Bridge)?;
+                effect.bridge = Some(BridgeEffect::Headers {
+                    chain: chain.clone(),
+                    recs,
+                    best,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::BridgeDeposit {
+                chain,
+                block,
+                tx: origin,
+                path,
+                index,
+            } => {
+                let c = self
+                    .bridge
+                    .chains
+                    .get(chain)
+                    .ok_or(TxError::Bridge("rede de origem desconhecida"))?;
+                let burn = c
+                    .check_burn(p.network_id, block, origin, path, *index)
+                    .map_err(TxError::Bridge)?;
+                let asset = c.config.asset();
+                let supply = self.market.assets.get(&asset).map_or(0, |a| a.supply);
+                if supply.checked_add(burn.amount).is_none() {
+                    return Err(TxError::Overflow);
+                }
+                effect.bridge = Some(BridgeEffect::Deposit {
+                    chain: chain.clone(),
+                    asset,
+                    burn,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::HtlcLock {
+                asset,
+                amount,
+                recipient,
+                hashlock,
+                timeout,
+            } => {
+                if *timeout <= p.height {
+                    return Err(TxError::Bridge("prazo já vencido"));
+                }
+                if !asset.is_zero() {
+                    self.registered(asset)?;
+                    if self.market.balance(&sender, asset) < *amount {
+                        return Err(TxError::Market("saldo do ativo insuficiente"));
+                    }
+                }
+                effect.bridge = Some(BridgeEffect::Lock(Htlc {
+                    id: tx.id().0,
+                    sender,
+                    recipient: *recipient,
+                    asset: *asset,
+                    amount: *amount,
+                    hashlock: *hashlock,
+                    timeout: *timeout,
+                }));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::HtlcClaim { id, preimage } => {
+                let h = self
+                    .bridge
+                    .htlcs
+                    .get(id)
+                    .ok_or(TxError::Bridge("contrato inexistente ou já liquidado"))?;
+                if p.height >= h.timeout {
+                    return Err(TxError::Bridge("prazo vencido: só a devolução é possível"));
+                }
+                if bridge::sha256(preimage) != h.hashlock.0 {
+                    return Err(TxError::Bridge("pré-imagem não confere"));
+                }
+                effect.bridge = Some(BridgeEffect::Claim {
+                    id: *id,
+                    preimage: preimage.clone(),
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::HtlcRefund { id } => {
+                let h = self
+                    .bridge
+                    .htlcs
+                    .get(id)
+                    .ok_or(TxError::Bridge("contrato inexistente ou já liquidado"))?;
+                if p.height < h.timeout {
+                    return Err(TxError::Bridge("devolução só depois do prazo"));
+                }
+                effect.bridge = Some(BridgeEffect::Refund(*id));
                 effect.accounts.push((sender, sender_acc));
             }
             TxKind::PublishModule { code } => {
@@ -1822,6 +1983,7 @@ impl State {
             community: None,
             defense: None,
             runtime: None,
+            bridge: None,
         })
     }
 }
@@ -2272,6 +2434,66 @@ impl State {
             }
         }
         Ok(())
+    }
+
+    fn apply_bridge(&mut self, e: BridgeEffect, height: u64) -> Result<(), StateError> {
+        match e {
+            BridgeEffect::Headers { chain, recs, best } => {
+                if let Some(c) = self.bridge.chains.get_mut(&chain) {
+                    c.add_headers(recs, best);
+                }
+            }
+            BridgeEffect::Deposit { chain, asset, burn } => {
+                if let Some(c) = self.bridge.chains.get_mut(&chain) {
+                    c.claimed.insert(burn.txid);
+                }
+                let info = self
+                    .market
+                    .assets
+                    .get_mut(&asset)
+                    .ok_or(StateError::AssetMismatch(asset))?;
+                info.supply = info
+                    .supply
+                    .checked_add(burn.amount)
+                    .ok_or(StateError::Overflow)?;
+                self.add_asset(burn.recipient, asset, burn.amount)?;
+            }
+            BridgeEffect::Lock(h) => {
+                if !h.asset.is_zero() {
+                    self.sub_asset(h.sender, h.asset, h.amount)?;
+                }
+                self.bridge.htlcs.insert(h.id, h);
+            }
+            BridgeEffect::Claim { id, preimage } => {
+                if let Some(h) = self.bridge.htlcs.remove(&id) {
+                    self.release_htlc(h.recipient, &h)?;
+                    self.bridge.push_settled(Settled {
+                        id,
+                        preimage: Some(preimage),
+                        height,
+                    });
+                }
+            }
+            BridgeEffect::Refund(id) => {
+                if let Some(h) = self.bridge.htlcs.remove(&id) {
+                    self.release_htlc(h.sender, &h)?;
+                    self.bridge.push_settled(Settled {
+                        id,
+                        preimage: None,
+                        height,
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn release_htlc(&mut self, to: Address, h: &Htlc) -> Result<(), StateError> {
+        if h.asset.is_zero() {
+            self.credit_fees(to, h.amount)
+        } else {
+            self.add_asset(to, h.asset, h.amount)
+        }
     }
 
     /// Consulta somente leitura ao módulo de uma Comunidade (interfaces).

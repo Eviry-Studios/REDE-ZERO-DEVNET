@@ -47,7 +47,7 @@ pub const MAX_PREIMAGE: usize = 64;
 pub const KEEP_HEADERS: u64 = 4_032;
 /// Liquidações de HTLC lembradas (as mais recentes).
 pub const MAX_SETTLED: usize = 4096;
-const MAX_CHAIN_NAME: usize = 32;
+pub const MAX_CHAIN_NAME: usize = 32;
 
 // --------------------------------------------------------------- hashes
 

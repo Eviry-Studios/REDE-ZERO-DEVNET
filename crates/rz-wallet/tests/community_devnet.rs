@@ -70,6 +70,7 @@ fn genesis() -> Genesis {
             contribution_half_life_blocks: 10_000,
         },
         assets: vec![],
+        bridges: vec![],
     }
 }
 

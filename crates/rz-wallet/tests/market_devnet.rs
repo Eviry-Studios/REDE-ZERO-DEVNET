@@ -69,6 +69,7 @@ fn genesis() -> Genesis {
                 amount: 50_000,
             }],
         }],
+        bridges: vec![],
     }
 }
 

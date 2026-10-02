@@ -57,6 +57,7 @@ fn genesis() -> Genesis {
         allocations,
         governance: GovernanceParams::default(),
         assets: vec![],
+        bridges: vec![],
     }
 }
 

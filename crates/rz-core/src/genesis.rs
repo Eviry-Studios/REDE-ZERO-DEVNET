@@ -165,6 +165,8 @@ pub struct Genesis {
     pub governance: GovernanceParams,
     /// Ativos externos de teste (somente DEVNET; ADR-0014).
     pub assets: Vec<GenesisAsset>,
+    /// Redes de origem conectadas por cliente leve (ADR-0019).
+    pub bridges: Vec<crate::bridge::ChainConfig>,
 }
 
 impl Encode for Genesis {
@@ -178,7 +180,8 @@ impl Encode for Genesis {
             .list(&self.validators)
             .list(&self.allocations)
             .put(&self.governance)
-            .list(&self.assets);
+            .list(&self.assets)
+            .list(&self.bridges);
     }
 }
 
@@ -195,6 +198,7 @@ impl Decode for Genesis {
             allocations: d.list(MAX_ALLOCATIONS)?,
             governance: d.get()?,
             assets: d.list(MAX_ASSETS)?,
+            bridges: d.list(crate::bridge::MAX_CHAINS)?,
         })
     }
 }
@@ -320,7 +324,29 @@ impl Genesis {
         self.governance
             .validate()
             .map_err(GenesisError::InvalidParameter)?;
-        self.validate_assets()
+        self.validate_assets()?;
+        self.validate_bridges()
+    }
+
+    fn validate_bridges(&self) -> Result<(), GenesisError> {
+        if self.bridges.is_empty() {
+            return Ok(());
+        }
+        // Ponte sem auditoria: só em redes de desenvolvimento e teste.
+        if !matches!(self.kind, NetworkKind::Devnet | NetworkKind::Testnet) {
+            return Err(GenesisError::InvalidParameter(
+                "ponte ainda sem auditoria: só DEVNET e TESTNET",
+            ));
+        }
+        let mut names = BTreeSet::new();
+        let mut ids: BTreeSet<AssetId> = self.assets.iter().map(|a| a.id()).collect();
+        for b in &self.bridges {
+            b.validate().map_err(GenesisError::InvalidParameter)?;
+            if !names.insert(b.name.clone()) || !ids.insert(b.asset()) {
+                return Err(GenesisError::InvalidParameter("rede de origem repetida"));
+            }
+        }
+        Ok(())
     }
 
     fn validate_assets(&self) -> Result<(), GenesisError> {
@@ -395,6 +421,7 @@ pub(crate) mod tests {
                 contribution_half_life_blocks: 16,
             },
             assets: vec![],
+            bridges: vec![],
         }
     }
 

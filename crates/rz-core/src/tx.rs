@@ -239,6 +239,33 @@ pub enum TxKind {
         args: Vec<u8>,
         fuel: u64,
     },
+    /// Tag `0x70` — cabeçalhos de uma rede de origem para o cliente leve
+    /// (ADR-0019). Qualquer conta pode retransmitir.
+    BridgeHeaders {
+        chain: String,
+        headers: Vec<[u8; 80]>,
+    },
+    /// Tag `0x71` — prova de queima na origem: cunha a representação para o
+    /// destinatário gravado na saída `OP_RETURN`.
+    BridgeDeposit {
+        chain: String,
+        block: Hash32,
+        tx: Vec<u8>,
+        path: Vec<Hash32>,
+        index: u32,
+    },
+    /// Tag `0x72` — bloqueia ZERO ou um ativo num contrato de troca atômica.
+    HtlcLock {
+        asset: AssetId,
+        amount: u64,
+        recipient: Address,
+        hashlock: Hash32,
+        timeout: u64,
+    },
+    /// Tag `0x73` — resgata revelando a pré-imagem (antes do prazo).
+    HtlcClaim { id: Hash32, preimage: Vec<u8> },
+    /// Tag `0x74` — devolve ao remetente depois do prazo.
+    HtlcRefund { id: Hash32 },
 }
 
 impl Encode for TxKind {
@@ -464,6 +491,46 @@ impl Encode for TxKind {
             } => {
                 e.u8(0x62).put(community).str(method).bytes(args).u64(*fuel);
             }
+            TxKind::BridgeHeaders { chain, headers } => {
+                e.u8(0x70).str(chain).u32(headers.len() as u32);
+                for h in headers {
+                    e.fixed(h);
+                }
+            }
+            TxKind::BridgeDeposit {
+                chain,
+                block,
+                tx,
+                path,
+                index,
+            } => {
+                e.u8(0x71)
+                    .str(chain)
+                    .put(block)
+                    .bytes(tx)
+                    .list(path)
+                    .u32(*index);
+            }
+            TxKind::HtlcLock {
+                asset,
+                amount,
+                recipient,
+                hashlock,
+                timeout,
+            } => {
+                e.u8(0x72)
+                    .put(asset)
+                    .u64(*amount)
+                    .put(recipient)
+                    .put(hashlock)
+                    .u64(*timeout);
+            }
+            TxKind::HtlcClaim { id, preimage } => {
+                e.u8(0x73).put(id).bytes(preimage);
+            }
+            TxKind::HtlcRefund { id } => {
+                e.u8(0x74).put(id);
+            }
         }
     }
 }
@@ -615,6 +682,40 @@ impl Decode for TxKind {
                 args: d.bytes(crate::runtime::MAX_ARGS)?,
                 fuel: d.u64()?,
             }),
+            0x70 => {
+                let chain = d.str(crate::bridge::MAX_CHAIN_NAME)?;
+                let n = d.u32()? as usize;
+                if n > crate::bridge::MAX_HEADERS_PER_TX {
+                    return Err(DecodeError::LengthExceeded {
+                        declared: n as u64,
+                        max: crate::bridge::MAX_HEADERS_PER_TX as u64,
+                    });
+                }
+                let mut headers = Vec::with_capacity(n);
+                for _ in 0..n {
+                    headers.push(d.fixed::<80>()?);
+                }
+                Ok(TxKind::BridgeHeaders { chain, headers })
+            }
+            0x71 => Ok(TxKind::BridgeDeposit {
+                chain: d.str(crate::bridge::MAX_CHAIN_NAME)?,
+                block: d.get()?,
+                tx: d.bytes(crate::bridge::MAX_ORIGIN_TX)?,
+                path: d.list(crate::bridge::MAX_MERKLE_DEPTH)?,
+                index: d.u32()?,
+            }),
+            0x72 => Ok(TxKind::HtlcLock {
+                asset: d.get()?,
+                amount: d.u64()?,
+                recipient: d.get()?,
+                hashlock: d.get()?,
+                timeout: d.u64()?,
+            }),
+            0x73 => Ok(TxKind::HtlcClaim {
+                id: d.get()?,
+                preimage: d.bytes(crate::bridge::MAX_PREIMAGE)?,
+            }),
+            0x74 => Ok(TxKind::HtlcRefund { id: d.get()? }),
             t => Err(DecodeError::InvalidTag(t)),
         }
     }
@@ -875,6 +976,15 @@ impl AccountTx {
                 }
             }
             TxKind::BindModule { .. } => {}
+            TxKind::BridgeHeaders { headers, .. } => {
+                if headers.is_empty() {
+                    return Err(TxError::Bridge("nenhum cabeçalho"));
+                }
+            }
+            TxKind::BridgeDeposit { .. } | TxKind::HtlcClaim { .. } | TxKind::HtlcRefund { .. } => {
+            }
+            TxKind::HtlcLock { amount, .. } if *amount == 0 => return Err(TxError::ZeroAmount),
+            TxKind::HtlcLock { .. } => {}
             TxKind::CallModule { method, fuel, .. } => {
                 crate::runtime::check_method(method).map_err(TxError::Runtime)?;
                 if *fuel == 0 {
@@ -957,6 +1067,8 @@ pub enum TxError {
     Staking(&'static str),
     /// Regra do Exonet Runtime violada.
     Runtime(&'static str),
+    /// Regra da ponte ou de troca atômica violada.
+    Bridge(&'static str),
 }
 
 impl fmt::Display for TxError {
@@ -990,6 +1102,7 @@ impl fmt::Display for TxError {
             Self::Community(w) => write!(f, "comunidade: {w}"),
             Self::Defense(w) => write!(f, "defesa: {w}"),
             Self::Runtime(w) => write!(f, "runtime: {w}"),
+            Self::Bridge(w) => write!(f, "ponte: {w}"),
         }
     }
 }

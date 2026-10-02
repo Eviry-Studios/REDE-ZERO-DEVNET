@@ -85,6 +85,9 @@ pub enum Verification {
     /// verificáveis (provas da rede de origem, sem custodiante único) estão
     /// **A DEFINIR** (ADR-0014).
     DevnetGenesis = 0,
+    /// Representação de um ativo destruído na origem, comprovado por cliente
+    /// leve e prova de Merkle (ADR-0019). Não há custodiante nem resgate.
+    LightClientBurn = 1,
 }
 
 impl Encode for Verification {
@@ -97,6 +100,7 @@ impl Decode for Verification {
     fn decode(d: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         match d.u8()? {
             0 => Ok(Verification::DevnetGenesis),
+            1 => Ok(Verification::LightClientBurn),
             t => Err(DecodeError::InvalidTag(t)),
         }
     }
@@ -586,8 +590,9 @@ impl MarketState {
 
     /// Conservação de cada ativo externo:
     /// `Σ saldos + reservas de venda + Pool = supply`.
-    pub fn check_assets(&self) -> Result<(), AssetId> {
-        let mut sums: BTreeMap<AssetId, u128> = BTreeMap::new();
+    /// `escrow`: ativos externos retidos fora do mercado (trocas atômicas).
+    pub fn check_assets(&self, escrow: &BTreeMap<AssetId, u128>) -> Result<(), AssetId> {
+        let mut sums: BTreeMap<AssetId, u128> = escrow.clone();
         for ((_, a), v) in &self.balances {
             *sums.entry(*a).or_default() += *v as u128;
         }
