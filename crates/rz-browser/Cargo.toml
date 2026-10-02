@@ -1,0 +1,31 @@
+[package]
+name = "rz-browser"
+description = "Navegador Zero: interface local para a Exonet (gateway com isolamento por origem)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# O Navegador é uma interface: depende só do protocolo e da biblioteca da
+# Wallet, nunca do Node (REQ-065, INV-008).
+[dependencies]
+rz-codec.workspace = true
+rz-crypto.workspace = true
+rz-core.workspace = true
+rz-p2p.workspace = true
+rz-wallet = { path = "../rz-wallet" }
+rand_core.workspace = true
+
+[dev-dependencies]
+rz-node.workspace = true
+wat.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "zero-navegador"
+path = "src/bin/zero-navegador.rs"
+
+[lints]
+workspace = true

@@ -1,0 +1,48 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Eviry-Studios/REDE-ZERO-DEVNET"
+
+[workspace.dependencies]
+rz-codec = { path = "crates/rz-codec" }
+rz-crypto = { path = "crates/rz-crypto" }
+rz-core = { path = "crates/rz-core" }
+rz-chain = { path = "crates/rz-chain" }
+rz-p2p = { path = "crates/rz-p2p" }
+rz-privacy = { path = "crates/rz-privacy" }
+rz-node = { path = "crates/rz-node" }
+ed25519-dalek = { version = "2", default-features = false, features = ["std", "zeroize", "rand_core", "fast"] }
+blake3 = { version = "1", default-features = false, features = ["std"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+curve25519-dalek = { version = "4.1", default-features = false, features = ["alloc", "zeroize", "rand_core", "precomputed-tables"] }
+bulletproofs = { version = "5", default-features = false, features = ["std"] }
+merlin = { version = "3", default-features = false }
+x25519-dalek = { version = "2", default-features = false, features = ["zeroize"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+# Exonet Runtime (ADR-0018): versão exata, pois faz parte do protocolo.
+wasmi = { version = "=2.0.0", default-features = false, features = ["std", "validate", "deterministic", "portable-dispatch"] }
+wat = "1"
+# Ponte (ADR-0019): SHA-256 das redes de origem (Bitcoin e afins).
+sha2 = { version = "0.10", default-features = false }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+
+[profile.release]
+overflow-checks = true
+
+# Dependências criptográficas otimizadas mesmo em builds de desenvolvimento,
+# para que testes com provas e assinaturas em anel rodem em tempo razoável.
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.rz-privacy]
+opt-level = 3

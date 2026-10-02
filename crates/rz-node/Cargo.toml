@@ -1,0 +1,22 @@
+[package]
+name = "rz-node"
+description = "Node da DEVNET da Rede Zero"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rz-codec.workspace = true
+rz-crypto.workspace = true
+rz-core.workspace = true
+rz-chain.workspace = true
+rz-p2p.workspace = true
+rand_core.workspace = true
+
+[[bin]]
+name = "rede-zero-node"
+path = "src/bin/rede-zero-node.rs"
+
+[lints]
+workspace = true

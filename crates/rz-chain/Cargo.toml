@@ -1,0 +1,15 @@
+[package]
+name = "rz-chain"
+description = "Consenso, escolha de fork, finalidade e mempool da Rede Zero (DEVNET)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rz-codec.workspace = true
+rz-crypto.workspace = true
+rz-core.workspace = true
+
+[lints]
+workspace = true

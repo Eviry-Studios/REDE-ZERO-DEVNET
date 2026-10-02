@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    name: fmt, clippy e testes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain estável
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+      - name: Formatação
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Testes
+        run: cargo test --workspace --locked
+      - name: Vetores publicados
+        run: cargo run --locked -p rz-crypto --example vectors
+
+  secrets:
+    name: varredura de chaves no repositório
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Nenhum arquivo de chave versionado (THR-DEV-007)
+        run: |
+          if git ls-files | grep -E '\.(key|secret)$|(^|/)devnet-data/'; then
+            echo "::error::arquivos de chave ou dados de DEVNET versionados"
+            exit 1
+          fi
