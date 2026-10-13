@@ -651,7 +651,7 @@ mod tests {
         let mut a: Vec<_> = ks[..3].iter().map(|k| attest(k, "net", &p)).collect();
         a[1].signature.0[0] ^= 1;
         assert_eq!(attested_power("net", &p, &a, &vs), None);
-        // Quem não é validador (ex.: o Agente Zero) não atesta.
+        // Quem não é validador não atesta.
         let outsider = SecretKey::from_seed([99; 32]);
         let b = vec![attest(&outsider, "net", &p)];
         assert_eq!(attested_power("net", &p, &b, &vs), None);

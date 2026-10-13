@@ -23,7 +23,7 @@ O modelo de ameaças aponta os riscos centrais: perpetuação da emergência (TH
    * Subir para vigilância exige **mais de 1/3**.
    * Incidente, guerra, encerramento, credenciais e contribuições exigem **mais de 2/3**.
    * **Descer de modo e revogar credencial exigem mais de 1/3.** Encerrar uma emergência é mais fácil que mantê-la.
-   * Ninguém decide sozinho, nem o Agente Zero, que não é validador (THR-DEF-003).
+   * Ninguém decide sozinho; quem não é validador não atesta (THR-DEF-003).
 2. **Evidência obrigatória** (`SPEC §52`): toda decisão carrega o hash de um pacote de evidências (fora da cadeia). Os hashes ficam no estado para sempre (AC-DEF-010).
 3. **Contra repetição:** as atestações assinam um contador de decisões (`seq`). Uma atestação vale para uma única decisão.
 4. **Modos com prazo** (`SPEC §53`, REQ-058).
@@ -62,7 +62,7 @@ Pares de entrada anônimos continuam regidos pelo limite de taxa, pela pontuaç�
 
 * Com menos de 1/3 do poder bizantino, nenhum incidente falso é aberto. Com mais de 1/3 honesto, uma emergência indevida pode ser encerrada.
 * Uma coalizão acima de 2/3 poderia abusar da defesa, mas também controlaria o consenso (fora do escopo, `THREAT_MODEL §12`). Mesmo assim, todo modo vence e toda credencial expira.
-* A detecção de anomalias continua local (cada operador e o Agente Zero observam e propõem). O protocolo só registra decisões atestadas.
+* A detecção de anomalias continua local (cada operador observa e propõe). O protocolo só registra decisões atestadas.
 
 ## Condições de revisão
 

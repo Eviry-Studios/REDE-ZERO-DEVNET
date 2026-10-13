@@ -40,7 +40,7 @@ A revisão interna (§7) **não substitui** a auditoria externa.
 
 ¹ Aproximado, incluindo testes internos aos arquivos.
 
-**Fora do escopo:** Agente Zero (ainda não implementado), e a política monetária (A DEFINIR).
+**Fora do escopo:** a política monetária (A DEFINIR). O Agente Zero foi retirado do núcleo (`REQUIREMENTS.md` v0.2.0) e não será implementado.
 
 ## 3. Arquitetura e fronteiras de confiança
 

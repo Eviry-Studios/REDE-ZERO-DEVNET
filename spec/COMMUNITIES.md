@@ -77,7 +77,7 @@ Não existe operação de Comunidade sobre consenso, parâmetros, saldos de terc
 
 ## 7. Execução (fora do escopo desta versão)
 
-O Exonet Runtime, que executa aplicações de Comunidades isoladas e em múltiplos Nodes (`SPEC §62`, Democracia Orgânica §9–§13), está A DEFINIR (`spec/RUNTIME.md`). O estado de uma Comunidade que a rede reconhece é o registro desta especificação, replicado pelo consenso: um Node não pode alterá-lo sozinho (hosting ≠ autoridade).
+A lógica de uma Comunidade roda no Exonet Runtime (`spec/RUNTIME.md`, ADR-0018): WebAssembly determinístico, executado por todos os validadores e isolado no armazenamento da própria Comunidade (`SPEC §62`). A interface é publicada como conteúdo endereçado por hash (`spec/CONTENT.md`, ADR-0017). O estado de uma Comunidade que a rede reconhece é o registro desta especificação, replicado pelo consenso: um Node não pode alterá-lo sozinho (hosting ≠ autoridade).
 
 ## 8. Parâmetros (`ProtocolParams.communities`)
 

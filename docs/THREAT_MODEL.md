@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.9.0
-**Status:** Modelo de ameaças — fase de definição (0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
+**Versão:** 0.10.0
+**Status:** Modelo de ameaças — fase de definição (0.10.0: retirada do Agente Zero; 0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -89,7 +89,6 @@ O modelo não promete anonimato absoluto, segurança absoluta nem disponibilidad
 * modos de defesa e credenciais defensivas;
 * Navegador Zero e interfaces alternativas;
 * Comunidades;
-* Agente Zero;
 * processo de desenvolvimento, atualização e distribuição de software.
 
 ## 3.2 Fora do escopo
@@ -114,7 +113,7 @@ Ver seção 12.
 | AS-10 | Credenciais defensivas | Privilégios temporários concedidos em incidentes |
 | AS-11 | Código e especificações | Repositórios, releases e documentação |
 | AS-12 | Comunidades | Frontend, backend, dados e regras publicadas |
-| AS-13 | Base de conhecimento do Agente Zero | Documentação, incidentes, propostas e versões |
+| AS-13 | *(reservado)* | Antes: base de conhecimento do Agente Zero, retirado do núcleo (`REQUIREMENTS.md` v0.2.0) |
 | AS-14 | Pool permanente | Ativos depositados sob regra de permanência |
 
 ---
@@ -201,11 +200,9 @@ Participante que recebeu credenciais defensivas legítimas e tenta usá-las alé
 
 **Objetivo:** acumular poder, punir adversários políticos, perpetuar privilégios.
 
-## ADV-11 — Manipulador do Agente Zero
+## ADV-11 — *(reservado)*
 
-Tenta influenciar o Agente Zero por dados envenenados, injeção de instruções ou manipulação da base de conhecimento.
-
-**Objetivo:** provocar recomendações falsas, alarmes falsos, ocultar incidentes reais ou induzir propostas prejudiciais.
+Antes: manipulador do Agente Zero. O Agente Zero foi retirado do núcleo da Rede Zero (`REQUIREMENTS.md` v0.2.0, §23), e o identificador não é reutilizado.
 
 ## ADV-12 — Coerção externa
 
@@ -266,7 +263,7 @@ As mitigações deste documento dependem das seguintes suposições. Se alguma f
          └──────────────────────────────┘
 
 LT-6: Repositórios, dependências e releases → Node
-LT-7: Agente Zero → Governança
+LT-7: (reservado)
 LT-8: Redes externas → Pool / Grande Mercado
 ```
 
@@ -278,7 +275,7 @@ LT-8: Redes externas → Pool / Grande Mercado
 | LT-4 | Rede → Node | Toda mensagem recebida é não confiável até ser validada |
 | LT-5 | Pares → estado | Estado recebido é verificado, nunca aceito cegamente (`SPEC §28`) |
 | LT-6 | Distribuição → Node | Software é verificado antes de ser executado (`SPEC §64`) |
-| LT-7 | Agente Zero → decisões | O Agente Zero recomenda; não decide |
+| LT-7 | *(reservado)* | Antes: Agente Zero → decisões; retirado do núcleo |
 | LT-8 | Externo → Pool | Ativos externos exigem verificação, não declaração de custodiante (`SPEC §42`) |
 
 ---
@@ -861,10 +858,10 @@ Ativos de teste continuam só na DEVNET.
 ### THR-DEF-003 — Falso incidente
 
 **Severidade:** ALTA
-**Adversários:** ADV-10, ADV-11
+**Adversários:** ADV-10
 **Descrição:** um incidente é declarado sem base para obter privilégios.
 
-**Mitigações:** transições entre modos exigem evidência verificável e múltiplos participantes (`SPEC §52`, `SPEC §53`); o Agente Zero não declara incidentes sozinho. Implementado: atestações de validadores ponderadas por poder, com contador `seq` contra repetição; assinatura inválida, repetida ou de não validador invalida a decisão inteira (`at_def_001`, `at_def_002`, `at_def_003`). Guerra cibernética exige incidente aberto há `war_persistence_blocks` (`at_cyber_001_002`).
+**Mitigações:** transições entre modos exigem evidência verificável e múltiplos participantes (`SPEC §52`, `SPEC §53`); nenhum participante declara incidentes sozinho. Implementado: atestações de validadores ponderadas por poder, com contador `seq` contra repetição; assinatura inválida, repetida ou de não validador invalida a decisão inteira (`at_def_001`, `at_def_002`, `at_def_003`). Guerra cibernética exige incidente aberto há `war_persistence_blocks` (`at_cyber_001_002`).
 
 ### THR-DEF-004 — Uso ofensivo da infraestrutura defensiva
 
@@ -880,28 +877,9 @@ Ativos de teste continuam só na DEVNET.
 
 ---
 
-## 9.11 Agente Zero
+## 9.11 *(reservado)*
 
-### THR-AGT-001 — Envenenamento da base de conhecimento
-
-**Severidade:** ALTA
-**Adversários:** ADV-11
-**Mitigações:** versões da base identificadas por hash; origem dos documentos rastreável; análises reproduzíveis.
-
-### THR-AGT-002 — Injeção de instruções
-
-**Severidade:** ALTA
-**Adversários:** ADV-11, ADV-08
-**Descrição:** conteúdo de Comunidades, propostas ou mensagens tenta instruir o Agente Zero a agir de forma diferente.
-
-**Mitigações:** o Agente Zero não possui autoridade de execução sobre consenso, fundos ou credenciais (LT-7); dados externos tratados como dados, nunca como instruções; ferramentas com privilégio mínimo.
-
-### THR-AGT-003 — Recomendação tratada como decisão
-
-**Severidade:** ALTA
-**Descrição:** participantes passam a aceitar automaticamente recomendações do agente, transformando-o em autoridade de fato.
-
-**Mitigações:** o consenso é determinístico e não depende de IA (`Manifesto §6`); propostas passam pelo ciclo de governança; recomendações registradas com a versão do agente.
+Antes: Agente Zero (THR-AGT-001..003). O Agente Zero foi retirado do núcleo da Rede Zero (`REQUIREMENTS.md` v0.2.0, §23) e não será implementado. Os identificadores ficam reservados e não são reutilizados.
 
 ---
 
@@ -1060,7 +1038,6 @@ Mesmo com todas as mitigações:
 * sem > 2/3 do poder conectado a rede para, e transações ficam pendentes até a retomada;
 * uma coalizão acima do limite de tolerância pode comprometer o consenso;
 * governança pode tomar decisões ruins dentro das regras;
-* o Agente Zero pode produzir recomendações erradas;
 * vulnerabilidades desconhecidas existirão.
 
 A resposta da Rede Zero a esses riscos não é prometer que não acontecerão, mas garantir: detecção, evidência, recuperação, evolução do protocolo e ausência de ponto único de falha.
@@ -1083,7 +1060,7 @@ Toda alteração deverá possuir histórico, justificativa e versão (`REQ-086`,
 
 # 15. Status
 
-**THREAT_MODEL.md v0.9.0**
+**THREAT_MODEL.md v0.10.0**
 
 > **Modelo de ameaças inicial — não congelado.**
 

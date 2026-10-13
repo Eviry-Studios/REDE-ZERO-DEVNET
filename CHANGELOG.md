@@ -61,6 +61,11 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Alterado — retirada do Agente Zero
+
+* O Agente Zero, já retirado do núcleo pelos Requisitos (v0.2.0, §23), não será implementado. Referências residuais removidas do modelo de ameaças (v0.10.0), da auditoria e das ADR-0008 e ADR-0016. Os identificadores AS-13, ADV-11, LT-7 e THR-AGT-001..003 ficam reservados. O nome `zero://agente-zero` continua reservado contra imitação.
+* `spec/COMMUNITIES.md` atualizado: o Exonet Runtime existe (ADR-0018).
+
 ### Adicionado — Ponte sem custodiante e trocas atômicas
 
 * ADR-0019 e `spec/BRIDGE.md`:

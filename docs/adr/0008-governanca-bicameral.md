@@ -57,7 +57,7 @@ O atraso de ativação das propostas constitucionais existe para garantir **dire
 
 * Não existe tipo de proposta capaz de alterar saldos de endereços específicos, confiscar fundos ou retirar ativos do Pool (REQ-038) — a operação simplesmente não existe no protocolo.
 * A governança não pode prolongar modos de defesa além dos limites da especificação de defesa (REQ-059).
-* O Agente Zero pode anexar análises (referenciadas por hash), mas **não vota e não tem peso**.
+* Análises de terceiros podem ser referenciadas por hash no conteúdo da proposta, mas **não votam e não têm peso**. (Atualizado: o Agente Zero, antes citado aqui, foi retirado do núcleo; `REQUIREMENTS.md` v0.2.0.)
 
 ### 6. Freio de concentração
 
