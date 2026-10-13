@@ -100,6 +100,7 @@ Nodes participantes recusam conexões de saída para identidades em `isolados` e
 | `war_persistence_blocks` | 10 800 (~6 horas) | — |
 | `credential_max_blocks` | 43 200 (~1 dia) | — |
 | `credential_min_contribution` | 100 pontos | — |
+| `contribution_points` | 50 pontos por contribuição atestada (`spec/REPUTATION.md`) | `defense_contribution_points` (tag 32), constitucional |
 
 ## 7. Raiz do estado
 

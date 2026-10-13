@@ -54,6 +54,7 @@ Todo hash protocolar **deve** usar um contexto da seção 3. O hash "puro" (sem 
 | `RUNTIME_ROOT` | `rede-zero/runtime-root/v1` | Raiz da parte do Exonet Runtime do estado |
 | `BRIDGE_TAG` | `rede-zero/bridge-tag/v1` | Etiqueta da rede Zero de destino gravada na saída de queima |
 | `BRIDGE_ROOT` | `rede-zero/bridge-root/v1` | Raiz da parte da ponte do estado |
+| `REPUTATION_ROOT` | `rede-zero/reputation-root/v1` | Raiz do registro de eventos de reputação |
 
 A ponte usa também **SHA-256** (sem contexto), porque é a função das redes de origem: hash de cabeçalhos e transações de origem (`SHA-256(SHA-256(x))`), árvores de Merkle delas e o bloqueio por hash das trocas atômicas. Nenhum valor próprio da Rede Zero é calculado com SHA-256.
 

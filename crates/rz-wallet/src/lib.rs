@@ -733,6 +733,26 @@ pub fn call_module(
     Err(format!("chamada {id} enviada, mas sem recibo até agora"))
 }
 
+// --------------------------------------------------------------- Reputação
+
+/// `(pontos atuais, eventos recentes)` de uma identidade (ADR-0020).
+pub fn reputation(
+    client: &mut Client,
+    key: rz_crypto::PublicKey,
+) -> Result<(u64, Vec<rz_core::reputation::RepEvent>), String> {
+    client
+        .request(&Message::GetReputation(key), |m| match m {
+            Message::Reputation {
+                key: k,
+                points,
+                events,
+                ..
+            } if k == key => Some((points, events)),
+            _ => None,
+        })
+        .map_err(|e| e.to_string())
+}
+
 // ------------------------------------------------- Ponte e trocas atômicas
 
 /// Estado do cliente leve de uma rede de origem.

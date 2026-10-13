@@ -1442,7 +1442,8 @@ impl Shared {
             | Message::Receipt { .. }
             | Message::ModuleInfo { .. }
             | Message::Bridge { .. }
-            | Message::Htlc { .. } => Flow::Continue,
+            | Message::Htlc { .. }
+            | Message::Reputation { .. } => Flow::Continue,
             Message::GetManifest(h) => self.handle_get_manifest(ctx, h),
             Message::Manifest { hash, bytes } => self.handle_manifest(ctx, hash, bytes),
             Message::GetContent(id) => self.handle_get_content(ctx, id),
@@ -1570,6 +1571,21 @@ impl Shared {
                         asset: st.map_or(rz_core::market::AssetId::ZERO, |s| s.config.asset()),
                         claimed: st.map_or(0, |s| s.claimed.len() as u64),
                         chain,
+                    }
+                };
+                self.send_to(ctx.id, msg);
+                Flow::Continue
+            }
+            Message::GetReputation(key) => {
+                let msg = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let h = c.chain.height();
+                    Message::Reputation {
+                        height: h,
+                        key,
+                        points: state.contribution(&key, h),
+                        events: state.reputation().of(&key),
                     }
                 };
                 self.send_to(ctx.id, msg);

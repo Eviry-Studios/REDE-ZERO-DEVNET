@@ -479,6 +479,9 @@ pub struct DefenseParams {
     /// Pontos de contribuição mínimos para receber credencial sem ser
     /// validador ("histórico verificável", `ARCHITECTURE §38`).
     pub credential_min_contribution: u64,
+    /// Pontos de contribuição de uma contribuição defensiva atestada
+    /// (`spec/REPUTATION.md`, ADR-0020).
+    pub contribution_points: u64,
 }
 
 impl Default for DefenseParams {
@@ -492,6 +495,7 @@ impl Default for DefenseParams {
             war_persistence_blocks: 10_800,
             credential_max_blocks: 43_200,
             credential_min_contribution: 100 * crate::governance::SCALE,
+            contribution_points: 50 * crate::governance::SCALE,
         }
     }
 }
@@ -511,6 +515,10 @@ impl DefenseParams {
         if self.war_max_blocks > self.incident_max_blocks {
             return Err("guerra não pode durar mais que um incidente");
         }
+        // Uma contribuição não pode valer mais que mil blocos produzidos.
+        if self.contribution_points > 1_000 * crate::governance::SCALE {
+            return Err("pontos de contribuição defensiva acima do limite");
+        }
         Ok(())
     }
 }
@@ -522,7 +530,8 @@ impl Encode for DefenseParams {
             .u64(self.war_max_blocks)
             .u64(self.war_persistence_blocks)
             .u64(self.credential_max_blocks)
-            .u64(self.credential_min_contribution);
+            .u64(self.credential_min_contribution)
+            .u64(self.contribution_points);
     }
 }
 
@@ -535,6 +544,7 @@ impl Decode for DefenseParams {
             war_persistence_blocks: d.u64()?,
             credential_max_blocks: d.u64()?,
             credential_min_contribution: d.u64()?,
+            contribution_points: d.u64()?,
         })
     }
 }

@@ -279,6 +279,8 @@ pub enum ParamChange {
     MaxBlockFuel(u64),
     ModuleByteFee(u64),
     StorageQuota(u64),
+    // Reputação (ADR-0020); constitucional.
+    DefenseContributionPoints(u64),
 }
 
 impl ParamChange {
@@ -323,6 +325,7 @@ impl ParamChange {
             ParamChange::MaxBlockFuel(_) => 29,
             ParamChange::ModuleByteFee(_) => 30,
             ParamChange::StorageQuota(_) => 31,
+            ParamChange::DefenseContributionPoints(_) => 32,
         }
     }
 
@@ -360,6 +363,7 @@ impl ParamChange {
             ParamChange::MaxBlockFuel(_) => "runtime_max_block_fuel",
             ParamChange::ModuleByteFee(_) => "runtime_module_byte_fee",
             ParamChange::StorageQuota(_) => "runtime_storage_quota",
+            ParamChange::DefenseContributionPoints(_) => "defense_contribution_points",
         }
     }
 
@@ -399,6 +403,7 @@ impl ParamChange {
             "runtime_max_block_fuel" => ParamChange::MaxBlockFuel(v),
             "runtime_module_byte_fee" => ParamChange::ModuleByteFee(v),
             "runtime_storage_quota" => ParamChange::StorageQuota(v),
+            "defense_contribution_points" => ParamChange::DefenseContributionPoints(v),
             _ => return None,
         })
     }
@@ -436,7 +441,8 @@ impl ParamChange {
             | ParamChange::MaxCallFuel(v)
             | ParamChange::MaxBlockFuel(v)
             | ParamChange::ModuleByteFee(v)
-            | ParamChange::StorageQuota(v) => v,
+            | ParamChange::StorageQuota(v)
+            | ParamChange::DefenseContributionPoints(v) => v,
         }
     }
 
@@ -478,6 +484,7 @@ impl ParamChange {
             ParamChange::MaxBlockFuel(v) => p.runtime.max_block_fuel = v,
             ParamChange::ModuleByteFee(v) => p.runtime.module_byte_fee = v,
             ParamChange::StorageQuota(v) => p.runtime.storage_quota = v,
+            ParamChange::DefenseContributionPoints(v) => p.defense.contribution_points = v,
         }
     }
 }
@@ -531,6 +538,7 @@ impl Decode for ParamChange {
             29 => ParamChange::MaxBlockFuel(d.u64()?),
             30 => ParamChange::ModuleByteFee(d.u64()?),
             31 => ParamChange::StorageQuota(d.u64()?),
+            32 => ParamChange::DefenseContributionPoints(d.u64()?),
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }

@@ -35,6 +35,7 @@ Uma decisão com escopo `DEVNET` **não** vale automaticamente para outros ambie
 | [0016](0016-defesa-da-exonet.md) | Defesa da Exonet por atestação de validadores, com expiração automática | DEVNET → TESTNET | Aceita |
 | [0017](0017-navegador-zero-e-conteudo.md) | Navegador Zero como interface local com isolamento por origem, e conteúdo endereçado por hash | DEVNET → TESTNET | Aceita |
 | [0018](0018-exonet-runtime.md) | Exonet Runtime: WebAssembly determinístico, isolado por Comunidade | DEVNET → TESTNET | Aceita |
+| [0020](0020-reputacao.md) | Reputação como pontos de contribuição verificáveis | DEVNET → TESTNET | Aceita |
 | [0019](0019-ponte-sem-custodiante.md) | Ponte sem custodiante: prova de queima por cliente leve e trocas atômicas | DEVNET → TESTNET | Aceita (auditoria pendente) |
 
 ## Modelo

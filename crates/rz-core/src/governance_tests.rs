@@ -493,6 +493,12 @@ fn equivocation_report_slashes_contribution() {
     );
     sim.block(vec![report]);
     // Zerado pela denúncia; volta a acumular apenas com novos blocos (REQ-048).
+    // A punição fica no registro de reputação, com a evidência (REQ-049).
+    let ev = sim.state.reputation().of(&vk);
+    assert!(matches!(
+        ev.first().map(|e| &e.kind),
+        Some(crate::reputation::RepEventKind::Slashed { .. })
+    ));
     assert_eq!(sim.state.contribution(&vk, sim.height), 1_000_000);
 }
 

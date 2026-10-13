@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.10.0
-**Status:** Modelo de ameaças — fase de definição (0.10.0: retirada do Agente Zero; 0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
+**Versão:** 0.11.0
+**Status:** Modelo de ameaças — fase de definição (0.11.0: reputação; 0.10.0: retirada do Agente Zero; 0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -823,14 +823,14 @@ Ativos de teste continuam só na DEVNET.
 
 **Severidade:** MÉDIA
 **Adversários:** ADV-03, ADV-02
-**Mitigações:** reputação derivada apenas de eventos verificáveis (`SPEC §48`); reputação não é autorização eterna (`REQ-048`).
+**Mitigações:** reputação derivada apenas de eventos verificáveis (`SPEC §48`); reputação não é autorização eterna (`REQ-048`). Implementado (ADR-0020): só pontuam blocos produzidos e contribuições defensivas atestadas por > 2/3 após o encerramento; nada subjetivo, nenhuma avaliação entre pares; decaimento por meia-vida; registro verificável dos eventos (`spec/REPUTATION.md`).
 
 ### THR-REP-002 — Penalização injusta
 
 **Severidade:** MÉDIA
 **Descrição:** acusações sem evidência, pesquisa tratada como ataque, penalização por opinião.
 
-**Mitigações:** penalização exige causa, regra, evidência verificável e efeito definido (`SPEC §49`); pesquisa não é ataque (`REQ-050`). Na defesa, o isolamento de um Node exige credencial atestada por > 2/3, é registrado como ação com evidência e termina com a credencial ou o incidente (`spec/DEFENSE.md §5`).
+**Mitigações:** penalização exige causa, regra, evidência verificável e efeito definido (`SPEC §49`); pesquisa não é ataque (`REQ-050`). Só punições com evidência assinada (equivocação, voto ou proposta duplicados) reduzem a reputação; a pontuação local do P2P não é reputação nem vai ao estado. Na defesa, o isolamento de um Node exige credencial atestada por > 2/3, é registrado como ação com evidência e termina com a credencial ou o incidente (`spec/DEFENSE.md §5`).
 
 ### THR-REP-003 — Marcação física de máquinas
 
@@ -1006,7 +1006,7 @@ Ameaças aceitas **temporariamente** na DEVNET, com registro explícito:
 | THR-DEF-001..004 | Defesa (ADR-0016) **sem auditoria**; decisões dependem de > 2/3 dos validadores; isolamento só de conexões de saída (pares de entrada são anônimos); detecção de anomalias local | Auditoria; avaliação do isolamento de pares de entrada sem quebrar o anonimato de clientes |
 | THR-RT-001/002 | Exonet Runtime (ADR-0018) **sem auditoria** do interpretador na configuração usada nem da tabela de combustível | Auditoria do `wasmi` e da tabela de custos; avaliação de aluguel de armazenamento |
 | THR-BRW-003 | Navegador Zero (ADR-0017) **sem auditoria**; isolamento depende do navegador do sistema; links para a web comum saem da Exonet | Auditoria; casca nativa com política de navegação |
-| THR-GOV-001/002 | Governança implementada (ADR-0008); a câmara de contribuição só pontua produção de blocos, então favorece validadores | Computação e contribuição defensiva verificáveis |
+| THR-GOV-001/002 | Governança implementada (ADR-0008); a câmara de contribuição pontua produção de blocos e contribuição defensiva atestada (ADR-0020), mas ainda favorece validadores | Computação verificável e outras contribuições verificáveis |
 
 Nenhuma dessas aceitações temporárias pode ser herdada pela TESTNET pública ou pela MAINNET sem nova avaliação.
 
@@ -1060,7 +1060,7 @@ Toda alteração deverá possuir histórico, justificativa e versão (`REQ-086`,
 
 # 15. Status
 
-**THREAT_MODEL.md v0.10.0**
+**THREAT_MODEL.md v0.11.0**
 
 > **Modelo de ameaças inicial — não congelado.**
 

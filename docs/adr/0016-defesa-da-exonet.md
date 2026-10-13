@@ -37,7 +37,7 @@ O modelo de ameaças aponta os riscos centrais: perpetuação da emergência (TH
    * Só para quem tem histórico verificável: validador vigente ou pontos de contribuição mínimos. "Mais reputação, maior capacidade de ajudar, não maior soberania" (`ARCHITECTURE §38`).
 6. **Sem operação ofensiva** (`SPEC §55`, AT-CYBER-006): não existe escopo nem transação para invadir, instalar código, coletar dados de terceiros ou atingir sistemas externos. O isolamento só faz Nodes participantes **deixarem de se conectar** a uma identidade.
 7. **Encerramento verificável** (`SPEC §56`): Aberto → Contido → Recuperado → Encerrado, cada passo com evidência e mais de 2/3. Encerrar antes da recuperação é rejeitado. O encerramento registra o pacote final de evidências, revoga as credenciais e devolve a rede à VIGILÂNCIA (retorno gradual, REQ-063).
-8. **Registro de contribuição ≠ participação** (`SPEC §57`, REQ-062): ter credencial ou registrar ações não gera registro. Só uma atestação de mais de 2/3, **após o encerramento**, grava a contribuição na identidade criptográfica do Node, nunca no hardware (THR-REP-003). Recompensa ou pontos por contribuição ficam A DEFINIR.
+8. **Registro de contribuição ≠ participação** (`SPEC §57`, REQ-062): ter credencial ou registrar ações não gera registro. Só uma atestação de mais de 2/3, **após o encerramento**, grava a contribuição na identidade criptográfica do Node, nunca no hardware (THR-REP-003). Os pontos por contribuição foram definidos depois na [ADR-0020](0020-reputacao.md).
 
 ## Isolamento na rede
 

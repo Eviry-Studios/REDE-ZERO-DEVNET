@@ -71,12 +71,13 @@ ParamChange (tag u8): 0 min_fee u64 | 1 max_block_txs u32 | 2 gov_deposit | 3 an
                       | 26 defense_war_max_blocks
                       | 27 runtime_fuel_price | 28 runtime_max_call_fuel | 29 runtime_max_block_fuel
                       | 30 runtime_module_byte_fee | 31 runtime_storage_quota
+                      | 32 defense_contribution_points
                                                                      (u64, exceto tag 1)
 
 Tags 0 e 1 são da categoria ordinária; as demais, constitucional. Os parâmetros
 resultantes são validados antes de a proposta ser aceita (tags 10..19:
 spec/CONSENSUS.md §2; tags 20..21: spec/MARKET.md §6; tags 22..23:
-spec/COMMUNITIES.md §8; tags 24..26: spec/DEFENSE.md §6; tags 27..31: spec/RUNTIME.md §6).
+spec/COMMUNITIES.md §8; tags 24..26: spec/DEFENSE.md §6; tags 27..31: spec/RUNTIME.md §6; tag 32: spec/REPUTATION.md §4).
 
 Uma proposta da categoria Comunidade só é aceita se `content_hash` for o id
 de uma declaração de Comunidade pendente (validação técnica, N-7); na
@@ -132,8 +133,9 @@ T[i] = round(10⁶ × 2^(−i/16)),  i = 0..15
 | Evento verificável | Pontos |
 | --- | --- |
 | Bloco produzido e finalizado | 1 |
+| Punição por evidência | pontos zerados |
 | Tarefa de computação verificada | a definir |
-| Atestação de contribuição defensiva | a definir |
+| Atestação de contribuição defensiva (após o encerramento, > 2/3) | `defense_contribution_points` (padrão 50; `spec/REPUTATION.md`) |
 | Recompensa aprovada por governança | definida na proposta |
 | Violação comprovada (`ReportEquivocation`, `ReportDoubleVote`) | zera os pontos (e queima `slash_bps` do vínculo, `spec/CONSENSUS.md §6`) |
 

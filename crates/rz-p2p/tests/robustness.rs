@@ -873,6 +873,31 @@ fn corpus() -> Corpus {
             asset: rz_core::market::AssetId::ZERO,
             claimed: 0,
         },
+        Message::GetReputation(validator().public_key()),
+        Message::Reputation {
+            height: 8,
+            key: validator().public_key(),
+            points: 51_000_000,
+            events: vec![
+                rz_core::reputation::RepEvent {
+                    key: validator().public_key(),
+                    kind: rz_core::reputation::RepEventKind::DefenseContribution {
+                        incident: Hash32([1; 32]),
+                        role: Scope::Recover,
+                    },
+                    points_after: 51_000_000,
+                    height: 7,
+                },
+                rz_core::reputation::RepEvent {
+                    key: validator().public_key(),
+                    kind: rz_core::reputation::RepEventKind::Slashed {
+                        evidence: Hash32([2; 32]),
+                    },
+                    points_after: 0,
+                    height: 8,
+                },
+            ],
+        },
         Message::GetHtlc(Hash32([5; 32])),
         Message::Htlc {
             height: 3,

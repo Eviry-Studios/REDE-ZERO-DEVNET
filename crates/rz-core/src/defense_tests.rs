@@ -506,9 +506,31 @@ fn contribution_record_distinct_from_participation() {
     }
     let c = sim.close(3);
     sim.apply(c);
+    // Ter credencial e agir não gerou reputação (participação ≠ contribuição).
+    assert!(sim.state.reputation().of(&holder).is_empty());
+    let before = sim.state.contribution(&holder, sim.height + 1);
     let t = contribution(&sim);
     sim.apply(t);
     let records = &sim.state.defense().records[&holder];
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].incident, inc);
+    // A contribuição atestada vira pontos de reputação (ADR-0020), com
+    // registro verificável do evento.
+    let pts = sim.state.params().defense.contribution_points;
+    let after = sim.state.contribution(&holder, sim.height);
+    assert!(after >= before + pts, "{after} < {before} + {pts}");
+    let events = sim.state.reputation().of(&holder);
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].kind,
+        crate::reputation::RepEventKind::DefenseContribution {
+            incident: inc,
+            role: Scope::Recover
+        }
+    );
+    // Sem novos eventos, os pontos decaem: nenhuma imunidade permanente
+    // (REQ-048).
+    let hl = sim.state.params().governance.contribution_half_life_blocks;
+    let later = sim.state.contribution(&holder, sim.height + hl);
+    assert!(later <= after / 2 + 1, "{later} vs {after}");
 }

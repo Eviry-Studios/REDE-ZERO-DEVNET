@@ -61,6 +61,12 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Reputação
+
+* ADR-0020 e `spec/REPUTATION.md`: a reputação é o saldo de pontos de contribuição da identidade criptográfica, com decaimento por meia-vida. Pontuam só eventos verificáveis: bloco produzido e contribuição defensiva atestada por mais de 2/3 após o encerramento (50 pontos, parâmetro constitucional `defense_contribution_points`, tag 32). Punições com evidência zeram os pontos.
+* Registro de eventos de reputação no estado (`reputation_root`); consulta `GET_REPUTATION`/`REPUTATION` (`P2P_VERSION = 10`); comando `zero-wallet reputation`.
+* `THREAT_MODEL.md` v0.11.0, `AUDIT.md` v0.8.0.
+
 ### Alterado — retirada do Agente Zero
 
 * O Agente Zero, já retirado do núcleo pelos Requisitos (v0.2.0, §23), não será implementado. Referências residuais removidas do modelo de ameaças (v0.10.0), da auditoria e das ADR-0008 e ADR-0016. Os identificadores AS-13, ADV-11, LT-7 e THR-AGT-001..003 ficam reservados. O nome `zero://agente-zero` continua reservado contra imitação.
@@ -149,6 +155,7 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 
 ### Protocolo
 
+* **Incompatível** com DEVNETs anteriores à reputação: parâmetros de defesa com `contribution_points`, raiz do estado com `reputation_root`, `P2P_VERSION = 10`.
 * **Incompatível** com DEVNETs anteriores à ponte: Genesis com `bridges`, raiz do estado com `bridge_root`, `P2P_VERSION = 9`.
 * **Incompatível** com DEVNETs anteriores ao Exonet Runtime: parâmetros do Runtime no estado, raiz do estado com `runtime_root`, `P2P_VERSION = 8`.
 * **Incompatível** com Nodes anteriores ao Navegador Zero: novas mensagens de conteúdo, `P2P_VERSION = 7` (o estado não muda).

@@ -11,6 +11,7 @@ use rz_core::defense::{Credential, DefenseMode, Incident};
 use rz_core::governance::{LockEntry, ProposalSummary, ProtocolParams};
 use rz_core::limits::MAX_NETWORK_ID_LEN;
 use rz_core::market::{AssetId, AssetView, BookLevel, Order, MAX_ASSETS};
+use rz_core::reputation::{RepEvent, MAX_EVENTS_PER_MSG};
 use rz_core::runtime::{Receipt, MAX_ARGS, MAX_METHOD, MAX_OUTPUT};
 use rz_core::{BlockId, CommittedBlock, Proposal, Transaction, TxId, Vote};
 use rz_crypto::{Address, Hash32};
@@ -449,6 +450,15 @@ pub enum Message {
         htlc: Option<Box<Htlc>>,
         settled: Option<Settled>,
     },
+    /// `0x33` — reputação de uma identidade.
+    GetReputation(rz_crypto::PublicKey),
+    /// `0x34` — pontos atuais (com decaimento) e eventos recentes.
+    Reputation {
+        height: u64,
+        key: rz_crypto::PublicKey,
+        points: u64,
+        events: Vec<RepEvent>,
+    },
 }
 
 fn put_opt_bytes(e: &mut Encoder, v: &Option<Vec<u8>>) {
@@ -756,6 +766,17 @@ impl Encode for Message {
                     .option(&htlc.as_deref().cloned())
                     .option(settled);
             }
+            Message::GetReputation(k) => {
+                e.u8(0x33).put(k);
+            }
+            Message::Reputation {
+                height,
+                key,
+                points,
+                events,
+            } => {
+                e.u8(0x34).u64(*height).put(key).u64(*points).list(events);
+            }
         }
     }
 }
@@ -922,6 +943,13 @@ impl Decode for Message {
                 htlc: d.option::<Htlc>()?.map(Box::new),
                 settled: d.option()?,
             },
+            0x33 => Message::GetReputation(d.get()?),
+            0x34 => Message::Reputation {
+                height: d.u64()?,
+                key: d.get()?,
+                points: d.u64()?,
+                events: d.list(MAX_EVENTS_PER_MSG)?,
+            },
             0x2d => Message::GetModuleInfo(d.get()?),
             0x2e => Message::ModuleInfo {
                 height: d.u64()?,
@@ -997,6 +1025,8 @@ impl Message {
             Message::Bridge { .. } => "BRIDGE",
             Message::GetHtlc(_) => "GET_HTLC",
             Message::Htlc { .. } => "HTLC",
+            Message::GetReputation(_) => "GET_REPUTATION",
+            Message::Reputation { .. } => "REPUTATION",
         }
     }
 }

@@ -40,6 +40,7 @@ use crate::private::{
     accumulate, context as pctx, min_ring_size, shield_message, PrivateTx, ShieldedOutput,
     PRIVATE_TX_VERSION, RING_SIZE,
 };
+use crate::reputation::{RepEvent, RepEventKind, ReputationLog};
 use crate::runtime::{self, ModuleRecord, Receipt, RuntimeState};
 use crate::tx::{AccountTx, Transaction, TxError, TxKind};
 
@@ -145,6 +146,8 @@ pub struct State {
     runtime: RuntimeState,
     /// Ponte e trocas atômicas (ADR-0019).
     bridge: BridgeState,
+    /// Registro de eventos de reputação (ADR-0020).
+    reputation: ReputationLog,
 }
 
 /// ZERO em período de desvinculação.
@@ -406,6 +409,7 @@ impl State {
                     .collect(),
                 ..BridgeState::default()
             },
+            reputation: ReputationLog::default(),
         })
     }
 
@@ -469,6 +473,10 @@ impl State {
     }
 
     /// Estado de defesa da Exonet.
+    pub fn reputation(&self) -> &ReputationLog {
+        &self.reputation
+    }
+
     pub fn bridge(&self) -> &BridgeState {
         &self.bridge
     }
@@ -616,7 +624,8 @@ impl State {
             .put(&self.communities.root())
             .put(&self.defense.root())
             .put(&self.runtime.root())
-            .put(&self.bridge.root());
+            .put(&self.bridge.root())
+            .put(&self.reputation.root());
         hash(context::STATE_ROOT, &e.into_bytes())
     }
 
@@ -771,6 +780,12 @@ impl State {
                 updated_at: height,
             },
         );
+        self.reputation.push(RepEvent {
+            key,
+            kind: RepEventKind::Slashed { evidence },
+            points_after: 0,
+            height,
+        });
         let remaining: Vec<Validator> = self
             .validators
             .validators()
@@ -2368,6 +2383,23 @@ impl State {
                 }
             }
             DefenseEffect::Contribution { node, record } => {
+                // Contribuição verificada vira reputação (ADR-0020): pontos
+                // na mesma escala e com o mesmo decaimento dos blocos.
+                let hl = self.params.governance.contribution_half_life_blocks;
+                let add = self.params.defense.contribution_points;
+                let c = self.contributions.entry(node).or_default();
+                c.points = c.at(record.height, hl).saturating_add(add);
+                c.updated_at = record.height;
+                let points_after = c.points;
+                self.reputation.push(RepEvent {
+                    key: node,
+                    kind: RepEventKind::DefenseContribution {
+                        incident: record.incident,
+                        role: record.role,
+                    },
+                    points_after,
+                    height: record.height,
+                });
                 self.defense.records.entry(node).or_default().push(record);
             }
         }

@@ -103,6 +103,8 @@ Exonet Runtime (ADR-0018) — lógica de Comunidades em WebAssembly isolado:
   zero-wallet receipt --genesis FILE --node ADDR --tx HEX
   O módulo só alcança o armazenamento da própria Comunidade: não há acesso a saldos,
   consenso, governança ou outras Comunidades. Chamadas que falham pagam a taxa.
+Reputação (ADR-0020) — pontos de contribuição verificáveis, com decaimento:
+  zero-wallet reputation --genesis FILE --node ADDR (--public-key HEX | --key FILE)
 Ponte para ativos externos (ADR-0019) — sem custodiante:
   zero-wallet bridge --genesis FILE --node ADDR --chain REDE
   zero-wallet bridge-burn-script --genesis FILE --to HEX
@@ -241,6 +243,7 @@ fn main() -> ExitCode {
         "call" => cmd_call(&args),
         "query" => cmd_query(&args),
         "receipt" => cmd_receipt(&args),
+        "reputation" => cmd_reputation(&args),
         "bridge" => cmd_bridge(&args),
         "bridge-burn-script" => cmd_bridge_burn_script(&args),
         "bridge-headers" => cmd_bridge_headers(&args),
@@ -1279,6 +1282,42 @@ fn cmd_receipt(args: &Args) -> Result<(), String> {
             }
         }
         None => println!("sem recibo (pendente, antigo demais ou não é chamada ao Runtime)"),
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------- Reputação
+
+fn cmd_reputation(args: &Args) -> Result<(), String> {
+    let key = match args.get("public-key") {
+        Some(h) => rz_crypto::PublicKey::from_hex(h).map_err(|_| "--public-key: chave inválida")?,
+        None => load_keys(args)?.transparent.public_key(),
+    };
+    let (mut client, _) = open(args)?;
+    let (points, events) = rz_wallet::reputation(&mut client, key)?;
+    let scale = rz_core::governance::SCALE;
+    println!("identidade: {key}");
+    println!(
+        "pontos de contribuição: {}.{:06} (decaem com o tempo)",
+        points / scale,
+        points % scale
+    );
+    for e in &events {
+        let what = match &e.kind {
+            rz_core::reputation::RepEventKind::DefenseContribution { incident, role } => {
+                format!(
+                    "contribuição defensiva ({}) no incidente {incident}",
+                    role.name()
+                )
+            }
+            rz_core::reputation::RepEventKind::Slashed { evidence } => {
+                format!("punição por evidência {evidence}")
+            }
+        };
+        println!("  altura {}: {what}", e.height);
+    }
+    if events.is_empty() {
+        println!("  sem eventos registrados além da produção de blocos");
     }
     Ok(())
 }
