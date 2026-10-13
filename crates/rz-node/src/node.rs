@@ -21,6 +21,7 @@ use rz_chain::bft::{App, Bft, Output, Timeout};
 use rz_chain::{Chain, ChainError, Mempool, MempoolError};
 use rz_codec::Encode;
 use rz_core::consensus::MAX_TIME_PARAM_MS;
+use rz_core::release::{upgrade_notice, UpgradeNotice};
 use rz_core::state::ExecParams;
 use rz_core::{
     Account, Block, BlockId, CommittedBlock, Genesis, Proposal, Transaction, TxBody, TxError, TxId,
@@ -141,6 +142,36 @@ pub struct NodeStatus {
     pub finalized_height: u64,
     pub peers: usize,
     pub mempool: usize,
+    /// Versão adotada pela governança comparada à que este Node executa
+    /// (`spec/RELEASES.md §6`).
+    pub upgrade: UpgradeNotice,
+}
+
+/// Compara este binário com a versão adotada no estado.
+pub fn upgrade_status(state: &rz_core::State) -> UpgradeNotice {
+    match state.releases().current() {
+        None => UpgradeNotice::UpToDate,
+        Some((_, r)) => upgrade_notice(
+            env!("CARGO_PKG_VERSION"),
+            rz_core::PROTOCOL_VERSION,
+            &r.release,
+        ),
+    }
+}
+
+fn upgrade_message(n: &UpgradeNotice) -> Option<String> {
+    match n {
+        UpgradeNotice::UpToDate => None,
+        UpgradeNotice::Recommended { version } => Some(format!(
+            "a governança adotou a versão {version}; atualização recomendada (esta versão continua acompanhando a cadeia)"
+        )),
+        UpgradeNotice::Required {
+            version,
+            protocol_version,
+        } => Some(format!(
+            "a governança adotou a versão {version} (protocolo {protocol_version}), incompatível com esta; atualize antes da ativação das novas regras"
+        )),
+    }
 }
 
 /// Eventos para a thread de consenso.
@@ -359,6 +390,10 @@ impl Node {
             "identidade do node {}",
             shared.node_key.public_key().node_id()
         ));
+        let notice = upgrade_status(&lock(&shared.core).chain.state());
+        if let Some(m) = upgrade_message(&notice) {
+            shared.info(m);
+        }
         if let Some(p) = &shared.proxy {
             shared.info(format!("conexões de saída via proxy SOCKS5 {p}"));
         }
@@ -502,13 +537,14 @@ impl Shared {
     }
 
     fn status(&self) -> NodeStatus {
-        let (height, tip, finalized_height, mempool) = {
+        let (height, tip, finalized_height, mempool, upgrade) = {
             let c = lock(&self.core);
             (
                 c.chain.height(),
                 c.chain.tip(),
                 c.chain.height(),
                 c.mempool.len(),
+                upgrade_status(&c.chain.state()),
             )
         };
         let peers = lock(&self.peers).conns.len();
@@ -518,6 +554,7 @@ impl Shared {
             finalized_height,
             peers,
             mempool,
+            upgrade,
         }
     }
 
@@ -547,11 +584,17 @@ impl Shared {
         if cb.block.header.height <= chain.height() {
             return Ok(false);
         }
+        let adopted_before = chain.state().releases().current;
         chain.commit(cb.clone())?;
         if let Err(e) = store.append(&cb) {
             self.info(format!("falha ao gravar bloco: {e}"));
         }
         let state = chain.state();
+        if state.releases().current != adopted_before {
+            if let Some(m) = upgrade_message(&upgrade_status(&state)) {
+                self.info(m);
+            }
+        }
         mempool.prune(&state, &ExecParams::at(chain.genesis(), chain.height() + 1));
         self.validator_count
             .store(state.validators().validators().len(), Ordering::Relaxed);
@@ -1443,7 +1486,8 @@ impl Shared {
             | Message::ModuleInfo { .. }
             | Message::Bridge { .. }
             | Message::Htlc { .. }
-            | Message::Reputation { .. } => Flow::Continue,
+            | Message::Reputation { .. }
+            | Message::Releases { .. } => Flow::Continue,
             Message::GetManifest(h) => self.handle_get_manifest(ctx, h),
             Message::Manifest { hash, bytes } => self.handle_manifest(ctx, hash, bytes),
             Message::GetContent(id) => self.handle_get_content(ctx, id),
@@ -1571,6 +1615,20 @@ impl Shared {
                         asset: st.map_or(rz_core::market::AssetId::ZERO, |s| s.config.asset()),
                         claimed: st.map_or(0, |s| s.claimed.len() as u64),
                         chain,
+                    }
+                };
+                self.send_to(ctx.id, msg);
+                Flow::Continue
+            }
+            Message::GetReleases => {
+                let msg = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let r = state.releases();
+                    Message::Releases {
+                        height: c.chain.height(),
+                        current: r.current,
+                        releases: r.releases.values().cloned().collect(),
                     }
                 };
                 self.send_to(ctx.id, msg);

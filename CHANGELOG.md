@@ -61,6 +61,14 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Atualizações verificáveis
+
+* ADR-0021 e `spec/RELEASES.md`: manifesto de versão (`SPEC §63`) com versões de software, protocolo e P2P, compatibilidade, versão anterior, hashes de árvore da especificação, do código e dos testes, e hashes dos artefatos. `release_id` é o hash do manifesto.
+* `PublishRelease` (tag `0x80`, custo queimado); propostas com `release_id` só são aceitas se forem constitucionais e apontarem para uma versão publicada, não adotada, sucessora da vigente e sem regressão de protocolo. Na ativação, a versão é adotada. Versões não adotadas expiram do registro.
+* Efeitos das categorias de compatibilidade (`SPEC §65`); aviso de atualização no Node (`NodeStatus.upgrade`), sem atualização automática.
+* Estado `releases_root`; consulta `GET_RELEASES`/`RELEASES` (`P2P_VERSION = 11`); comandos `zero-wallet release-new`, `release-publish`, `releases`, `release-verify`.
+* `THREAT_MODEL.md` v0.12.0 (THR-DEV-008/009), `AUDIT.md` v0.9.0 (INV-29).
+
 ### Adicionado — Reputação
 
 * ADR-0020 e `spec/REPUTATION.md`: a reputação é o saldo de pontos de contribuição da identidade criptográfica, com decaimento por meia-vida. Pontuam só eventos verificáveis: bloco produzido e contribuição defensiva atestada por mais de 2/3 após o encerramento (50 pontos, parâmetro constitucional `defense_contribution_points`, tag 32). Punições com evidência zeram os pontos.

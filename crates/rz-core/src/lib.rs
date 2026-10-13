@@ -24,6 +24,7 @@ pub mod market;
 #[cfg(test)]
 mod market_tests;
 pub mod private;
+pub mod release;
 pub mod reputation;
 pub mod runtime;
 pub mod state;

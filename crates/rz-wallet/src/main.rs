@@ -105,6 +105,18 @@ Exonet Runtime (ADR-0018) — lógica de Comunidades em WebAssembly isolado:
   consenso, governança ou outras Comunidades. Chamadas que falham pagam a taxa.
 Reputação (ADR-0020) — pontos de contribuição verificáveis, com decaimento:
   zero-wallet reputation --genesis FILE --node ADDR (--public-key HEX | --key FILE)
+Atualizações verificáveis (ADR-0021) — só a governança adota uma versão:
+  zero-wallet release-new --version V --compat (compativel|parcial|incompativel) --out ARQUIVO
+                      [--root DIR] [--spec spec,docs] [--source crates,Cargo.toml,Cargo.lock]
+                      [--tests conformance] [--artifacts nome=arquivo,...] [--previous HEX]
+                      [--notes ARQUIVO]
+  zero-wallet release-publish --genesis FILE --node ADDR --key FILE --file ARQUIVO
+                      publica o manifesto (queima o depósito de proposta vigente)
+  zero-wallet releases --genesis FILE --node ADDR
+  zero-wallet release-verify (--genesis FILE --node ADDR [--release HEX] | --manifest ARQUIVO)
+                      [--artifact NOME --file ARQUIVO] [--root DIR]
+  Adotar: propose --category constitucional --release ID. A versão precisa suceder a
+  vigente (--previous); o Node avisa quando a cadeia adota versão diferente da sua.
 Ponte para ativos externos (ADR-0019) — sem custodiante:
   zero-wallet bridge --genesis FILE --node ADDR --chain REDE
   zero-wallet bridge-burn-script --genesis FILE --to HEX
@@ -244,6 +256,10 @@ fn main() -> ExitCode {
         "query" => cmd_query(&args),
         "receipt" => cmd_receipt(&args),
         "reputation" => cmd_reputation(&args),
+        "release-new" => cmd_release_new(&args),
+        "release-publish" => cmd_release_publish(&args),
+        "releases" => cmd_releases(&args),
+        "release-verify" => cmd_release_verify(&args),
         "bridge" => cmd_bridge(&args),
         "bridge-burn-script" => cmd_bridge_burn_script(&args),
         "bridge-headers" => cmd_bridge_headers(&args),
@@ -1320,6 +1336,198 @@ fn cmd_reputation(args: &Args) -> Result<(), String> {
         println!("  sem eventos registrados além da produção de blocos");
     }
     Ok(())
+}
+
+// -------------------------------------------------------------- Versões
+
+fn split_list(v: &str) -> Vec<&str> {
+    v.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+const DEFAULT_SPEC: &str = "spec,docs";
+const DEFAULT_SOURCE: &str = "crates,Cargo.toml,Cargo.lock";
+const DEFAULT_TESTS: &str = "conformance";
+
+fn cmd_release_new(args: &Args) -> Result<(), String> {
+    use rz_core::release::{file_hash, Artifact, Compatibility, Release};
+    let root = Path::new(args.get("root").unwrap_or("."));
+    let tree = |name: &str, default: &str| {
+        rz_wallet::tree_hash_of(root, &split_list(args.get(name).unwrap_or(default)))
+    };
+    let mut artifacts = Vec::new();
+    if let Some(list) = args.get("artifacts") {
+        for item in split_list(list) {
+            let (name, path) = item
+                .split_once('=')
+                .ok_or_else(|| format!("--artifacts: esperado nome=arquivo em '{item}'"))?;
+            let bytes = fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+            artifacts.push(Artifact {
+                name: name.to_string(),
+                hash: file_hash(&bytes),
+            });
+        }
+    }
+    artifacts.sort_by(|a, b| a.name.cmp(&b.name));
+    let notes = match args.get("notes") {
+        Some(path) => file_hash(&fs::read(path).map_err(|e| format!("{path}: {e}"))?),
+        None => Hash32::ZERO,
+    };
+    let release = Release {
+        version: args.req("version")?.to_string(),
+        protocol_version: rz_core::PROTOCOL_VERSION,
+        p2p_version: rz_p2p::P2P_VERSION,
+        compatibility: Compatibility::parse(args.req("compat")?)
+            .ok_or("--compat: use compativel, parcial ou incompativel")?,
+        previous: match args.get("previous") {
+            Some(h) => Some(Hash32::from_hex(h).ok_or("--previous: hash inválido")?),
+            None => None,
+        },
+        specification: tree("spec", DEFAULT_SPEC)?,
+        implementation: tree("source", DEFAULT_SOURCE)?,
+        tests: tree("tests", DEFAULT_TESTS)?,
+        artifacts,
+        notes,
+    };
+    release.validate()?;
+    let out = args.req("out")?;
+    fs::write(out, release.to_canonical_bytes()).map_err(|e| format!("{out}: {e}"))?;
+    print_release(&release);
+    println!("manifesto gravado em {out}");
+    Ok(())
+}
+
+fn print_release(r: &rz_core::release::Release) {
+    println!("versão {} — id {}", r.version, r.id());
+    println!(
+        "  protocolo {} | P2P {} | {}",
+        r.protocol_version,
+        r.p2p_version,
+        r.compatibility.name()
+    );
+    match &r.previous {
+        Some(p) => println!("  anterior:       {p}"),
+        None => println!("  anterior:       nenhuma"),
+    }
+    println!("  especificação:  {}", r.specification);
+    println!("  implementação:  {}", r.implementation);
+    println!("  testes:         {}", r.tests);
+    for a in &r.artifacts {
+        println!("  artefato {}: {}", a.name, a.hash);
+    }
+}
+
+fn load_release(path: &str) -> Result<rz_core::release::Release, String> {
+    let bytes = fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    rz_core::release::Release::from_canonical_bytes(&bytes)
+        .map_err(|e| format!("{path}: manifesto inválido: {e}"))
+}
+
+fn cmd_release_publish(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let release = load_release(args.req("file")?)?;
+    let (mut client, genesis) = open(args)?;
+    let cost = governance(&mut client, None)?.params.governance.deposit;
+    let fee = fee(args, &genesis)?;
+    let rid = release.id();
+    let tx = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::PublishRelease { release },
+        fee,
+    )?;
+    println!(
+        "publicação {tx} enviada — {} ZERO queimados",
+        format_zero(cost)
+    );
+    println!("id da versão: {rid}");
+    println!("para adotá-la: propose --category constitucional --release {rid}");
+    Ok(())
+}
+
+fn cmd_releases(args: &Args) -> Result<(), String> {
+    let (mut client, _) = open(args)?;
+    let (height, current, list) = rz_wallet::releases(&mut client)?;
+    println!("altura {height}");
+    match current {
+        Some(c) => println!("versão vigente: {c}"),
+        None => println!("nenhuma versão adotada pela governança"),
+    }
+    for r in &list {
+        print_release(&r.release);
+        match r.adopted_at {
+            Some(h) => println!("  publicada em {}, ADOTADA em {h}", r.published_at),
+            None => println!("  publicada em {}, não adotada", r.published_at),
+        }
+    }
+    Ok(())
+}
+
+fn cmd_release_verify(args: &Args) -> Result<(), String> {
+    let release = match args.get("manifest") {
+        Some(path) => load_release(path)?,
+        None => {
+            let (mut client, _) = open(args)?;
+            let (_, current, list) = rz_wallet::releases(&mut client)?;
+            let want = match args.get("release") {
+                Some(h) => Hash32::from_hex(h).ok_or("--release: hash inválido")?,
+                None => current.ok_or("nenhuma versão adotada; informe --release")?,
+            };
+            let rec = list
+                .into_iter()
+                .find(|r| r.release.id() == want)
+                .ok_or("versão não registrada na cadeia")?;
+            if rec.adopted_at.is_none() {
+                println!("ATENÇÃO: versão publicada, mas NÃO adotada pela governança");
+            }
+            rec.release
+        }
+    };
+    print_release(&release);
+    let mut ok = true;
+    if let Some(name) = args.get("artifact") {
+        let path = args.req("file")?;
+        let bytes = fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+        let got = rz_core::release::file_hash(&bytes);
+        match release.artifact(name) {
+            Some(a) if a.hash == got => println!("artefato {name}: CONFERE"),
+            Some(_) => {
+                println!("artefato {name}: NÃO CONFERE ({got})");
+                ok = false;
+            }
+            None => return Err(format!("o manifesto não lista o artefato {name}")),
+        }
+    }
+    if let Some(root) = args.get("root") {
+        let root = Path::new(root);
+        for (label, flag, default, want) in [
+            ("especificação", "spec", DEFAULT_SPEC, release.specification),
+            (
+                "implementação",
+                "source",
+                DEFAULT_SOURCE,
+                release.implementation,
+            ),
+            ("testes", "tests", DEFAULT_TESTS, release.tests),
+        ] {
+            let got =
+                rz_wallet::tree_hash_of(root, &split_list(args.get(flag).unwrap_or(default)))?;
+            if got == want {
+                println!("{label}: CONFERE");
+            } else {
+                println!("{label}: NÃO CONFERE ({got})");
+                ok = false;
+            }
+        }
+    }
+    if ok {
+        Ok(())
+    } else {
+        Err("verificação falhou: não use estes arquivos".into())
+    }
 }
 
 // ------------------------------------------------ Ponte e trocas atômicas

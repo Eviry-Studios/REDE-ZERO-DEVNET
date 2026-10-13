@@ -1,6 +1,6 @@
 # spec/GOVERNANCE.md — Governança
 
-**Versão:** 0.2.0 (DEVNET) — aprovada e implementada
+**Versão:** 0.3.0 (DEVNET) — aprovada e implementada
 **Relacionamento:** ADR-0008, REQ-040..045, `ARCHITECTURE.md §31–32`, `SPECIFICATIONS.md §43–47`, THR-GOV-001..006
 
 ---
@@ -92,12 +92,12 @@ Após as transações e a distribuição de taxas, em ordem:
 
 1. o produtor do bloco recebe 1 ponto de contribuição (escala 10⁶), após aplicar o decaimento acumulado;
 2. propostas pendentes com `voting_end = h` são apuradas (seção 5); o depósito é devolvido ao proponente se houver quórum nas duas câmaras, ou **queimado** (reduz a oferta total) caso contrário;
-3. propostas aprovadas com `activation_height = h` são ativadas: as alterações são aplicadas a uma cópia dos parâmetros, que é validada; se inválida, a proposta fica `ActivationFailed` e nada muda.
+3. propostas aprovadas com `activation_height = h` são ativadas: as alterações são aplicadas a uma cópia dos parâmetros, que é validada; se inválida — ou se a versão referenciada por `release_id` deixou de suceder a vigente —, a proposta fica `ActivationFailed` e nada muda.
 
 Propostas são processadas em ordem crescente de identificador.
 
 * `content_hash` referencia o texto completo, armazenado fora da cadeia (Manifesto §6: a cadeia não é depósito de dados).
-* Propostas constitucionais de protocolo **devem** incluir `release_id` que identifique versão, especificação, implementação e testes (`SPEC §63`).
+* Propostas constitucionais de protocolo **devem** incluir `release_id` que identifique versão, especificação, implementação e testes (`SPEC §63`). Uma proposta com `release_id` só é aceita se for constitucional e apontar para um manifesto publicado (`PublishRelease`, tag `0x80`), ainda não adotado, que suceda a versão vigente sem reduzir a versão de protocolo. Na ativação, a versão passa a ser a adotada (`spec/RELEASES.md §4`).
 * Um voto pode ser substituído até o fim do período; vale o último.
 * O peso de câmara de contribuição é atribuído à identidade de Node; o Node assina seu voto com a chave de Node, separada da Wallet.
 

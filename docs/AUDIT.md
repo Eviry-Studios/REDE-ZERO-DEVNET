@@ -1,8 +1,8 @@
 # AUDIT.md — Preparação para auditoria independente
 
-**Versão:** 0.8.0
+**Versão:** 0.9.0
 **Estado:** pronto para auditoria da DEVNET; nenhuma auditoria externa foi realizada
-**Relacionamento:** `THREAT_MODEL.md §11` (aceitações temporárias), ADR-0009, ADR-0011, ADR-0012, ADR-0014..0016, `SECURITY.md`
+**Relacionamento:** `THREAT_MODEL.md §11` (aceitações temporárias), ADR-0009, ADR-0011, ADR-0012, ADR-0014..0016, ADR-0021, `SECURITY.md`
 
 ---
 
@@ -36,7 +36,8 @@ A revisão interna (§7) **não substitui** a auditoria externa.
 | 10 | Ponte e trocas atômicas | `crates/rz-core/src/bridge.rs`, partes em `state.rs` | ~1 500 | aritmética de 256 bits e forma compacta, reajuste, maior trabalho e reorganização, prova de Merkle e `merkleblock`, análise de transações de origem, unicidade da queima, regras e invariantes de HTLC |
 | 11 | Exonet Runtime | `crates/rz-core/src/runtime.rs`, partes em `state.rs`, `block.rs` | ~1 300 | configuração do `wasmi` (determinismo, limites), funções do host (limites de memória, cota, combustível), validação de importações, falhas sem escrita, combustível por bloco, recibos |
 | 12 | Navegador Zero e conteúdo | `crates/rz-browser`, `crates/rz-core/src/content.rs`, `crates/rz-node/src/content.rs` | ~2 300 | verificação por pedaço, aceitação só do que o estado referencia, limites de download, roteamento por host (DNS rebinding), cabeçalhos de isolamento, aprovação de pedidos (origem e token), identidade por site |
-| 13 | Wallet | `crates/rz-wallet` | ~1 200 | seleção de notas, recusa de conexão direta, manuseio de chaves, unidades e preços do mercado |
+| 13 | Atualizações verificáveis | `crates/rz-core/src/release.rs`, partes em `state.rs`, `release-*` em `rz-wallet` | ~700 | regras de adoção (categoria, sucessão, sem regressão), falha na ativação de versões concorrentes, expiração do registro, hash de árvore (caminhos, arquivos ocultos, links) |
+| 14 | Wallet | `crates/rz-wallet` | ~1 200 | seleção de notas, recusa de conexão direta, manuseio de chaves, unidades e preços do mercado |
 
 ¹ Aproximado, incluindo testes internos aos arquivos.
 
@@ -95,6 +96,7 @@ Cada invariante lista onde é aplicada e os testes que a exercitam. Uma violaç�
 | INV-20 | Nenhum modo acima de NORMAL dura além do prazo sem renovação atestada; ao sair do nível de incidente, as credenciais do incidente são revogadas | `expire_defense`, `set_mode` | `modes_expire_without_renewal`, `modes_step_down_gradually` |
 | INV-22 | Nenhum conteúdo é aceito, guardado ou exibido sem conferir com o identificador referenciado pelo estado | `ContentInfo::check_chunk`, `ContentStore`, `fetch_content` | `content::tests`, `store_verifies_and_reloads`, `tampered_chunk_detected_by_client` |
 | INV-23 | Uma publicação nunca obtém chaves nem executa operação sem aprovação na interface do Navegador | `rz-browser` (`pedido`, `ui::handle`) | `browser_devnet` |
+| INV-29 | Uma versão só passa a vigente por proposta constitucional ativada que a referencie, e a vigente só é substituída por uma sucessora direta com versão de protocolo igual ou maior | `check_release_proposal`, `end_block` | `release_published_then_adopted_by_constitutional_proposal`, `competing_release_fails_at_activation` |
 | INV-28 | A reputação de uma chave só aumenta por bloco produzido ou contribuição defensiva atestada após o encerramento, e só diminui por decaimento ou punição com evidência | `end_block`, `apply_defense`, `slash` | `contribution_record_distinct_from_participation`, `equivocation_report_slashes_contribution` |
 | INV-26 | A representação de um ativo externo só aumenta por uma queima única, incluída na cadeia de maior trabalho da origem com as confirmações exigidas | `ChainState::check_burn`, `apply_bridge` | `burn_proof_mints_once_after_confirmations`, `reorganization_follows_most_work` |
 | INV-27 | Valores em troca atômica só vão ao destinatário com a pré-imagem antes do prazo, ou ao remetente depois dele, e contam na oferta | `HtlcClaim`, `HtlcRefund`, `check_supply` | `htlc_claim_and_refund_with_zero_and_external_asset` |
@@ -181,7 +183,8 @@ Feita antes da auditoria, com foco em negação de serviço, aritmética com ent
 4. **Canal cifrado:** o handshake (responder autenticado, iniciador anônimo) resiste a interceptação quando a identidade é fixada (`--node-id`)? A contagem de nonces e o preenchimento de 256 bytes estão corretos?
 5. **Zero-BFT:** as regras de trava/`pol_round` em `bft.rs` preservam segurança com a janela de rodadas futuras (RZ-IR-03) e com a contagem de votos conflitantes (RZ-IR-13)? A recomputação do conjunto na época e a punição imediata podem ser combinadas para quebrar INV-6?
 6. **Grande Mercado:** o arredondamento do leilão (pagamento mínimo de 1 unidade para pares de valor nulo, reserva por teto) preserva a conservação em todos os casos? Há sequência de ordens que faça o leilão escolher um preço fora dos limites de alguma ordem executada?
-7. **Determinismo:** algum caminho da transição de estado depende de ordem de `HashMap` ou de arredondamento?
+7. **Atualizações:** o hash de árvore de `rz-wallet::read_tree` pode ser levado a coincidir para conteúdos diferentes (caminhos com `/`, arquivos ocultos, links simbólicos)? Há forma de adotar uma versão sem proposta constitucional?
+8. **Determinismo:** algum caminho da transição de estado depende de ordem de `HashMap` ou de arredondamento?
 
 ## 9. Contato
 

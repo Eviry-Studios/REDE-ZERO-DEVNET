@@ -25,6 +25,7 @@ entrada → operação → saída esperada → regra de validação → casos de
 | [BROWSER.md](BROWSER.md) | DEVNET v0.1.0 | `crates/rz-browser` |
 | [BRIDGE.md](BRIDGE.md) | DEVNET v0.1.0 | `crates/rz-core`, `crates/rz-node`, `crates/rz-wallet` |
 | [REPUTATION.md](REPUTATION.md) | DEVNET v0.1.0 | `crates/rz-core`, `crates/rz-node`, `crates/rz-wallet` |
+| [RELEASES.md](RELEASES.md) | DEVNET v0.1.0 | `crates/rz-core`, `crates/rz-node`, `crates/rz-wallet` |
 | [RUNTIME.md](RUNTIME.md) | DEVNET v0.1.0 | `crates/rz-core`, `crates/rz-node`, `crates/rz-wallet`, `crates/rz-browser` |
 
 Todas as especificações deste diretório estão em estado **DEVNET** — não congeladas (`SPECIFICATIONS.md §74`). Em caso de divergência entre código e especificação, a divergência é um defeito a ser resolvido por processo formal.

@@ -196,6 +196,24 @@ fn genesis() -> Genesis {
     }
 }
 
+fn sample_release() -> rz_core::release::Release {
+    rz_core::release::Release {
+        version: "0.2.0-rc.1".into(),
+        protocol_version: 2,
+        p2p_version: 11,
+        compatibility: rz_core::release::Compatibility::PartiallyCompatible,
+        previous: Some(Hash32([7; 32])),
+        specification: Hash32([1; 32]),
+        implementation: Hash32([2; 32]),
+        tests: Hash32([3; 32]),
+        artifacts: vec![rz_core::release::Artifact {
+            name: "rede-zero-node".into(),
+            hash: Hash32([4; 32]),
+        }],
+        notes: Hash32::ZERO,
+    }
+}
+
 fn account_tx(nonce: u64, kind: TxKind) -> Transaction {
     TxBody {
         version: 1,
@@ -853,6 +871,12 @@ fn corpus() -> Corpus {
                     id: Hash32([5; 32]),
                 },
             ),
+            account_tx(
+                n,
+                TxKind::PublishRelease {
+                    release: sample_release(),
+                },
+            ),
         ])
         .collect();
     messages.extend([
@@ -897,6 +921,21 @@ fn corpus() -> Corpus {
                     height: 8,
                 },
             ],
+        },
+        Message::GetReleases,
+        Message::Releases {
+            height: 9,
+            current: Some(sample_release().id()),
+            releases: vec![rz_core::release::ReleaseRecord {
+                release: sample_release(),
+                published_at: 2,
+                adopted_at: Some(8),
+            }],
+        },
+        Message::Releases {
+            height: 0,
+            current: None,
+            releases: vec![],
         },
         Message::GetHtlc(Hash32([5; 32])),
         Message::Htlc {

@@ -268,6 +268,7 @@ Seguindo a ordem recomendada em `SPECIFICATIONS.md §73`:
 | Exonet Runtime (WebAssembly determinístico, isolado por Comunidade, combustível pago) | ✅ DEVNET — auditoria pendente ([ADR-0018](docs/adr/0018-exonet-runtime.md)) | AT-COM-003, teste de isolamento §73 |
 | Grande Mercado (leilão por bloco) e Pool permanente | ✅ DEVNET ([ADR-0014](docs/adr/0014-grande-mercado-e-pool.md)) | AT-MKT-001..004, AT-POOL-001..004, propriedades |
 | Reputação (pontos de contribuição verificáveis, com decaimento e registro de eventos) | ✅ DEVNET ([ADR-0020](docs/adr/0020-reputacao.md)) | testes de defesa e governança |
+| Atualizações verificáveis (manifesto na cadeia, adoção só por proposta constitucional, verificação de artefatos e código) | ✅ DEVNET ([ADR-0021](docs/adr/0021-atualizacoes-verificaveis.md)) | AT-UPD-001..004; ponta a ponta com Nodes reais |
 | Ponte sem custodiante (prova de queima por cliente leve) e trocas atômicas | ✅ DEVNET — auditoria pendente ([ADR-0019](docs/adr/0019-ponte-sem-custodiante.md)) | testes de cliente leve, Merkle e HTLC; ponta a ponta com Nodes reais |
 | Defesa da Exonet (modos atestados com prazo, credenciais temporárias, isolamento, encerramento verificável) | ✅ DEVNET — auditoria pendente ([ADR-0016](docs/adr/0016-defesa-da-exonet.md)) | AT-DEF-001..003, AT-CYBER-001..006, AT-INC-001..003 |
 
@@ -283,6 +284,7 @@ Aceitas temporariamente e registradas em [`THREAT_MODEL.md §11`](docs/THREAT_MO
 * **Navegador Zero não auditado** ([ADR-0017](docs/adr/0017-navegador-zero-e-conteudo.md)): o isolamento depende do navegador do sistema; envios privados ainda pela `zero-wallet`; links para a web comum saem da Exonet.
 * **Defesa não auditada** ([ADR-0016](docs/adr/0016-defesa-da-exonet.md)): depende de > 2/3 dos validadores; o isolamento só alcança conexões de saída, porque pares de entrada são anônimos; a detecção de anomalias é local.
 * **Governança**: a câmara de contribuição pontua produção de blocos e contribuição defensiva atestada (ADR-0020), mas ainda favorece validadores; votos são públicos nesta versão.
+* **Atualizações**: a adoção registra a versão, mas os builds ainda não são reproduzíveis; quem não confia no binário compila do código conferido com `release-verify --root` ([ADR-0021](docs/adr/0021-atualizacoes-verificaveis.md)).
 * **Chaves em arquivo local** sem cifragem (permissão `0600`).
 * Sem emissão após o Genesis; política monetária a definir.
 

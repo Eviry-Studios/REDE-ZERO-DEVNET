@@ -1,6 +1,6 @@
 # spec/P2P.md — Protocolo P2P da DEVNET
 
-**Versão:** 0.10.0 (DEVNET), `P2P_VERSION = 10`
+**Versão:** 0.11.0 (DEVNET), `P2P_VERSION = 11`
 **Relacionamento:** `SPECIFICATIONS.md §23–§30`, ADR-0007, ADR-0010, ADR-0011, THR-P2P-001..006, THR-PRIV-002..004
 **Implementação de referência:** `crates/rz-p2p` (mensagens) e `crates/rz-node` (orquestração)
 
@@ -93,6 +93,8 @@ m = enc(Message)
 | `0x32` | `HTLC` | `u64 height, option<Htlc>, option<Settled>` |
 | `0x33` | `GET_REPUTATION` | `PublicKey key` |
 | `0x34` | `REPUTATION` | `u64 height, PublicKey key, u64 points, list<RepEvent> events` (≤64) (`spec/REPUTATION.md §3`) |
+| `0x35` | `GET_RELEASES` | — |
+| `0x36` | `RELEASES` | `u64 height, option<fixed[32]> current, list<ReleaseRecord> releases` (≤256) (`spec/RELEASES.md §8`) |
 | `0x2e` | `MODULE_INFO` | `u64 height, fixed[32] community, option<fixed[32]> module, u32 seq, u64 usage` |
 
 `PeerAddr` (tag `u8`):

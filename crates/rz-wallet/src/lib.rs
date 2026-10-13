@@ -753,6 +753,72 @@ pub fn reputation(
         .map_err(|e| e.to_string())
 }
 
+// ------------------------------------------------------ Versões (ADR-0021)
+
+/// Versões registradas na cadeia: `(altura, vigente, registros)`.
+pub fn releases(
+    client: &mut Client,
+) -> Result<(u64, Option<Hash32>, Vec<rz_core::release::ReleaseRecord>), String> {
+    client
+        .request(&Message::GetReleases, |m| match m {
+            Message::Releases {
+                height,
+                current,
+                releases,
+            } => Some((height, current, releases)),
+            _ => None,
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// Lê os arquivos de `paths` (arquivos ou diretórios, relativos a `root`)
+/// para `rz_core::release::tree_hash`. Caminhos usam `/`; entradas cujo nome
+/// começa com `.` são ignoradas, assim como links simbólicos.
+pub fn read_tree(
+    root: &std::path::Path,
+    paths: &[&str],
+) -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+    fn walk(
+        root: &std::path::Path,
+        rel: &str,
+        out: &mut std::collections::BTreeMap<String, Vec<u8>>,
+    ) -> Result<(), String> {
+        let full = root.join(rel);
+        let meta = std::fs::symlink_metadata(&full).map_err(|e| format!("{rel}: {e}"))?;
+        if meta.is_file() {
+            let bytes = std::fs::read(&full).map_err(|e| format!("{rel}: {e}"))?;
+            out.insert(rel.to_string(), bytes);
+        } else if meta.is_dir() {
+            let mut names = Vec::new();
+            for entry in std::fs::read_dir(&full).map_err(|e| format!("{rel}: {e}"))? {
+                let name = entry
+                    .map_err(|e| format!("{rel}: {e}"))?
+                    .file_name()
+                    .into_string()
+                    .map_err(|_| format!("{rel}: nome de arquivo não UTF-8"))?;
+                if !name.starts_with('.') {
+                    names.push(name);
+                }
+            }
+            names.sort();
+            for n in names {
+                walk(root, &format!("{rel}/{n}"), out)?;
+            }
+        }
+        Ok(())
+    }
+    let mut out = std::collections::BTreeMap::new();
+    for p in paths {
+        walk(root, p.trim_end_matches('/'), &mut out)?;
+    }
+    Ok(out)
+}
+
+/// Hash de árvore de `paths` sob `root` (`spec/RELEASES.md §3`).
+pub fn tree_hash_of(root: &std::path::Path, paths: &[&str]) -> Result<Hash32, String> {
+    Ok(rz_core::release::tree_hash(&read_tree(root, paths)?))
+}
+
 // ------------------------------------------------- Ponte e trocas atômicas
 
 /// Estado do cliente leve de uma rede de origem.

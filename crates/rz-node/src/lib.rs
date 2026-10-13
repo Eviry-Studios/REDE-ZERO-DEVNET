@@ -9,5 +9,5 @@ mod node;
 mod store;
 
 pub use content::ContentStore;
-pub use node::{now_ms, LogLevel, Node, NodeConfig, NodeStatus};
+pub use node::{now_ms, upgrade_status, LogLevel, Node, NodeConfig, NodeStatus};
 pub use store::BlockStore;

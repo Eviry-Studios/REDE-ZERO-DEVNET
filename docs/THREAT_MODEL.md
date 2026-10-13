@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.11.0
-**Status:** Modelo de ameaças — fase de definição (0.11.0: reputação; 0.10.0: retirada do Agente Zero; 0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
+**Versão:** 0.12.0
+**Status:** Modelo de ameaças — fase de definição (0.12.0: atualizações verificáveis; 0.11.0: reputação; 0.10.0: retirada do Agente Zero; 0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -895,12 +895,12 @@ Antes: Agente Zero (THR-AGT-001..003). O Agente Zero foi retirado do núcleo da 
 
 **Severidade:** CRÍTICA
 **Adversários:** ADV-09, ADV-12
-**Mitigações:** revisão de código obrigatória (`REQ-077`); proteção de branches; assinatura de commits e releases (**A DEFINIR**); nenhum mantenedor com poder de publicar sozinho alterações protocolares.
+**Mitigações:** revisão de código obrigatória (`REQ-077`); proteção de branches; assinatura de commits (**A DEFINIR**); releases sem chave de mantenedor: uma versão só é adotada por proposta constitucional e verificada contra o manifesto na cadeia (ADR-0021, `spec/RELEASES.md`); nenhum mantenedor com poder de publicar sozinho alterações protocolares.
 
 ### THR-DEV-003 — Release não reprodutível
 
 **Severidade:** ALTA
-**Mitigações:** builds reprodutíveis (`REQ-004`); binários verificáveis contra o código-fonte.
+**Mitigações:** builds reprodutíveis (`REQ-004`, **pendente**); binários verificáveis contra o código-fonte; o manifesto adotado fixa o hash de árvore do código, da especificação e dos testes, e quem não confia no binário compila do código conferido (`spec/RELEASES.md §7`, §10).
 
 ### THR-DEV-004 — Dependência de plataforma única
 
@@ -927,6 +927,22 @@ Antes: Agente Zero (THR-AGT-001..003). O Agente Zero foi retirado do núcleo da 
 **Descrição:** como o repositório é público, chaves, tokens ou dados pessoais publicados por engano ficam expostos permanentemente no histórico.
 
 **Mitigações:** nenhum segredo no repositório; chaves da DEVNET geradas localmente e nunca versionadas, exceto chaves explicitamente marcadas como **apenas para desenvolvimento, sem valor**; varredura de segredos na CI.
+
+### THR-DEV-008 — Atualização maliciosa por canal de distribuição comprometido
+
+**Severidade:** CRÍTICA
+**Adversários:** ADV-09, ADV-12
+**Descrição:** site, repositório ou espelho comprometido distribui binário ou código adulterado como se fosse a versão oficial (`ACCEPTANCE_TESTS.md §75`).
+
+**Mitigações:** a versão oficial é a adotada na cadeia, não a anunciada por um canal; `release-verify` confere artefato e árvores contra o manifesto adotado e sinaliza versões apenas publicadas; o Node nunca se atualiza sozinho (ADR-0021).
+
+### THR-DEV-009 — Versão maliciosa, concorrente ou regressiva adotada
+
+**Severidade:** ALTA
+**Adversários:** ADV-04, ADV-07, ADV-09
+**Descrição:** proposta para adotar versão com falha deliberada, duas versões concorrentes ou retorno a versão antiga com regras mais fracas (`ACCEPTANCE_TESTS.md §76`).
+
+**Mitigações:** adoção só por categoria constitucional (≥ 2/3 nas duas câmaras, quórum de 20%, atraso ≥ 30 dias); o manifesto expõe hashes da especificação, do código e dos testes para análise durante a votação; sucessão obrigatória da vigente (`previous`) e versão de protocolo não decrescente; versões concorrentes falham na ativação; cada operador decide instalar. **Risco residual:** uma coalizão que capture as duas câmaras adota o que quiser, e ninguém é obrigado a instalar.
 
 ---
 
@@ -976,6 +992,8 @@ Antes: Agente Zero (THR-AGT-001..003). O Agente Zero foi retirado do núcleo da 
 | THR-DEF-004 | REQ-056 | SPEC §55, spec/DEFENSE.md §5 | AT-CYBER-006, defense_devnet |
 | THR-DEF-005 | REQ-062 | SPEC §57 | contribution_record_distinct_from_participation |
 | THR-DEV-001 | REQ-084 | — | CI |
+| THR-DEV-002/008 | REQ-092, REQ-094 | SPEC §63, §64, spec/RELEASES.md | release_published_then_adopted_by_constitutional_proposal, release_devnet |
+| THR-DEV-009 | REQ-093, REQ-095 | SPEC §65, spec/RELEASES.md §4, §5 | competing_release_fails_at_activation, release::tests::upgrade_notices |
 | THR-DEV-004 | REQ-090 | — | — |
 
 ---

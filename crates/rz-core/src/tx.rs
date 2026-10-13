@@ -266,6 +266,9 @@ pub enum TxKind {
     HtlcClaim { id: Hash32, preimage: Vec<u8> },
     /// Tag `0x74` — devolve ao remetente depois do prazo.
     HtlcRefund { id: Hash32 },
+    /// Tag `0x80` — publica o manifesto de uma versão do protocolo
+    /// (`spec/RELEASES.md`). Publicar não adota: só a governança adota.
+    PublishRelease { release: crate::release::Release },
 }
 
 impl Encode for TxKind {
@@ -531,6 +534,9 @@ impl Encode for TxKind {
             TxKind::HtlcRefund { id } => {
                 e.u8(0x74).put(id);
             }
+            TxKind::PublishRelease { release } => {
+                e.u8(0x80).put(release);
+            }
         }
     }
 }
@@ -716,6 +722,7 @@ impl Decode for TxKind {
                 preimage: d.bytes(crate::bridge::MAX_PREIMAGE)?,
             }),
             0x74 => Ok(TxKind::HtlcRefund { id: d.get()? }),
+            0x80 => Ok(TxKind::PublishRelease { release: d.get()? }),
             t => Err(DecodeError::InvalidTag(t)),
         }
     }
@@ -985,6 +992,9 @@ impl AccountTx {
             }
             TxKind::HtlcLock { amount, .. } if *amount == 0 => return Err(TxError::ZeroAmount),
             TxKind::HtlcLock { .. } => {}
+            TxKind::PublishRelease { release } => {
+                release.validate().map_err(TxError::Release)?;
+            }
             TxKind::CallModule { method, fuel, .. } => {
                 crate::runtime::check_method(method).map_err(TxError::Runtime)?;
                 if *fuel == 0 {
@@ -1069,6 +1079,8 @@ pub enum TxError {
     Runtime(&'static str),
     /// Regra da ponte ou de troca atômica violada.
     Bridge(&'static str),
+    /// Regra de versões do protocolo violada.
+    Release(&'static str),
 }
 
 impl fmt::Display for TxError {
@@ -1103,6 +1115,7 @@ impl fmt::Display for TxError {
             Self::Defense(w) => write!(f, "defesa: {w}"),
             Self::Runtime(w) => write!(f, "runtime: {w}"),
             Self::Bridge(w) => write!(f, "ponte: {w}"),
+            Self::Release(w) => write!(f, "versão: {w}"),
         }
     }
 }

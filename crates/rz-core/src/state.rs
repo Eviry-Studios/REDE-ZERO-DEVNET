@@ -40,6 +40,7 @@ use crate::private::{
     accumulate, context as pctx, min_ring_size, shield_message, PrivateTx, ShieldedOutput,
     PRIVATE_TX_VERSION, RING_SIZE,
 };
+use crate::release::{ReleaseRecord, ReleaseState, MAX_RELEASES};
 use crate::reputation::{RepEvent, RepEventKind, ReputationLog};
 use crate::runtime::{self, ModuleRecord, Receipt, RuntimeState};
 use crate::tx::{AccountTx, Transaction, TxError, TxKind};
@@ -148,6 +149,8 @@ pub struct State {
     bridge: BridgeState,
     /// Registro de eventos de reputação (ADR-0020).
     reputation: ReputationLog,
+    /// Versões do protocolo publicadas e adotadas (ADR-0021).
+    releases: ReleaseState,
 }
 
 /// ZERO em período de desvinculação.
@@ -183,6 +186,8 @@ struct Effect {
     defense: Option<DefenseEffect>,
     runtime: Option<RuntimeEffect>,
     bridge: Option<BridgeEffect>,
+    /// Versão publicada (o custo de publicação já foi debitado e é queimado).
+    release: Option<(Hash32, ReleaseRecord, u64)>,
 }
 
 /// Alteração da ponte ou de trocas atômicas produzida por uma transação.
@@ -410,6 +415,7 @@ impl State {
                 ..BridgeState::default()
             },
             reputation: ReputationLog::default(),
+            releases: ReleaseState::default(),
         })
     }
 
@@ -475,6 +481,11 @@ impl State {
     /// Estado de defesa da Exonet.
     pub fn reputation(&self) -> &ReputationLog {
         &self.reputation
+    }
+
+    /// Versões do protocolo publicadas e adotadas.
+    pub fn releases(&self) -> &ReleaseState {
+        &self.releases
     }
 
     pub fn bridge(&self) -> &BridgeState {
@@ -625,7 +636,8 @@ impl State {
             .put(&self.defense.root())
             .put(&self.runtime.root())
             .put(&self.bridge.root())
-            .put(&self.reputation.root());
+            .put(&self.reputation.root())
+            .put(&self.releases.root());
         hash(context::STATE_ROOT, &e.into_bytes())
     }
 
@@ -699,6 +711,14 @@ impl State {
         if let Some(b) = effect.bridge {
             self.apply_bridge(b, p.height)
                 .map_err(|_| TxError::Overflow)?;
+        }
+        if let Some((id, record, burn)) = effect.release {
+            // Custo de publicação queimado: ninguém lucra com manifestos.
+            self.total_supply = self
+                .total_supply
+                .checked_sub(burn)
+                .ok_or(TxError::Overflow)?;
+            self.releases.releases.insert(id, record);
         }
         if let Some(r) = effect.runtime {
             self.apply_runtime(r, tx.id().0, p.height)
@@ -818,6 +838,7 @@ impl State {
         self.communities
             .communities
             .retain(|_, c| c.status == CommunityStatus::Recognized || c.expires_at > height);
+        self.expire_releases(height);
 
         // Consenso: o conjunto que validou este bloco; nova época recalcula.
         self.last_validators = used_validators;
@@ -882,8 +903,21 @@ impl State {
             for change in &p.params {
                 change.apply(&mut next);
             }
-            if next.validate().is_ok() {
+            // A versão referenciada precisa continuar adotável: outra
+            // proposta pode ter adotado uma versão depois da submissão.
+            let release_ok = p.release_id.is_none_or(|rid| {
+                self.releases.releases.get(&rid).is_some_and(|r| {
+                    r.adopted_at.is_none() && r.release.previous == self.releases.current
+                })
+            });
+            if next.validate().is_ok() && release_ok {
                 p.status = ProposalStatus::Activated;
+                if let Some(rid) = p.release_id {
+                    if let Some(r) = self.releases.releases.get_mut(&rid) {
+                        r.adopted_at = Some(height);
+                    }
+                    self.releases.current = Some(rid);
+                }
                 if p.category == Category::Community {
                     self.approved_communities.insert(p.content_hash);
                     // Reconhecimento (N-7): a declaração passa a Comunidade
@@ -900,6 +934,53 @@ impl State {
             }
         }
         Ok(())
+    }
+
+    /// Uma proposta com `release_id` (`spec/RELEASES.md §4`): constitucional,
+    /// apontando para uma versão publicada, não adotada, que sucede a vigente.
+    fn check_release_proposal(&self, rid: &Hash32, category: Category) -> Result<(), TxError> {
+        if category != Category::Constitutional {
+            return Err(TxError::Release("adoção de versão é constitucional"));
+        }
+        let r = self
+            .releases
+            .releases
+            .get(rid)
+            .ok_or(TxError::Release("versão não publicada"))?;
+        if r.adopted_at.is_some() {
+            return Err(TxError::Release("versão já adotada"));
+        }
+        if r.release.previous != self.releases.current {
+            return Err(TxError::Release("versão não sucede a vigente"));
+        }
+        if let Some((_, cur)) = self.releases.current() {
+            if r.release.protocol_version < cur.release.protocol_version {
+                return Err(TxError::Release("versão de protocolo regride"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Versões não adotadas saem do registro depois de uma janela completa
+    /// de proposta (análise + votação + atraso constitucional), se nenhuma
+    /// proposta ainda em curso as referencia.
+    fn expire_releases(&mut self, height: u64) {
+        let g = &self.params.governance;
+        let ttl = g
+            .analysis_blocks
+            .saturating_add(g.voting_blocks)
+            .saturating_add(g.constitutional_delay_blocks);
+        let referenced: BTreeSet<Hash32> = self
+            .proposals
+            .values()
+            .filter(|p| matches!(p.status, ProposalStatus::Pending | ProposalStatus::Approved))
+            .filter_map(|p| p.release_id)
+            .collect();
+        self.releases.releases.retain(|id, r| {
+            r.adopted_at.is_some()
+                || referenced.contains(id)
+                || r.published_at.saturating_add(ttl) > height
+        });
     }
 
     /// Apuração bicameral determinística de uma proposta.
@@ -1001,6 +1082,7 @@ impl State {
                 .checked_mul(self.params.runtime.module_byte_fee)
                 .ok_or(TxError::Overflow)?,
             TxKind::BindModule { .. } | TxKind::CallModule { .. } => 0,
+            TxKind::PublishRelease { .. } => self.params.governance.deposit,
             TxKind::HtlcLock { asset, amount, .. } if asset.is_zero() => *amount,
             TxKind::HtlcLock { .. }
             | TxKind::HtlcClaim { .. }
@@ -1036,6 +1118,7 @@ impl State {
             defense: None,
             runtime: None,
             bridge: None,
+            release: None,
         };
         let g = &self.params.governance;
 
@@ -1129,6 +1212,9 @@ impl State {
                 }
                 check_proposal_shape(*category, params, &self.params)
                     .map_err(TxError::Governance)?;
+                if let Some(rid) = release_id {
+                    self.check_release_proposal(rid, *category)?;
+                }
                 // Validação técnica (N-7): a proposta de categoria Comunidade
                 // aponta para uma declaração pendente e válida.
                 if *category == Category::Community {
@@ -1518,6 +1604,25 @@ impl State {
                     return Err(TxError::Bridge("devolução só depois do prazo"));
                 }
                 effect.bridge = Some(BridgeEffect::Refund(*id));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::PublishRelease { release } => {
+                let id = release.id();
+                if self.releases.releases.contains_key(&id) {
+                    return Err(TxError::Release("versão já publicada"));
+                }
+                if self.releases.releases.len() >= MAX_RELEASES {
+                    return Err(TxError::Release("registro de versões cheio"));
+                }
+                effect.release = Some((
+                    id,
+                    ReleaseRecord {
+                        release: release.clone(),
+                        published_at: p.height,
+                        adopted_at: None,
+                    },
+                    amount,
+                ));
                 effect.accounts.push((sender, sender_acc));
             }
             TxKind::PublishModule { code } => {
@@ -2002,6 +2107,7 @@ impl State {
             defense: None,
             runtime: None,
             bridge: None,
+            release: None,
         })
     }
 }

@@ -1528,3 +1528,204 @@ fn runtime_block_replay_is_deterministic() {
     assert_eq!(replayed.root(), s.root());
     assert_eq!(replayed.runtime(), s.runtime());
 }
+
+// ------------------------------------------------- versões (ADR-0021)
+
+fn propose_release(sim: &mut Sim, category: Category, release: Hash32) -> Result<Hash32, TxError> {
+    let tx = sim.tx(
+        &rich(),
+        TxKind::Propose {
+            category,
+            content_hash: Hash32([8; 32]),
+            params: vec![],
+            release_id: Some(release),
+            deposit: sim.state.params().governance.deposit,
+        },
+    );
+    sim.check(&tx)?;
+    let id = tx.id().0;
+    sim.block(vec![tx]);
+    Ok(id)
+}
+
+fn approve(sim: &mut Sim, id: Hash32) {
+    let p = sim.state.proposal(&id).unwrap().clone();
+    sim.advance_to(p.voting_start - 1);
+    let v1 = sim.vote(&rich(), id, Choice::Yes);
+    let v2 = sim.vote(&validator(), id, Choice::Yes);
+    sim.block(vec![v1, v2]);
+    sim.advance_to(p.activation_height);
+}
+
+// SPEC §63–§64 — manifesto publicado, adotado só pela governança e
+// encadeado à versão anterior.
+#[test]
+fn release_published_then_adopted_by_constitutional_proposal() {
+    let mut sim = Sim::new();
+    sim.lock(&rich(), 100_000, 100);
+    let r1 = crate::release::tests::sample();
+    let id1 = r1.id();
+
+    // Proposta antes da publicação: recusada.
+    assert!(matches!(
+        propose_release(&mut sim, Category::Constitutional, id1),
+        Err(TxError::Release("versão não publicada"))
+    ));
+
+    let supply = sim.state.total_supply();
+    let publish = sim.tx(
+        &rich(),
+        TxKind::PublishRelease {
+            release: r1.clone(),
+        },
+    );
+    sim.block(vec![publish]);
+    assert_eq!(
+        sim.state.total_supply(),
+        supply - sim.state.params().governance.deposit,
+        "custo de publicação queimado"
+    );
+    assert!(sim.state.releases().current.is_none(), "publicar não adota");
+    let again = sim.tx(
+        &rich(),
+        TxKind::PublishRelease {
+            release: r1.clone(),
+        },
+    );
+    assert_eq!(
+        sim.check(&again),
+        Err(TxError::Release("versão já publicada"))
+    );
+
+    // Adoção é constitucional.
+    assert!(matches!(
+        propose_release(&mut sim, Category::Ordinary, id1),
+        Err(TxError::Release("adoção de versão é constitucional"))
+    ));
+    let pid = propose_release(&mut sim, Category::Constitutional, id1).unwrap();
+    approve(&mut sim, pid);
+    assert_eq!(
+        sim.state.proposal(&pid).unwrap().status,
+        ProposalStatus::Activated
+    );
+    let (cur, rec) = sim.state.releases().current().unwrap();
+    assert_eq!(*cur, id1);
+    assert_eq!(rec.adopted_at, Some(sim.height));
+    assert!(matches!(
+        propose_release(&mut sim, Category::Constitutional, id1),
+        Err(TxError::Release("versão já adotada"))
+    ));
+
+    // A versão seguinte precisa apontar para a vigente.
+    let mut r2 = r1.clone();
+    r2.version = "0.3.0".into();
+    let mut orphan = r2.clone();
+    orphan.previous = Some(Hash32([9; 32]));
+    r2.previous = Some(id1);
+    let txs = vec![
+        sim.tx(
+            &rich(),
+            TxKind::PublishRelease {
+                release: r2.clone(),
+            },
+        ),
+        sim.tx_nonce(
+            &rich(),
+            TxKind::PublishRelease {
+                release: orphan.clone(),
+            },
+            1,
+        ),
+    ];
+    sim.block(txs);
+    assert!(matches!(
+        propose_release(&mut sim, Category::Constitutional, orphan.id()),
+        Err(TxError::Release("versão não sucede a vigente"))
+    ));
+    let mut regress = r2.clone();
+    regress.protocol_version = 0;
+    regress.version = "0.3.1".into();
+    let tx = sim.tx(
+        &rich(),
+        TxKind::PublishRelease {
+            release: regress.clone(),
+        },
+    );
+    sim.block(vec![tx]);
+    assert!(matches!(
+        propose_release(&mut sim, Category::Constitutional, regress.id()),
+        Err(TxError::Release("versão de protocolo regride"))
+    ));
+    let pid2 = propose_release(&mut sim, Category::Constitutional, r2.id()).unwrap();
+    approve(&mut sim, pid2);
+    assert_eq!(sim.state.releases().current.unwrap(), r2.id());
+    // A anterior continua registrada como adotada (histórico verificável).
+    assert!(sim.state.releases().releases[&id1].adopted_at.is_some());
+}
+
+// Duas propostas para versões concorrentes: só a primeira ativada vale; a
+// outra deixa de suceder a vigente e falha na ativação.
+#[test]
+fn competing_release_fails_at_activation() {
+    let mut sim = Sim::new();
+    sim.lock(&rich(), 100_000, 100);
+    let a = crate::release::tests::sample();
+    let mut b = a.clone();
+    b.version = "0.2.1".into();
+    let txs = vec![
+        sim.tx(&rich(), TxKind::PublishRelease { release: a.clone() }),
+        sim.tx_nonce(&rich(), TxKind::PublishRelease { release: b.clone() }, 1),
+    ];
+    sim.block(txs);
+    let pa = propose_release(&mut sim, Category::Constitutional, a.id()).unwrap();
+    let pb = propose_release(&mut sim, Category::Constitutional, b.id()).unwrap();
+    let last = sim.state.proposal(&pb).unwrap().clone();
+    sim.advance_to(last.voting_start);
+    let votes = vec![
+        sim.vote(&rich(), pa, Choice::Yes),
+        sim.tx_nonce(
+            &rich(),
+            TxKind::Vote {
+                proposal: pb,
+                choice: Choice::Yes,
+            },
+            1,
+        ),
+        sim.vote(&validator(), pa, Choice::Yes),
+        sim.tx_nonce(
+            &validator(),
+            TxKind::Vote {
+                proposal: pb,
+                choice: Choice::Yes,
+            },
+            1,
+        ),
+    ];
+    sim.block(votes);
+    sim.advance_to(last.activation_height);
+    assert_eq!(
+        sim.state.proposal(&pa).unwrap().status,
+        ProposalStatus::Activated
+    );
+    assert_eq!(
+        sim.state.proposal(&pb).unwrap().status,
+        ProposalStatus::ActivationFailed
+    );
+    assert_eq!(sim.state.releases().current.unwrap(), a.id());
+}
+
+// Manifestos não adotados expiram depois de uma janela de proposta.
+#[test]
+fn unadopted_release_expires() {
+    let mut sim = Sim::new();
+    let r = crate::release::tests::sample();
+    let tx = sim.tx(&rich(), TxKind::PublishRelease { release: r.clone() });
+    sim.block(vec![tx]);
+    let published = sim.height;
+    let g = sim.state.params().governance.clone();
+    let ttl = g.analysis_blocks + g.voting_blocks + g.constitutional_delay_blocks;
+    sim.advance_to(published + ttl - 1);
+    assert!(sim.state.releases().releases.contains_key(&r.id()));
+    sim.advance_to(published + ttl);
+    assert!(!sim.state.releases().releases.contains_key(&r.id()));
+}

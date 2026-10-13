@@ -11,6 +11,7 @@ use rz_core::defense::{Credential, DefenseMode, Incident};
 use rz_core::governance::{LockEntry, ProposalSummary, ProtocolParams};
 use rz_core::limits::MAX_NETWORK_ID_LEN;
 use rz_core::market::{AssetId, AssetView, BookLevel, Order, MAX_ASSETS};
+use rz_core::release::{ReleaseRecord, MAX_RELEASES};
 use rz_core::reputation::{RepEvent, MAX_EVENTS_PER_MSG};
 use rz_core::runtime::{Receipt, MAX_ARGS, MAX_METHOD, MAX_OUTPUT};
 use rz_core::{BlockId, CommittedBlock, Proposal, Transaction, TxId, Vote};
@@ -459,6 +460,14 @@ pub enum Message {
         points: u64,
         events: Vec<RepEvent>,
     },
+    /// `0x35` — versões do protocolo registradas na cadeia.
+    GetReleases,
+    /// `0x36` — versões publicadas (com altura de adoção) e a vigente.
+    Releases {
+        height: u64,
+        current: Option<Hash32>,
+        releases: Vec<ReleaseRecord>,
+    },
 }
 
 fn put_opt_bytes(e: &mut Encoder, v: &Option<Vec<u8>>) {
@@ -777,6 +786,16 @@ impl Encode for Message {
             } => {
                 e.u8(0x34).u64(*height).put(key).u64(*points).list(events);
             }
+            Message::GetReleases => {
+                e.u8(0x35);
+            }
+            Message::Releases {
+                height,
+                current,
+                releases,
+            } => {
+                e.u8(0x36).u64(*height).option(current).list(releases);
+            }
         }
     }
 }
@@ -950,6 +969,12 @@ impl Decode for Message {
                 points: d.u64()?,
                 events: d.list(MAX_EVENTS_PER_MSG)?,
             },
+            0x35 => Message::GetReleases,
+            0x36 => Message::Releases {
+                height: d.u64()?,
+                current: d.option()?,
+                releases: d.list(MAX_RELEASES)?,
+            },
             0x2d => Message::GetModuleInfo(d.get()?),
             0x2e => Message::ModuleInfo {
                 height: d.u64()?,
@@ -1027,6 +1052,8 @@ impl Message {
             Message::Htlc { .. } => "HTLC",
             Message::GetReputation(_) => "GET_REPUTATION",
             Message::Reputation { .. } => "REPUTATION",
+            Message::GetReleases => "GET_RELEASES",
+            Message::Releases { .. } => "RELEASES",
         }
     }
 }
