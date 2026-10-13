@@ -103,6 +103,21 @@ Exonet Runtime (ADR-0018) — lógica de Comunidades em WebAssembly isolado:
   zero-wallet receipt --genesis FILE --node ADDR --tx HEX
   O módulo só alcança o armazenamento da própria Comunidade: não há acesso a saldos,
   consenso, governança ou outras Comunidades. Chamadas que falham pagam a taxa.
+Ponte para ativos externos (ADR-0019) — sem custodiante:
+  zero-wallet bridge --genesis FILE --node ADDR --chain REDE
+  zero-wallet bridge-burn-script --genesis FILE --to HEX
+                      script OP_RETURN da queima (IRREVERSÍVEL na rede de origem)
+  zero-wallet bridge-headers --genesis FILE --node ADDR --key FILE --chain REDE --file CABEÇALHOS
+                      um cabeçalho de 80 bytes em hex por linha (ex.: getblockheader HASH false)
+  zero-wallet bridge-deposit --genesis FILE --node ADDR --key FILE --chain REDE
+                      --tx HEX (sem testemunhas) --merkleblock HEX (gettxoutproof)
+Trocas atômicas (HTLC, SHA-256, prazo em altura):
+  zero-wallet htlc-secret                                   gera segredo e hash
+  zero-wallet htlc-lock  --genesis FILE --node ADDR --key FILE --asset (ZERO|ATIVO) --amount QTD
+                      --to HEX --hash HEX --timeout-blocks N
+  zero-wallet htlc-claim  --genesis FILE --node ADDR --key FILE --id HEX --preimage HEX
+  zero-wallet htlc-refund --genesis FILE --node ADDR --key FILE --id HEX
+  zero-wallet htlc --genesis FILE --node ADDR --id HEX
   O node só hospeda conteúdo referenciado pelo estado (nome ou manifesto).
 Defesa da Exonet (ADR-0016) — decisões exigem atestações de validadores:
   zero-wallet defense --genesis FILE --node ADDR
@@ -226,6 +241,15 @@ fn main() -> ExitCode {
         "call" => cmd_call(&args),
         "query" => cmd_query(&args),
         "receipt" => cmd_receipt(&args),
+        "bridge" => cmd_bridge(&args),
+        "bridge-burn-script" => cmd_bridge_burn_script(&args),
+        "bridge-headers" => cmd_bridge_headers(&args),
+        "bridge-deposit" => cmd_bridge_deposit(&args),
+        "htlc-secret" => cmd_htlc_secret(),
+        "htlc-lock" => cmd_htlc_lock(&args),
+        "htlc-claim" => cmd_htlc_settle(&args, true),
+        "htlc-refund" => cmd_htlc_settle(&args, false),
+        "htlc" => cmd_htlc(&args),
         "defense" => cmd_defense(&args),
         "defense-attest" => cmd_defense_decision(&args, false),
         "defense-submit" => cmd_defense_decision(&args, true),
@@ -1255,6 +1279,211 @@ fn cmd_receipt(args: &Args) -> Result<(), String> {
             }
         }
         None => println!("sem recibo (pendente, antigo demais ou não é chamada ao Runtime)"),
+    }
+    Ok(())
+}
+
+// ------------------------------------------------ Ponte e trocas atômicas
+
+fn load_genesis(args: &Args) -> Result<Genesis, String> {
+    let path = args.req("genesis")?;
+    let bytes = fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    Genesis::from_canonical_bytes(&bytes).map_err(|e| format!("genesis inválido: {e}"))
+}
+
+fn cmd_bridge(args: &Args) -> Result<(), String> {
+    let chain = args.req("chain")?;
+    let (mut client, _) = open(args)?;
+    let v = rz_wallet::bridge_status(&mut client, chain)?;
+    match v.best {
+        None => println!("rede de origem '{chain}' não configurada no Genesis"),
+        Some((h, n)) => {
+            println!("rede de origem: {chain}");
+            println!(
+                "ponta conhecida: altura {n}, bloco {}",
+                rz_core::bridge::display_hex(&h)
+            );
+            println!("confirmações exigidas: {}", v.confirmations);
+            println!("ativo representado: {}", v.asset);
+            println!("queimas já usadas: {}", v.claimed);
+        }
+    }
+    Ok(())
+}
+
+fn cmd_bridge_burn_script(args: &Args) -> Result<(), String> {
+    let genesis = load_genesis(args)?;
+    let to = Address::from_hex(args.req("to")?).ok_or("--to: endereço inválido")?;
+    let script = rz_core::bridge::burn_script(&genesis.network_id, &to);
+    println!("{}", rz_crypto::hex::encode(&script));
+    eprintln!(
+        "aviso: o valor enviado a esta saída é DESTRUÍDO na rede de origem, sem resgate. \
+         A Rede Zero cunha a representação para {to} na rede {}.",
+        genesis.network_id
+    );
+    Ok(())
+}
+
+fn cmd_bridge_headers(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let chain = args.req("chain")?.to_string();
+    let file = args.req("file")?;
+    let text = fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?;
+    let headers: Vec<[u8; 80]> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(|l| rz_crypto::hex::decode_array::<80>(l).ok_or(format!("cabeçalho inválido: {l}")))
+        .collect::<Result<_, _>>()?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    for batch in headers.chunks(rz_core::bridge::MAX_HEADERS_PER_TX) {
+        let id = send_account(
+            &mut client,
+            &genesis,
+            &keys,
+            TxKind::BridgeHeaders {
+                chain: chain.clone(),
+                headers: batch.to_vec(),
+            },
+            fee,
+        )?;
+        println!("{} cabeçalhos enviados: {id}", batch.len());
+        // O próximo lote depende do anterior estar no estado.
+        if batch.len() == rz_core::bridge::MAX_HEADERS_PER_TX {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+    }
+    Ok(())
+}
+
+fn cmd_bridge_deposit(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let chain = args.req("chain")?.to_string();
+    let tx = rz_crypto::hex::decode(args.req("tx")?).ok_or("--tx: hex inválido")?;
+    let mb =
+        rz_crypto::hex::decode(args.req("merkleblock")?).ok_or("--merkleblock: hex inválido")?;
+    let txid = Hash32(rz_core::bridge::sha256d(&tx));
+    let (header, path, index) = rz_core::bridge::path_from_merkleblock(&mb, &txid)?;
+    let block = rz_core::bridge::Header::parse(&header).hash();
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::BridgeDeposit {
+            chain,
+            block,
+            tx,
+            path,
+            index,
+        },
+        fee,
+    )?;
+    println!(
+        "prova de queima {} enviada: {id}",
+        rz_core::bridge::display_hex(&txid)
+    );
+    Ok(())
+}
+
+fn cmd_htlc_secret() -> Result<(), String> {
+    let sk = SecretKey::generate();
+    let secret = sk.seed();
+    println!(
+        "segredo (guarde, não compartilhe antes da hora): {}",
+        rz_crypto::hex::encode(&secret)
+    );
+    println!(
+        "hash SHA-256 (use nos dois contratos): {}",
+        rz_crypto::hex::encode(&rz_core::bridge::sha256(&secret))
+    );
+    Ok(())
+}
+
+fn cmd_htlc_lock(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let to = Address::from_hex(args.req("to")?).ok_or("--to: endereço inválido")?;
+    let hashlock = hash_arg(args, "hash")?;
+    let blocks: u64 = args
+        .req("timeout-blocks")?
+        .parse()
+        .map_err(|_| "--timeout-blocks: número inválido")?;
+    let (mut client, genesis) = open(args)?;
+    let spec = args.req("asset")?;
+    let (asset, amount) = if spec.eq_ignore_ascii_case("zero") {
+        (rz_core::market::AssetId::ZERO, args.amount("amount")?)
+    } else {
+        let a = find_asset(&mut client, spec, None)?;
+        let q = parse_units(args.req("amount")?, a.info.decimals)
+            .ok_or("--amount: quantidade inválida")?;
+        (a.id, q)
+    };
+    let (_, _, height) = account(&mut client, keys.address())?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::HtlcLock {
+            asset,
+            amount,
+            recipient: to,
+            hashlock,
+            timeout: height + 1 + blocks,
+        },
+        fee,
+    )?;
+    println!(
+        "contrato {id} enviado; vence na altura {}",
+        height + 1 + blocks
+    );
+    println!("o identificador do contrato é o da transação");
+    Ok(())
+}
+
+fn cmd_htlc_settle(args: &Args, claim: bool) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let id = hash_arg(args, "id")?;
+    let kind = if claim {
+        let preimage =
+            rz_crypto::hex::decode(args.req("preimage")?).ok_or("--preimage: hex inválido")?;
+        TxKind::HtlcClaim { id, preimage }
+    } else {
+        TxKind::HtlcRefund { id }
+    };
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let tx = send_account(&mut client, &genesis, &keys, kind, fee)?;
+    println!(
+        "{} enviado: {tx}",
+        if claim { "resgate" } else { "devolução" }
+    );
+    Ok(())
+}
+
+fn cmd_htlc(args: &Args) -> Result<(), String> {
+    let id = hash_arg(args, "id")?;
+    let (mut client, _) = open(args)?;
+    match rz_wallet::htlc(&mut client, id)? {
+        (Some(h), _) => {
+            println!(
+                "em aberto: {} de {} para {}",
+                h.amount, h.asset, h.recipient
+            );
+            println!("remetente: {} | vence na altura {}", h.sender, h.timeout);
+            println!("hash: {}", h.hashlock);
+        }
+        (None, Some(s)) => match s.preimage {
+            Some(p) => println!(
+                "resgatado na altura {}; pré-imagem revelada: {}",
+                s.height,
+                rz_crypto::hex::encode(&p)
+            ),
+            None => println!("devolvido ao remetente na altura {}", s.height),
+        },
+        (None, None) => println!("contrato desconhecido"),
     }
     Ok(())
 }

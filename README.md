@@ -82,7 +82,7 @@ Todo bloco é final assim que recebe pré-compromissos de mais de 2/3 do poder d
 
 ### Grande Mercado e Pool permanente
 
-Crie a DEVNET com um ativo **de teste** (não representa nada na rede de origem; pontes estão A DEFINIR):
+Crie a DEVNET com um ativo **de teste** (não representa nada na rede de origem; ativos reais entram pela ponte, abaixo):
 
 ```bash
 rm -rf devnet-data && RZ_TEST_ASSET=testnet-externa:ATV scripts/devnet.sh 4
@@ -153,6 +153,25 @@ target/release/zero-navegador --genesis $G --node 127.0.0.1:7100 --key alice.key
 
 Cada publicação abre numa origem própria (`laboratorio.app.localhost:7300`), verificada pedaço a pedaço contra o identificador registrado, isolada das outras e sem acesso a servidores externos. Assim, ela não revela seu IP a terceiros. As chaves nunca chegam às publicações: quando um site pede uma operação, você revisa e aprova em **Pedidos**, na interface do Navegador. Cada site vê uma identidade diferente, que não revela sua Wallet.
 
+### Ponte para ativos externos e trocas atômicas
+
+A ponte não tem custodiante. Ela tem duas peças:
+
+* **Entrada por queima:** na rede de origem, o valor é enviado a uma saída `OP_RETURN` que o destrói e grava o destinatário na Rede Zero. A Rede Zero verifica os cabeçalhos (prova de trabalho) e a prova de Merkle, e cunha a representação. É uma via de mão única.
+* **Troca atômica (HTLC):** duas pessoas trocam ZERO ou ativos por ativos de outra rede, sem intermediário.
+
+```bash
+$W bridge-burn-script --genesis $G --to SEU_ENDERECO        # script da saída de queima (irreversível)
+$W bridge-headers --genesis $G --node 127.0.0.1:7100 --key alice.key --chain bitcoin --file cabecalhos.txt
+$W bridge-deposit --genesis $G --node 127.0.0.1:7100 --key alice.key --chain bitcoin \
+    --tx TX_SEM_TESTEMUNHAS --merkleblock SAIDA_DE_GETTXOUTPROOF
+$W htlc-secret                                              # segredo de 32 bytes e seu hash
+$W htlc-lock --genesis $G --node 127.0.0.1:7100 --key alice.key --asset ZERO --amount 10 \
+    --to ENDERECO_DA_OUTRA_PARTE --hash HASH --timeout-blocks 500
+```
+
+As redes de origem são definidas no Genesis (DEVNET e TESTNET). Na MAINNET a ponte fica proibida até haver auditoria.
+
 ### Lógica de Comunidades (Exonet Runtime)
 
 ```bash
@@ -216,12 +235,12 @@ examples/runtime/     módulo de exemplo do Exonet Runtime
 |---|---|---|
 | [Manifesto Exonet](docs/Manifesto_Exonet.pdf) | Por quê? | inicial |
 | [REQUIREMENTS.md](docs/REQUIREMENTS.md) | O que deve existir? | 0.2.0 |
-| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.8.0 |
+| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.9.0 |
 | [DEMOCRACIA_ORGANICA.md](docs/DEMOCRACIA_ORGANICA.md) | Como indivíduos e Comunidades participam? | 0.1.0 (conceitual) |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Como os componentes se organizam? | 0.1.0 |
 | [SPECIFICATIONS.md](docs/SPECIFICATIONS.md) | Quais são as regras técnicas? | 0.1.0 |
 | [spec/](spec/) | Regras exatas e testáveis por componente | DEVNET 0.1.0 |
-| [AUDIT.md](docs/AUDIT.md) | O que auditar, como reproduzir e o que a revisão interna encontrou? | 0.6.0 |
+| [AUDIT.md](docs/AUDIT.md) | O que auditar, como reproduzir e o que a revisão interna encontrou? | 0.7.0 |
 | [ACCEPTANCE_CRITERIA.md](docs/ACCEPTANCE_CRITERIA.md) | Quando uma implementação é conforme? | 0.1.0 |
 | [ACCEPTANCE_TESTS.md](docs/ACCEPTANCE_TESTS.md) | Como verificar? | 0.1.0 |
 | [docs/adr/](docs/adr/) | Por que cada escolha técnica? | — |
@@ -247,7 +266,8 @@ Seguindo a ordem recomendada em `SPECIFICATIONS.md §73`:
 | Comunidades (declaração, reconhecimento, posição, versões) e nomes `zero://` | ✅ DEVNET ([ADR-0015](docs/adr/0015-comunidades-e-nomes.md)) | AT-COM-001..004 |
 | Navegador Zero (origens isoladas, pedidos aprovados na interface, identidade por site) e conteúdo endereçado por hash replicado entre Nodes | ✅ DEVNET — auditoria pendente ([ADR-0017](docs/adr/0017-navegador-zero-e-conteudo.md)) | AT-BRW-001..003 |
 | Exonet Runtime (WebAssembly determinístico, isolado por Comunidade, combustível pago) | ✅ DEVNET — auditoria pendente ([ADR-0018](docs/adr/0018-exonet-runtime.md)) | AT-COM-003, teste de isolamento §73 |
-| Grande Mercado (leilão por bloco) e Pool permanente | ✅ DEVNET ([ADR-0014](docs/adr/0014-grande-mercado-e-pool.md)); ponte de ativos externos A DEFINIR | AT-MKT-001..004, AT-POOL-001..004, propriedades |
+| Grande Mercado (leilão por bloco) e Pool permanente | ✅ DEVNET ([ADR-0014](docs/adr/0014-grande-mercado-e-pool.md)) | AT-MKT-001..004, AT-POOL-001..004, propriedades |
+| Ponte sem custodiante (prova de queima por cliente leve) e trocas atômicas | ✅ DEVNET — auditoria pendente ([ADR-0019](docs/adr/0019-ponte-sem-custodiante.md)) | testes de cliente leve, Merkle e HTLC; ponta a ponta com Nodes reais |
 | Defesa da Exonet (modos atestados com prazo, credenciais temporárias, isolamento, encerramento verificável) | ✅ DEVNET — auditoria pendente ([ADR-0016](docs/adr/0016-defesa-da-exonet.md)) | AT-DEF-001..003, AT-CYBER-001..006, AT-INC-001..003 |
 
 ## Limitações conhecidas da DEVNET
@@ -257,6 +277,7 @@ Aceitas temporariamente e registradas em [`THREAT_MODEL.md §11`](docs/THREAT_MO
 * **Consenso Zero-BFT não auditado** ([ADR-0012](docs/adr/0012-consenso-zero-bft.md)): tolera menos de 1/3 do poder bizantino; com 1/3 ou mais offline a rede para (segurança antes de disponibilidade). Sem checkpoints contra ataque de longo alcance; o poder inicial vem do Genesis.
 * **Privacidade não auditada**: RingCT ([ADR-0009](docs/adr/0009-privacidade-transacional.md)) oferece anonimato probabilístico (anel de 11), não absoluto (`REQ-028`). Blindagens e retiradas são públicas.
 * **Canal cifrado e proteção de IP não auditados** ([ADR-0011](docs/adr/0011-protecao-do-ip.md)). Sem Tor e com `--direct`, o node escolhido vê seu IP.
+* **Ponte não auditada** ([ADR-0019](docs/adr/0019-ponte-sem-custodiante.md)): segura na medida da prova de trabalho da origem e das confirmações exigidas; mão única; sem incentivo a retransmissores de cabeçalhos.
 * **Exonet Runtime não auditado** ([ADR-0018](docs/adr/0018-exonet-runtime.md)): depende do interpretador `wasmi` na versão fixada; sem chamadas entre módulos nem aluguel de armazenamento.
 * **Navegador Zero não auditado** ([ADR-0017](docs/adr/0017-navegador-zero-e-conteudo.md)): o isolamento depende do navegador do sistema; envios privados ainda pela `zero-wallet`; links para a web comum saem da Exonet.
 * **Defesa não auditada** ([ADR-0016](docs/adr/0016-defesa-da-exonet.md)): depende de > 2/3 dos validadores; o isolamento só alcança conexões de saída, porque pares de entrada são anônimos; a detecção de anomalias é local.

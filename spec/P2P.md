@@ -1,6 +1,6 @@
 # spec/P2P.md — Protocolo P2P da DEVNET
 
-**Versão:** 0.8.0 (DEVNET), `P2P_VERSION = 8`
+**Versão:** 0.9.0 (DEVNET), `P2P_VERSION = 9`
 **Relacionamento:** `SPECIFICATIONS.md §23–§30`, ADR-0007, ADR-0010, ADR-0011, THR-P2P-001..006, THR-PRIV-002..004
 **Implementação de referência:** `crates/rz-p2p` (mensagens) e `crates/rz-node` (orquestração)
 
@@ -87,6 +87,10 @@ m = enc(Message)
 | `0x2b` | `GET_RECEIPT` | `fixed[32] tx` |
 | `0x2c` | `RECEIPT` | `u64 height, option<Receipt>` |
 | `0x2d` | `GET_MODULE_INFO` | `fixed[32] community` |
+| `0x2f` | `GET_BRIDGE` | `string chain` |
+| `0x30` | `BRIDGE` | `u64 height, string chain, option<(fixed[32], u64)> best, u32 confirmations, AssetId asset, u64 claimed` (`spec/BRIDGE.md §6`) |
+| `0x31` | `GET_HTLC` | `fixed[32] id` |
+| `0x32` | `HTLC` | `u64 height, option<Htlc>, option<Settled>` |
 | `0x2e` | `MODULE_INFO` | `u64 height, fixed[32] community, option<fixed[32]> module, u32 seq, u64 usage` |
 
 `PeerAddr` (tag `u8`):

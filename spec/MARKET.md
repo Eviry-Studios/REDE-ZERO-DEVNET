@@ -23,7 +23,10 @@ AssetInfo {
 }
 ```
 
-Ativos externos só são registrados pelo Genesis (`GenesisAsset`, `spec/BLOCKS.md §5`) e **somente** em DEVNET, como ativos de teste. Pontes verificáveis estão A DEFINIR (ADR-0014 §4).
+Ativos externos só são registrados pelo Genesis:
+
+* `GenesisAsset` (`spec/BLOCKS.md §5`), **somente** em DEVNET, como ativos de teste (`Verification::DevnetGenesis`);
+* redes de origem da ponte (`ChainConfig`, DEVNET e TESTNET), cujo ativo começa com oferta zero e só cresce por prova de queima verificada por cliente leve (`Verification::LightClientBurn`, `spec/BRIDGE.md`, ADR-0019).
 
 ZERO continua em `Account.balance`. Saldos de ativos externos ficam em `balances[(endereço, ativo)]`.
 
@@ -38,7 +41,7 @@ ZERO continua em `Account.balance`. Saldos de ativos externos ficam em `balances
 
 `amount = 0` e `price = 0` são inválidos sem consultar o estado.
 
-**Não existe** operação que retire ativos do Pool (AT-POOL-002). As tags de `TxKind` são exatamente `0x00, 0x01, 0x10–0x14, 0x20–0x23, 0x30–0x33, 0x40–0x44, 0x50–0x56, 0x60–0x62`; qualquer outra é `InvalidTag`. Das operações de Comunidades e nomes (`0x40–0x44`), só `RegisterName` toca o Pool, e para aumentá-lo (taxa de nome). As operações de defesa (`0x50–0x56`) não tocam o Pool. Das operações do Exonet Runtime (`0x60–0x62`), só `PublishModule` toca o Pool, e para aumentá-lo (taxa por byte); módulos não têm acesso ao Pool nem a saldos.
+**Não existe** operação que retire ativos do Pool (AT-POOL-002). As tags de `TxKind` são exatamente `0x00, 0x01, 0x10–0x14, 0x20–0x23, 0x30–0x33, 0x40–0x44, 0x50–0x56, 0x60–0x62, 0x70–0x74`; qualquer outra é `InvalidTag`. Das operações de Comunidades e nomes (`0x40–0x44`), só `RegisterName` toca o Pool, e para aumentá-lo (taxa de nome). As operações de defesa (`0x50–0x56`) não tocam o Pool. Das operações do Exonet Runtime (`0x60–0x62`), só `PublishModule` toca o Pool, e para aumentá-lo (taxa por byte); módulos não têm acesso ao Pool nem a saldos. As operações da ponte (`0x70–0x74`) não tocam o Pool: cunham a representação para o destinatário da queima ou movem valores entre as partes de uma troca atômica.
 
 ## 3. Ordens
 

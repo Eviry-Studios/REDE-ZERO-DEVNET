@@ -4,6 +4,7 @@ use std::fmt;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
 use rz_codec::{Decode, DecodeError, Decoder, Encode, Encoder};
+use rz_core::bridge::{Htlc, Settled, MAX_CHAIN_NAME};
 use rz_core::community::{Community, NameKind, MAX_NAME_LEN};
 use rz_core::content::{ContentInfo, CHUNK_SIZE, MAX_MANIFEST};
 use rz_core::defense::{Credential, DefenseMode, Incident};
@@ -428,6 +429,26 @@ pub enum Message {
         seq: u32,
         usage: u64,
     },
+    /// `0x2f` — estado do cliente leve de uma rede de origem.
+    GetBridge(String),
+    /// `0x30`
+    Bridge {
+        height: u64,
+        chain: String,
+        /// `(bloco, altura)` da ponta de maior trabalho, se a rede existir.
+        best: Option<(Hash32, u64)>,
+        confirmations: u32,
+        asset: AssetId,
+        claimed: u64,
+    },
+    /// `0x31` — contrato de troca atômica.
+    GetHtlc(Hash32),
+    /// `0x32`
+    Htlc {
+        height: u64,
+        htlc: Option<Box<Htlc>>,
+        settled: Option<Settled>,
+    },
 }
 
 fn put_opt_bytes(e: &mut Encoder, v: &Option<Vec<u8>>) {
@@ -704,6 +725,37 @@ impl Encode for Message {
                     .u32(*seq)
                     .u64(*usage);
             }
+            Message::GetBridge(c) => {
+                e.u8(0x2f).str(c);
+            }
+            Message::Bridge {
+                height,
+                chain,
+                best,
+                confirmations,
+                asset,
+                claimed,
+            } => {
+                e.u8(0x30).u64(*height).str(chain);
+                match best {
+                    Some((h, n)) => e.u8(1).put(h).u64(*n),
+                    None => e.u8(0),
+                };
+                e.u32(*confirmations).put(asset).u64(*claimed);
+            }
+            Message::GetHtlc(id) => {
+                e.u8(0x31).put(id);
+            }
+            Message::Htlc {
+                height,
+                htlc,
+                settled,
+            } => {
+                e.u8(0x32)
+                    .u64(*height)
+                    .option(&htlc.as_deref().cloned())
+                    .option(settled);
+            }
         }
     }
 }
@@ -851,6 +903,25 @@ impl Decode for Message {
                 height: d.u64()?,
                 receipt: d.option::<Receipt>()?.map(Box::new),
             },
+            0x2f => Message::GetBridge(d.str(MAX_CHAIN_NAME)?),
+            0x30 => Message::Bridge {
+                height: d.u64()?,
+                chain: d.str(MAX_CHAIN_NAME)?,
+                best: match d.u8()? {
+                    0 => None,
+                    1 => Some((d.get()?, d.u64()?)),
+                    t => return Err(DecodeError::InvalidTag(t)),
+                },
+                confirmations: d.u32()?,
+                asset: d.get()?,
+                claimed: d.u64()?,
+            },
+            0x31 => Message::GetHtlc(d.get()?),
+            0x32 => Message::Htlc {
+                height: d.u64()?,
+                htlc: d.option::<Htlc>()?.map(Box::new),
+                settled: d.option()?,
+            },
             0x2d => Message::GetModuleInfo(d.get()?),
             0x2e => Message::ModuleInfo {
                 height: d.u64()?,
@@ -922,6 +993,10 @@ impl Message {
             Message::Receipt { .. } => "RECEIPT",
             Message::GetModuleInfo(_) => "GET_MODULE_INFO",
             Message::ModuleInfo { .. } => "MODULE_INFO",
+            Message::GetBridge(_) => "GET_BRIDGE",
+            Message::Bridge { .. } => "BRIDGE",
+            Message::GetHtlc(_) => "GET_HTLC",
+            Message::Htlc { .. } => "HTLC",
         }
     }
 }

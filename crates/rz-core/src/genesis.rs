@@ -353,11 +353,11 @@ impl Genesis {
         if self.assets.is_empty() {
             return Ok(());
         }
-        // Sem ponte verificável, ativos externos só existem como teste
-        // (SPEC §42, THR-POOL-002).
+        // Ativos de teste não representam nada na origem: só na DEVNET. Fora
+        // dela, ativos externos só entram pela ponte (ADR-0019, SPEC §42).
         if self.kind != NetworkKind::Devnet {
             return Err(GenesisError::InvalidParameter(
-                "ativos externos exigem ponte verificável (A DEFINIR)",
+                "ativos de teste só na DEVNET; ativos reais entram pela ponte (bridges)",
             ));
         }
         let mut ids = BTreeSet::new();

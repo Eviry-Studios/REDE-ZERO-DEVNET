@@ -42,6 +42,12 @@ pub const MAX_HEADERS_PER_TX: usize = 500;
 pub const MAX_ORIGIN_TX: usize = 100_000;
 pub const MAX_MERKLE_DEPTH: usize = 32;
 pub const MAX_PREIMAGE: usize = 64;
+/// Tamanho exigido da pré-imagem de um HTLC. Contratos equivalentes nas
+/// redes de origem devem exigir o mesmo (`OP_SIZE 32 OP_EQUALVERIFY`): sem
+/// isso, um segredo resgatável numa rede poderia ser inválido na outra.
+pub const PREIMAGE_LEN: usize = 32;
+/// Teto de cabeçalhos guardados por rede de origem (ramos laterais incluídos).
+pub const MAX_STORED_HEADERS: usize = 2 * KEEP_HEADERS as usize;
 /// Cabeçalhos guardados abaixo da ponta (reorganizações mais profundas são
 /// impossíveis por construção).
 pub const KEEP_HEADERS: u64 = 4_032;
@@ -616,7 +622,12 @@ impl ChainState {
             extra.insert(id, rec.clone());
             out.push((id, rec));
         }
-        Ok((out, (best != self.best).then_some(best)))
+        let new_best = (best != self.best).then_some(best);
+        // Ramos que não viram a ponta não podem crescer sem limite.
+        if new_best.is_none() && self.headers.len() + out.len() > MAX_STORED_HEADERS {
+            return Err("armazenamento de cabeçalhos cheio: só aceita o que aumenta o trabalho");
+        }
+        Ok((out, new_best))
     }
 
     /// Aplica cabeçalhos validados por [`check_headers`](Self::check_headers).
@@ -908,7 +919,7 @@ pub fn path_from_merkleblock(
         };
         // Registra o irmão no caminho, se a transação estiver nesta subárvore.
         if let Some((idx, path)) = &mut w.found {
-            if path.len() == (h - 1) as usize && (*idx as u64 >> (h - 1)) == pos {
+            if path.len() == (h - 1) as usize && (*idx as u64 >> h) == pos {
                 let sibling = if (*idx >> (h - 1)) & 1 == 0 {
                     right
                 } else {
@@ -1209,5 +1220,119 @@ pub(crate) mod tests {
         assert_eq!(merkle_root(&leaves[2], &[leaves[3], l], 2), Some(root));
         assert_ne!(merkle_root(&leaves[2], &[leaves[3], l], 3), Some(root));
         assert_eq!(merkle_root(&leaves[2], &[leaves[3], l], 4), None);
+    }
+
+    /// `CPartialMerkleTree` do Bitcoin Core (TraverseAndBuild), para testes.
+    fn build_merkleblock(header: &Header, txids: &[Hash32], matched: usize) -> Vec<u8> {
+        let n = txids.len() as u64;
+        let width = |h: u32| (n + (1u64 << h) - 1) >> h;
+        fn node(txids: &[Hash32], h: u32, pos: u64, width: &dyn Fn(u32) -> u64) -> Hash32 {
+            if h == 0 {
+                return txids[pos as usize];
+            }
+            let l = node(txids, h - 1, pos * 2, width);
+            let r = if pos * 2 + 1 < width(h - 1) {
+                node(txids, h - 1, pos * 2 + 1, width)
+            } else {
+                l
+            };
+            let mut b = [0u8; 64];
+            b[..32].copy_from_slice(&l.0);
+            b[32..].copy_from_slice(&r.0);
+            Hash32(sha256d(&b))
+        }
+        #[allow(clippy::too_many_arguments)]
+        fn build(
+            txids: &[Hash32],
+            matched: usize,
+            h: u32,
+            pos: u64,
+            width: &dyn Fn(u32) -> u64,
+            bits: &mut Vec<bool>,
+            hashes: &mut Vec<Hash32>,
+        ) {
+            let start = pos << h;
+            let end = ((pos + 1) << h).min(txids.len() as u64);
+            let parent_of_match = (start..end).contains(&(matched as u64));
+            bits.push(parent_of_match);
+            if h == 0 || !parent_of_match {
+                hashes.push(node(txids, h, pos, width));
+            } else {
+                build(txids, matched, h - 1, pos * 2, width, bits, hashes);
+                if pos * 2 + 1 < width(h - 1) {
+                    build(txids, matched, h - 1, pos * 2 + 1, width, bits, hashes);
+                }
+            }
+        }
+        let mut height = 0;
+        while width(height) > 1 {
+            height += 1;
+        }
+        let (mut bits, mut hashes) = (Vec::new(), Vec::new());
+        build(txids, matched, height, 0, &width, &mut bits, &mut hashes);
+        let mut out = header.serialize().to_vec();
+        out.extend((n as u32).to_le_bytes());
+        out.push(hashes.len() as u8);
+        for h in &hashes {
+            out.extend(h.0);
+        }
+        let mut flags = vec![0u8; bits.len().div_ceil(8)];
+        for (i, b) in bits.iter().enumerate() {
+            if *b {
+                flags[i / 8] |= 1 << (i % 8);
+            }
+        }
+        out.push(flags.len() as u8);
+        out.extend(flags);
+        out
+    }
+
+    #[test]
+    fn merkleblock_path_extraction() {
+        for n in [1usize, 2, 3, 5, 7, 8, 13] {
+            let txids: Vec<Hash32> = (0..n).map(|i| Hash32(sha256d(&[i as u8, 9]))).collect();
+            // Raiz pelo mesmo cálculo do construtor.
+            let root = {
+                let mut level = txids.clone();
+                while level.len() > 1 {
+                    let mut next = Vec::new();
+                    for c in level.chunks(2) {
+                        let r = *c.get(1).unwrap_or(&c[0]);
+                        let mut b = [0u8; 64];
+                        b[..32].copy_from_slice(&c[0].0);
+                        b[32..].copy_from_slice(&r.0);
+                        next.push(Hash32(sha256d(&b)));
+                    }
+                    level = next;
+                }
+                level[0]
+            };
+            let header = Header {
+                version: 1,
+                prev: Hash32::ZERO,
+                merkle_root: root,
+                time: 1,
+                bits: 0x207fffff,
+                nonce: 0,
+            };
+            for m in 0..n {
+                let mb = build_merkleblock(&header, &txids, m);
+                let (h, path, index) = path_from_merkleblock(&mb, &txids[m]).unwrap();
+                assert_eq!(h, header.serialize());
+                assert_eq!(index as usize, m, "n={n} m={m}");
+                assert_eq!(
+                    merkle_root(&txids[m], &path, index),
+                    Some(root),
+                    "n={n} m={m}"
+                );
+                // Outra transação não está na prova.
+                let other = Hash32([0xee; 32]);
+                assert!(path_from_merkleblock(&mb, &other).is_err());
+                // Prova adulterada não confere com o cabeçalho.
+                let mut bad = mb.clone();
+                bad[80 + 4 + 1] ^= 1;
+                assert!(path_from_merkleblock(&bad, &txids[m]).is_err());
+            }
+        }
     }
 }

@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.8.0
-**Status:** Modelo de ameaças — fase de definição (0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
+**Versão:** 0.9.0
+**Status:** Modelo de ameaças — fase de definição (0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -703,7 +703,41 @@ Classificação de severidade (inicial, sujeita a revisão):
 **Adversários:** ADV-07, ADV-09
 **Descrição:** um ativo externo é representado no Pool sem existir ou estar bloqueado na rede de origem.
 
-**Mitigações:** verificação criptográfica da origem; proibição de dependência exclusiva de custodiante (`SPEC §42`); mecanismo **A DEFINIR**. Enquanto não existir, nenhum ativo externo real é aceito: só ativos de teste no Genesis da DEVNET, rejeitados nos demais ambientes (ADR-0014 §4).
+**Mitigações:** verificação criptográfica da origem e nenhuma dependência de custodiante (`SPEC §42`). Implementado na ADR-0019:
+
+* cliente leve da rede de origem na cadeia (dificuldade exigida, reajuste, mediana de tempo, maior trabalho acumulado);
+* prova de Merkle de uma transação que **queima** o valor numa saída comprometida com esta rede e com o destinatário, aceita só após as confirmações configuradas;
+* cada queima cunha uma única vez; ninguém guarda o ativo de origem.
+
+Ativos de teste continuam só na DEVNET.
+
+**Risco residual:** quem controla a maioria da mineração da origem, ou produz uma cadeia mais pesada a partir do ponto de partida, poderia cunhar representações falsas; mais confirmações reduzem o risco. Sem auditoria, a ponte é proibida na MAINNET.
+
+### THR-BRG-001 — Cabeçalhos falsos ou ramo privado
+
+**Severidade:** CRÍTICA
+**Descrição:** um atacante envia cabeçalhos com prova de trabalho insuficiente, dificuldade errada ou um ramo privado para provar uma queima que não existe na cadeia real.
+
+**Mitigações:** prova de trabalho e dificuldade exigidas pelas regras da origem; escolha pelo maior trabalho acumulado; queimas só na cadeia de maior trabalho com confirmações; reorganização refaz o índice e invalida provas de ramos abandonados (`header_rules_enforced`, `reorganization_follows_most_work`). **Risco residual:** poder de mineração majoritário na origem.
+
+### THR-BRG-002 — Prova de inclusão forjada
+
+**Severidade:** ALTA
+**Descrição:** caminhos de Merkle adulterados, transação de 64 bytes que se passa por nó interno (CVE-2017-12842), serialização com testemunhas ou queima para outra rede Zero.
+
+**Mitigações:** verificação do caminho até a raiz do cabeçalho; rejeição de 64 bytes e de testemunhas; etiqueta da rede de destino na saída; exatamente uma saída de queima; identificador de origem usado uma só vez (`burns_for_other_networks_or_malformed_rejected`, `merkleblock_path_extraction`).
+
+### THR-BRG-003 — Ataques a trocas atômicas
+
+**Severidade:** ALTA
+**Descrição:** pré-imagem de tamanho diferente aceita numa rede e não na outra; prazos mal escolhidos; resgate depois do prazo.
+
+**Mitigações:** pré-imagem de exatamente 32 bytes (contratos da origem devem exigir `OP_SIZE 32`); resgate só antes do prazo e devolução só depois; valor sempre para a parte definida no contrato; orientação de prazo menor do lado de quem recebe o segredo (`spec/BRIDGE.md §5`). **Risco residual:** erros de configuração das pessoas.
+
+### THR-BRG-004 — Inchaço do cliente leve
+
+**Severidade:** MÉDIA
+**Mitigações:** taxa por transação; até 500 cabeçalhos por transação; poda abaixo de 4 032 blocos da ponta; teto de 8 064 cabeçalhos por rede, acima do qual só entra o que aumenta o trabalho.
 
 ### THR-POOL-003 — Confusão entre ZERO e ativo externo
 
@@ -952,6 +986,9 @@ Classificação de severidade (inicial, sujeita a revisão):
 | THR-RT-002 | REQ-016 | spec/RUNTIME.md §8 | runtime_block_replay_is_deterministic |
 | THR-CNT-001/002 | REQ-070 | spec/CONTENT.md §2, §5 | rz-node content::tests, community_devnet, browser_devnet |
 | THR-POOL-001 | REQ-037, REQ-038 | SPEC §39, §40, spec/MARKET.md §5 | AT-POOL-002, AT-POOL-003, randomized_market_invariants |
+| THR-POOL-002 | REQ-039 | SPEC §42, spec/BRIDGE.md | burn_proof_mints_once_after_confirmations, bridge_devnet |
+| THR-BRG-001/002 | SPEC §42 | spec/BRIDGE.md §3, §4 | header_rules_enforced, reorganization_follows_most_work, merkleblock_path_extraction |
+| THR-BRG-003 | — | spec/BRIDGE.md §5 | htlc_claim_and_refund_with_zero_and_external_asset |
 | THR-POOL-003 | REQ-039 | SPEC §41, spec/MARKET.md §1 | AT-POOL-004 |
 | THR-MKT-001 | REQ-035 | spec/MARKET.md §4 | block_order_does_not_change_market_outcome |
 | THR-MKT-002 | REQ-035 | spec/MARKET.md §2 | AT-MKT-003, AT-MKT-004 |
@@ -986,7 +1023,7 @@ Ameaças aceitas **temporariamente** na DEVNET, com registro explícito:
 | THR-PRIV-001 | RingCT implementado **sem auditoria**; anel de 11 | Auditoria independente da implementação (ADR-0009) |
 | THR-PRIV-002 | Dandelion++, canal cifrado e Tor opcional **não auditados** | Auditoria do canal; avaliação de tráfego de cobertura (ADR-0011) |
 | THR-P2P-005 | Canal cifrado sem fixação obrigatória de identidade | Distribuição verificável de identidades de Nodes ou uso de serviços onion |
-| THR-POOL-002 | Sem ponte: apenas ativos **de teste** no Genesis da DEVNET | Ponte verificável sem custodiante único (nova ADR) |
+| THR-POOL-002, THR-BRG-001..004 | Ponte (ADR-0019) **sem auditoria**, só em DEVNET e TESTNET; segurança limitada à prova de trabalho da origem; sem incentivo a retransmissores | Auditoria do cliente leve e das trocas atômicas; inclusão de redes pela governança |
 | THR-MKT-001 | Ordens públicas antes da inclusão; omissão por um bloco possível | Avaliação de ordens cifradas até a inclusão |
 | THR-DEF-001..004 | Defesa (ADR-0016) **sem auditoria**; decisões dependem de > 2/3 dos validadores; isolamento só de conexões de saída (pares de entrada são anônimos); detecção de anomalias local | Auditoria; avaliação do isolamento de pares de entrada sem quebrar o anonimato de clientes |
 | THR-RT-001/002 | Exonet Runtime (ADR-0018) **sem auditoria** do interpretador na configuração usada nem da tabela de combustível | Auditoria do `wasmi` e da tabela de custos; avaliação de aluguel de armazenamento |
@@ -1046,7 +1083,7 @@ Toda alteração deverá possuir histórico, justificativa e versão (`REQ-086`,
 
 # 15. Status
 
-**THREAT_MODEL.md v0.8.0**
+**THREAT_MODEL.md v0.9.0**
 
 > **Modelo de ameaças inicial — não congelado.**
 

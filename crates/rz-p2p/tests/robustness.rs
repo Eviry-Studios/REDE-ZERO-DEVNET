@@ -809,6 +809,89 @@ fn corpus() -> Corpus {
             ),
         ])
         .collect();
+    // Ponte e trocas atômicas (ADR-0019).
+    let defense_txs: Vec<Transaction> = defense_txs
+        .into_iter()
+        .chain([
+            account_tx(
+                n,
+                TxKind::BridgeHeaders {
+                    chain: "bitcoin-regtest".into(),
+                    headers: vec![[7u8; 80], [8u8; 80]],
+                },
+            ),
+            account_tx(
+                n,
+                TxKind::BridgeDeposit {
+                    chain: "bitcoin-regtest".into(),
+                    block: Hash32([1; 32]),
+                    tx: vec![2, 0, 0, 0, 1, 9, 9],
+                    path: vec![Hash32([2; 32]), Hash32([3; 32])],
+                    index: 1,
+                },
+            ),
+            account_tx(
+                n,
+                TxKind::HtlcLock {
+                    asset: rz_core::market::AssetId::ZERO,
+                    amount: 77,
+                    recipient: rich().public_key().address(),
+                    hashlock: Hash32([4; 32]),
+                    timeout: 99,
+                },
+            ),
+            account_tx(
+                n,
+                TxKind::HtlcClaim {
+                    id: Hash32([5; 32]),
+                    preimage: b"segredo".to_vec(),
+                },
+            ),
+            account_tx(
+                n,
+                TxKind::HtlcRefund {
+                    id: Hash32([5; 32]),
+                },
+            ),
+        ])
+        .collect();
+    messages.extend([
+        Message::GetBridge("bitcoin-regtest".into()),
+        Message::Bridge {
+            height: 3,
+            chain: "bitcoin-regtest".into(),
+            best: Some((Hash32([6; 32]), 12)),
+            confirmations: 6,
+            asset: rz_core::market::AssetId::external("bitcoin-regtest", "BTC"),
+            claimed: 2,
+        },
+        Message::Bridge {
+            height: 3,
+            chain: "x".into(),
+            best: None,
+            confirmations: 0,
+            asset: rz_core::market::AssetId::ZERO,
+            claimed: 0,
+        },
+        Message::GetHtlc(Hash32([5; 32])),
+        Message::Htlc {
+            height: 3,
+            htlc: Some(Box::new(rz_core::bridge::Htlc {
+                id: Hash32([5; 32]),
+                sender: rich().public_key().address(),
+                recipient: rich().public_key().address(),
+                asset: rz_core::market::AssetId::ZERO,
+                amount: 9,
+                hashlock: Hash32([4; 32]),
+                timeout: 50,
+            })),
+            settled: Some(rz_core::bridge::Settled {
+                id: Hash32([5; 32]),
+                preimage: Some(b"s".to_vec()),
+                height: 4,
+            }),
+        },
+    ]);
     messages.extend([
         Message::Query {
             community: rt_community,

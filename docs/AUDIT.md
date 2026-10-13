@@ -1,6 +1,6 @@
 # AUDIT.md — Preparação para auditoria independente
 
-**Versão:** 0.6.0
+**Versão:** 0.7.0
 **Estado:** pronto para auditoria da DEVNET; nenhuma auditoria externa foi realizada
 **Relacionamento:** `THREAT_MODEL.md §11` (aceitações temporárias), ADR-0009, ADR-0011, ADR-0012, ADR-0014..0016, `SECURITY.md`
 
@@ -33,13 +33,14 @@ A revisão interna (§7) **não substitui** a auditoria externa.
 | 7 | Grande Mercado e Pool | `crates/rz-core/src/market.rs`, partes de mercado em `state.rs` | ~1 300 | leilão (preço, prioridade, arredondamento, poeira), reservas e reembolsos, conservação por ativo, Pool monotônico, limites do livro |
 | 8 | Comunidades e nomes | `crates/rz-core/src/community.rs`, partes em `state.rs` | ~900 | verificação de aprovações por limiar, reconhecimento via governança, isolamento, esqueletos de nomes |
 | 9 | Defesa da Exonet | `crates/rz-core/src/defense.rs`, partes em `state.rs`, isolamento em `rz-node/src/node.rs` | ~1 300 | soma de poder das atestações (repetição, não validador, `seq`), limiares de subida e descida, vencimento dos modos, escopos e validade das credenciais, isolamento de saída |
-| 10 | Exonet Runtime | `crates/rz-core/src/runtime.rs`, partes em `state.rs`, `block.rs` | ~1 300 | configuração do `wasmi` (determinismo, limites), funções do host (limites de memória, cota, combustível), validação de importações, falhas sem escrita, combustível por bloco, recibos |
-| 11 | Navegador Zero e conteúdo | `crates/rz-browser`, `crates/rz-core/src/content.rs`, `crates/rz-node/src/content.rs` | ~2 300 | verificação por pedaço, aceitação só do que o estado referencia, limites de download, roteamento por host (DNS rebinding), cabeçalhos de isolamento, aprovação de pedidos (origem e token), identidade por site |
-| 12 | Wallet | `crates/rz-wallet` | ~1 200 | seleção de notas, recusa de conexão direta, manuseio de chaves, unidades e preços do mercado |
+| 10 | Ponte e trocas atômicas | `crates/rz-core/src/bridge.rs`, partes em `state.rs` | ~1 500 | aritmética de 256 bits e forma compacta, reajuste, maior trabalho e reorganização, prova de Merkle e `merkleblock`, análise de transações de origem, unicidade da queima, regras e invariantes de HTLC |
+| 11 | Exonet Runtime | `crates/rz-core/src/runtime.rs`, partes em `state.rs`, `block.rs` | ~1 300 | configuração do `wasmi` (determinismo, limites), funções do host (limites de memória, cota, combustível), validação de importações, falhas sem escrita, combustível por bloco, recibos |
+| 12 | Navegador Zero e conteúdo | `crates/rz-browser`, `crates/rz-core/src/content.rs`, `crates/rz-node/src/content.rs` | ~2 300 | verificação por pedaço, aceitação só do que o estado referencia, limites de download, roteamento por host (DNS rebinding), cabeçalhos de isolamento, aprovação de pedidos (origem e token), identidade por site |
+| 13 | Wallet | `crates/rz-wallet` | ~1 200 | seleção de notas, recusa de conexão direta, manuseio de chaves, unidades e preços do mercado |
 
 ¹ Aproximado, incluindo testes internos aos arquivos.
 
-**Fora do escopo:** pontes de ativos externos (não existem; ADR-0014 §4), Agente Zero (ainda não implementado), e a política monetária (A DEFINIR).
+**Fora do escopo:** Agente Zero (ainda não implementado), e a política monetária (A DEFINIR).
 
 ## 3. Arquitetura e fronteiras de confiança
 
@@ -94,6 +95,8 @@ Cada invariante lista onde é aplicada e os testes que a exercitam. Uma violaç�
 | INV-20 | Nenhum modo acima de NORMAL dura além do prazo sem renovação atestada; ao sair do nível de incidente, as credenciais do incidente são revogadas | `expire_defense`, `set_mode` | `modes_expire_without_renewal`, `modes_step_down_gradually` |
 | INV-22 | Nenhum conteúdo é aceito, guardado ou exibido sem conferir com o identificador referenciado pelo estado | `ContentInfo::check_chunk`, `ContentStore`, `fetch_content` | `content::tests`, `store_verifies_and_reloads`, `tampered_chunk_detected_by_client` |
 | INV-23 | Uma publicação nunca obtém chaves nem executa operação sem aprovação na interface do Navegador | `rz-browser` (`pedido`, `ui::handle`) | `browser_devnet` |
+| INV-26 | A representação de um ativo externo só aumenta por uma queima única, incluída na cadeia de maior trabalho da origem com as confirmações exigidas | `ChainState::check_burn`, `apply_bridge` | `burn_proof_mints_once_after_confirmations`, `reorganization_follows_most_work` |
+| INV-27 | Valores em troca atômica só vão ao destinatário com a pré-imagem antes do prazo, ou ao remetente depois dele, e contam na oferta | `HtlcClaim`, `HtlcRefund`, `check_supply` | `htlc_claim_and_refund_with_zero_and_external_asset` |
 | INV-24 | Um módulo só lê e escreve o armazenamento da Comunidade chamada; nenhuma chamada altera saldos, oferta, validadores, parâmetros ou governança | `runtime.rs` (funções do host), `apply_runtime` | `test_73_malicious_community_module_isolated` |
 | INV-25 | Uma chamada que falha não grava nada e não invalida o bloco; a soma do combustível de um bloco respeita `max_block_fuel` | `apply_runtime`, `block::execute`, `Mempool::select` | `runtime_failed_call_pays_fee_and_writes_nothing`, `runtime_fees_and_fuel_limits` |
 | INV-21 | Credenciais só autorizam escopos defensivos da lista fechada, dentro da validade, sem revogação e com incidente em vigor; não existe operação ofensiva | `Credential::allows`, `Scope` | AT-CYBER-003..006 |
@@ -136,6 +139,7 @@ Harnesses para `cargo-fuzz`/libFuzzer podem ser construídos sobre as mesmas fun
 | `x25519-dalek` | 2.0.1 | troca de chaves do canal |
 | `chacha20poly1305` | 0.10.1 | cifragem autenticada do canal |
 | `rand_core` | 0.6.4 | `OsRng` |
+| `sha2` | 0.10 | SHA-256 das redes de origem (cabeçalhos, Merkle, HTLC) |
 | `wasmi` | 2.0.0 (fixada com `=`) | interpretador do Exonet Runtime; faz parte do protocolo (ADR-0018) |
 
 Versões exatas em `Cargo.lock` (99 pacotes no total; `wat` só em testes). O código do projeto proíbe `unsafe` (`unsafe_code = "forbid"`). Builds de release mantêm `overflow-checks`.

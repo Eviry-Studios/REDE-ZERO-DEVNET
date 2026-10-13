@@ -40,7 +40,7 @@ Parâmetro `market_fee_bps` (constitucional, limite de 10%), cobrado do ZERO rec
 ### 4. Ativos externos
 
 * Identificador `AssetId = H("rede-zero/asset/v1", network ‖ asset_ref)`. ZERO usa o identificador nulo, e nenhum ativo externo pode tê-lo. Não se registra ativo externo chamado ZERO nem com origem na Rede Zero (AT-POOL-004).
-* **Não há ponte nesta versão.** Uma ponte verificável, com prova da rede de origem e sem custodiante único (`SPEC §42`, THR-POOL-002), é pesquisa de alto risco (`ARCHITECTURE §30`) e fica **A DEFINIR** numa ADR própria.
+* A ponte verificável, com prova da rede de origem e sem custodiante (`SPEC §42`, THR-POOL-002), foi definida depois na [ADR-0019](0019-ponte-sem-custodiante.md): prova de queima por cliente leve e trocas atômicas.
 * Para testar o mercado, a DEVNET aceita **ativos de teste** declarados no Genesis (`Verification::DevnetGenesis`). Eles não representam nada na rede de origem e são **rejeitados** em Genesis de TESTNET, STAGING e MAINNET.
 
 ### 5. Privacidade

@@ -1,6 +1,6 @@
 # spec/BLOCKS.md — Blocos e Genesis
 
-**Versão:** 0.3.0 (DEVNET)
+**Versão:** 0.4.0 (DEVNET)
 **Relacionamento:** `SPECIFICATIONS.md §15–§18, §66–§67`, ADR-0012, THR-CON-001, THR-CON-005, THR-CON-006
 **Implementação de referência:** `crates/rz-core/src/block.rs`, `crates/rz-core/src/genesis.rs`
 
@@ -83,6 +83,7 @@ Genesis {
   allocations      : list<{ address: fixed[32], amount: u64 }>  // ordenada, sem repetição, amount > 0
   governance       : GovernanceParams  // spec/GOVERNANCE.md
   assets           : list<GenesisAsset> // ≤ 64; somente DEVNET (spec/MARKET.md §1)
+  bridges          : list<ChainConfig>  // ≤ 16; só DEVNET e TESTNET (spec/BRIDGE.md §2)
 }
 
 GenesisAsset {
@@ -97,7 +98,7 @@ oferta_total = Σ allocations.amount + Σ validators.stake
 genesis_hash = H(GENESIS, enc(Genesis))
 ```
 
-Um Genesis com `assets` não vazio só é válido em DEVNET: os ativos são de **teste** e não representam nada na rede de origem (ADR-0014). Os `stake` do Genesis tornam-se os vínculos iniciais e formam o conjunto de validadores da altura 1.
+Um Genesis com `assets` não vazio só é válido em DEVNET: os ativos são de **teste** e não representam nada na rede de origem (ADR-0014). Redes em `bridges` registram seus ativos com oferta zero; a representação só é cunhada por prova de queima (ADR-0019). Os `stake` do Genesis tornam-se os vínculos iniciais e formam o conjunto de validadores da altura 1.
 
 Um Node só aceita dados cujo `network_id` e `genesis_hash` coincidam com os seus (`SPEC §66`, `AT-GEN-002`).
 

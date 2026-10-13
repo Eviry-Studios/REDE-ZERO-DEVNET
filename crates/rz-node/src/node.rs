@@ -1440,7 +1440,9 @@ impl Shared {
             | Message::Defense { .. }
             | Message::QueryResult { .. }
             | Message::Receipt { .. }
-            | Message::ModuleInfo { .. } => Flow::Continue,
+            | Message::ModuleInfo { .. }
+            | Message::Bridge { .. }
+            | Message::Htlc { .. } => Flow::Continue,
             Message::GetManifest(h) => self.handle_get_manifest(ctx, h),
             Message::Manifest { hash, bytes } => self.handle_manifest(ctx, hash, bytes),
             Message::GetContent(id) => self.handle_get_content(ctx, id),
@@ -1551,6 +1553,37 @@ impl Shared {
                             .receipt(&tx)
                             .cloned()
                             .map(Box::new),
+                    }
+                };
+                self.send_to(ctx.id, msg);
+                Flow::Continue
+            }
+            Message::GetBridge(chain) => {
+                let msg = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let st = state.bridge().chains.get(&chain);
+                    Message::Bridge {
+                        height: c.chain.height(),
+                        best: st.map(|s| (s.best, s.best_height())),
+                        confirmations: st.map_or(0, |s| s.config.confirmations),
+                        asset: st.map_or(rz_core::market::AssetId::ZERO, |s| s.config.asset()),
+                        claimed: st.map_or(0, |s| s.claimed.len() as u64),
+                        chain,
+                    }
+                };
+                self.send_to(ctx.id, msg);
+                Flow::Continue
+            }
+            Message::GetHtlc(id) => {
+                let msg = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let b = state.bridge();
+                    Message::Htlc {
+                        height: c.chain.height(),
+                        htlc: b.htlcs.get(&id).cloned().map(Box::new),
+                        settled: b.settled(&id).cloned(),
                     }
                 };
                 self.send_to(ctx.id, msg);

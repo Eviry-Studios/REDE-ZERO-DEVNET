@@ -733,6 +733,58 @@ pub fn call_module(
     Err(format!("chamada {id} enviada, mas sem recibo até agora"))
 }
 
+// ------------------------------------------------- Ponte e trocas atômicas
+
+/// Estado do cliente leve de uma rede de origem.
+pub struct BridgeView {
+    pub height: u64,
+    pub best: Option<(Hash32, u64)>,
+    pub confirmations: u32,
+    pub asset: rz_core::market::AssetId,
+    pub claimed: u64,
+}
+
+pub fn bridge_status(client: &mut Client, chain: &str) -> Result<BridgeView, String> {
+    client
+        .request(&Message::GetBridge(chain.into()), |m| match m {
+            Message::Bridge {
+                height,
+                chain: c,
+                best,
+                confirmations,
+                asset,
+                claimed,
+            } if c == chain => Some(BridgeView {
+                height,
+                best,
+                confirmations,
+                asset,
+                claimed,
+            }),
+            _ => None,
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// Contrato de troca atômica em aberto e, se já liquidado, a liquidação.
+pub fn htlc(
+    client: &mut Client,
+    id: Hash32,
+) -> Result<
+    (
+        Option<rz_core::bridge::Htlc>,
+        Option<rz_core::bridge::Settled>,
+    ),
+    String,
+> {
+    client
+        .request(&Message::GetHtlc(id), |m| match m {
+            Message::Htlc { htlc, settled, .. } => Some((htlc.map(|h| *h), settled)),
+            _ => None,
+        })
+        .map_err(|e| e.to_string())
+}
+
 // ------------------------------------------------------------------ Defesa
 
 /// Estado de defesa como visto por um Node.

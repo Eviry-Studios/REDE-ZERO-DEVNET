@@ -7,6 +7,8 @@
 pub mod amount;
 pub mod block;
 pub mod bridge;
+#[cfg(test)]
+mod bridge_tests;
 pub mod community;
 pub mod consensus;
 pub mod content;

@@ -52,6 +52,10 @@ Todo hash protocolar **deve** usar um contexto da seção 3. O hash "puro" (sem 
 | `EXONET_LOGIN` | `rede-zero/exonet-login/v1` | Assinaturas de autenticação em publicações |
 | `MODULE_ID` | `rede-zero/module/v1` | Identificador de um módulo do Exonet Runtime |
 | `RUNTIME_ROOT` | `rede-zero/runtime-root/v1` | Raiz da parte do Exonet Runtime do estado |
+| `BRIDGE_TAG` | `rede-zero/bridge-tag/v1` | Etiqueta da rede Zero de destino gravada na saída de queima |
+| `BRIDGE_ROOT` | `rede-zero/bridge-root/v1` | Raiz da parte da ponte do estado |
+
+A ponte usa também **SHA-256** (sem contexto), porque é a função das redes de origem: hash de cabeçalhos e transações de origem (`SHA-256(SHA-256(x))`), árvores de Merkle delas e o bloqueio por hash das trocas atômicas. Nenhum valor próprio da Rede Zero é calculado com SHA-256.
 
 Os contextos de consenso estão em `crates/rz-core/src/consensus.rs` (`spec/CONSENSUS.md`). Privacidade, governança e canal P2P usam contextos próprios, listados em `spec/PRIVACY.md`, `spec/GOVERNANCE.md` e `spec/P2P.md`.
 

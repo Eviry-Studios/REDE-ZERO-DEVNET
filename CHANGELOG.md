@@ -61,6 +61,17 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Ponte sem custodiante e trocas atômicas
+
+* ADR-0019 e `spec/BRIDGE.md`:
+  * **cliente leve** de redes de prova de trabalho na cadeia: dificuldade exigida, reajuste do Bitcoin (vetores do Bitcoin Core), mediana de tempo, maior trabalho acumulado, reorganização e poda;
+  * **prova de queima**: transação sem testemunhas com saída `OP_RETURN` (`RZ1` + etiqueta da rede + destinatário), prova de Merkle, confirmações mínimas, cunhagem única; extração do caminho a partir de `merkleblock`;
+  * **trocas atômicas (HTLC)** com SHA-256, pré-imagem de 32 bytes e prazo em altura, para ZERO e ativos externos;
+  * redes de origem no Genesis (`bridges`), só em DEVNET e TESTNET; ativo com `Verification::LightClientBurn` e oferta inicial zero.
+* Operações `0x70–0x74`; mensagens `GET_BRIDGE`/`BRIDGE`, `GET_HTLC`/`HTLC` (`P2P_VERSION = 9`); comandos da Wallet `bridge`, `bridge-burn-script`, `bridge-headers`, `bridge-deposit`, `htlc-secret`, `htlc-lock`, `htlc-claim`, `htlc-refund`, `htlc`.
+* Testes de estado, de extração de `merkleblock` e ponta a ponta com Nodes reais.
+* `THREAT_MODEL.md` v0.9.0 (THR-BRG-001..004), `AUDIT.md` v0.7.0.
+
 ### Adicionado — Exonet Runtime
 
 * ADR-0018 e `spec/RUNTIME.md`:
@@ -133,6 +144,7 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 
 ### Protocolo
 
+* **Incompatível** com DEVNETs anteriores à ponte: Genesis com `bridges`, raiz do estado com `bridge_root`, `P2P_VERSION = 9`.
 * **Incompatível** com DEVNETs anteriores ao Exonet Runtime: parâmetros do Runtime no estado, raiz do estado com `runtime_root`, `P2P_VERSION = 8`.
 * **Incompatível** com Nodes anteriores ao Navegador Zero: novas mensagens de conteúdo, `P2P_VERSION = 7` (o estado não muda).
 * **Incompatível** com DEVNETs anteriores às Comunidades e à Defesa: parâmetros de Comunidades e defesa no estado, raiz do estado com `community_root` e `defense_root`, `P2P_VERSION = 6`.

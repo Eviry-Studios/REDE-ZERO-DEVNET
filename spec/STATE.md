@@ -1,6 +1,6 @@
 # spec/STATE.md — Estado e ZERO
 
-**Versão:** 0.6.0 (DEVNET)
+**Versão:** 0.7.0 (DEVNET)
 **Relacionamento:** `SPECIFICATIONS.md §12–§14, §33–§37`, ADR-0005, THR-TX-002, THR-TX-003, THR-TX-005
 **Implementação de referência:** `crates/rz-core/src/state.rs`, `crates/rz-core/src/amount.rs`
 
@@ -40,7 +40,8 @@ state_root = H(STATE_ROOT,
                market_root ‖                // spec/MARKET.md §8
                community_root ‖             // spec/COMMUNITIES.md §9
                defense_root ‖               // spec/DEFENSE.md §7
-               runtime_root)                // spec/RUNTIME.md §2
+               runtime_root ‖               // spec/RUNTIME.md §2
+               bridge_root)                 // spec/BRIDGE.md §6
 ```
 
 ## 4. Estado inicial

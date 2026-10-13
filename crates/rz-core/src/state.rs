@@ -1481,6 +1481,9 @@ impl State {
                 if p.height >= h.timeout {
                     return Err(TxError::Bridge("prazo vencido: só a devolução é possível"));
                 }
+                if preimage.len() != bridge::PREIMAGE_LEN {
+                    return Err(TxError::Bridge("pré-imagem deve ter 32 bytes"));
+                }
                 if bridge::sha256(preimage) != h.hashlock.0 {
                     return Err(TxError::Bridge("pré-imagem não confere"));
                 }
