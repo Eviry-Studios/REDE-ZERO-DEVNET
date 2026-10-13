@@ -38,6 +38,7 @@ Uma decisão com escopo `DEVNET` **não** vale automaticamente para outros ambie
 | [0019](0019-ponte-sem-custodiante.md) | Ponte sem custodiante: prova de queima por cliente leve e trocas atômicas | DEVNET → TESTNET | Aceita (auditoria pendente) |
 | [0020](0020-reputacao.md) | Reputação como pontos de contribuição verificáveis | DEVNET → TESTNET | Aceita |
 | [0021](0021-atualizacoes-verificaveis.md) | Atualizações verificáveis adotadas pela governança | DEVNET → TESTNET | Aceita |
+| [0022](0022-suite-de-conformidade.md) | Suíte de conformidade em vetores de texto | DEVNET → TESTNET | Aceita |
 
 ## Modelo
 

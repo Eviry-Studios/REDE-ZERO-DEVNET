@@ -268,6 +268,7 @@ Seguindo a ordem recomendada em `SPECIFICATIONS.md §73`:
 | Exonet Runtime (WebAssembly determinístico, isolado por Comunidade, combustível pago) | ✅ DEVNET — auditoria pendente ([ADR-0018](docs/adr/0018-exonet-runtime.md)) | AT-COM-003, teste de isolamento §73 |
 | Grande Mercado (leilão por bloco) e Pool permanente | ✅ DEVNET ([ADR-0014](docs/adr/0014-grande-mercado-e-pool.md)) | AT-MKT-001..004, AT-POOL-001..004, propriedades |
 | Reputação (pontos de contribuição verificáveis, com decaimento e registro de eventos) | ✅ DEVNET ([ADR-0020](docs/adr/0020-reputacao.md)) | testes de defesa e governança |
+| Suíte de conformidade independente (vetores em texto: cadeia completa com raiz do estado por bloco, codificação, Runtime, ponte, P2P) | ✅ DEVNET ([ADR-0022](docs/adr/0022-suite-de-conformidade.md)) | `zero-conformidade verificar` na CI |
 | Atualizações verificáveis (manifesto na cadeia, adoção só por proposta constitucional, verificação de artefatos e código) | ✅ DEVNET ([ADR-0021](docs/adr/0021-atualizacoes-verificaveis.md)) | AT-UPD-001..004; ponta a ponta com Nodes reais |
 | Ponte sem custodiante (prova de queima por cliente leve) e trocas atômicas | ✅ DEVNET — auditoria pendente ([ADR-0019](docs/adr/0019-ponte-sem-custodiante.md)) | testes de cliente leve, Merkle e HTLC; ponta a ponta com Nodes reais |
 | Defesa da Exonet (modos atestados com prazo, credenciais temporárias, isolamento, encerramento verificável) | ✅ DEVNET — auditoria pendente ([ADR-0016](docs/adr/0016-defesa-da-exonet.md)) | AT-DEF-001..003, AT-CYBER-001..006, AT-INC-001..003 |

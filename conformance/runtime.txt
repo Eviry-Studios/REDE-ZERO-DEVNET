@@ -1,0 +1,205 @@
+# Rede Zero — vetores de conformidade v1 — Exonet Runtime: validação e execução determinística
+# Gerado por `zero-conformidade gerar`; formato em spec/CONFORMANCE.md.
+
+[caso modulo-de-teste]
+operacao = validar
+modulo = 0061736d0100000001200660047f7f7f7f017f60047f7f7f7f0060027f7f0060017f006000017f600000027307047a65726f0b73746f726167655f6765740000047a65726f0b73746f726167655f7365740001047a65726f066f75747075740002047a65726f0561626f72740002047a65726f0663616c6c65720003047a65726f09696e7075745f6c656e0004047a65726f0a696e7075745f726561640003030a09050505050505050505050301000107650a066d656d6f727902000b696e6372656d656e7461720007036c6572000815696e6372656d656e7461725f655f61626f727461720009056769726172000a047175656d000b0365636f000c06656e63686572000d04666f7261000e0763726573636572000f0ac60109360041004101410841081000417f460440410842003703000b4108410829030042017c370300410041014108410810014108410810020b1300410041014108410810001a4108410810020b1200410041014110410810014110411310030b070003400c000b0b0e0041c000100441c000412010020b0e004180011006418001100510020b2b01017f034041e80720003b010041e80741024180104180201001200041016a2100200041ac02490d000b0b0b0041faff0341e40010020b080041e80740001a0b0b1f020041000b016e0041100b1366616c686f752064652070726f706f7369746f0048046e616d65012c070003676574010373657402036f7574030561626f7274040663616c6c65720504696c656e060569726561640206010d01000169030b020a0100016c0d0100016c
+id = 72551e5ca45122dc14cac3055d5417af160dfddc6119bc019d23f7745ec1388c
+resultado = ok
+
+[caso modulo-com-ponto-flutuante]
+operacao = validar
+modulo = 0061736d010000000105016000017d03020100070501016600000a09010700430000c03f0b
+id = bab8c81ac50ed782d0fb09411c17c810504db06fa34fed1ec86ce9ada6081f75
+resultado = rejeitado
+
+[caso modulo-com-importacao-desconhecida]
+operacao = validar
+modulo = 0061736d010000000105016000017e020f0103656e760772656c6f67696f0000
+id = 1433e32c71238ef0d52b34c77dc86d82cbc263bf4300dc729a3f35ba0596ea5a
+resultado = rejeitado
+
+[caso modulo-invalido]
+operacao = validar
+modulo = 0061736d02000000
+id = c939d39945dcb8578ac2859eed5c873cbfbb592b5cbe59f852804f8afe77ccfd
+resultado = rejeitado
+
+[caso incrementar-vazio]
+operacao = executar
+modulo = modulo-de-teste
+comunidade = 0101010101010101010101010101010101010101010101010101010101010101
+chamador = cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca
+altura = 7
+metodo = incrementar
+entrada = 
+combustivel = 500000
+cota = 4096
+resultado = ok
+combustivel_usado = 3493
+saida = 0100000000000000
+escrita = 6e:0100000000000000
+
+[caso incrementar-existente]
+operacao = executar
+modulo = modulo-de-teste
+comunidade = 0101010101010101010101010101010101010101010101010101010101010101
+chamador = cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca
+altura = 7
+metodo = incrementar
+entrada = 
+combustivel = 500000
+cota = 4096
+armazenamento = 6e:2900000000000000
+resultado = ok
+combustivel_usado = 3505
+saida = 2a00000000000000
+escrita = 6e:2a00000000000000
+
+[caso ler]
+operacao = executar
+modulo = modulo-de-teste
+comunidade = 0101010101010101010101010101010101010101010101010101010101010101
+chamador = cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca
+altura = 7
+metodo = ler
+entrada = 
+combustivel = 500000
+cota = 4096
+armazenamento = 6e:2900000000000000
+resultado = ok
+combustivel_usado = 1041
+saida = 2900000000000000
+
+[caso sem-combustivel]
+operacao = executar
+modulo = modulo-de-teste
+comunidade = 0101010101010101010101010101010101010101010101010101010101010101
+chamador = cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca
+altura = 7
+metodo = incrementar
+entrada = 
+combustivel = 10
+cota = 4096
+armazenamento = 6e:2900000000000000
+resultado = falha
+combustivel_usado = 10
+saida = 
+erro = "combustível esgotado"
+
+[caso metodo-inexistente]
+operacao = executar
+modulo = modulo-de-teste
+comunidade = 0101010101010101010101010101010101010101010101010101010101010101
+chamador = cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca
+altura = 7
+metodo = nao_existe
+entrada = 
+combustivel = 500000
+cota = 4096
+resultado = falha
+combustivel_usado = 0
+saida = 
+erro = "método inexistente: nao_existe"
+
+[caso laco-infinito]
+operacao = executar
+modulo = modulo-de-teste
+comunidade = 0101010101010101010101010101010101010101010101010101010101010101
+chamador = cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca
+altura = 7
+metodo = girar
+entrada = 
+combustivel = 70000
+cota = 4096
+resultado = falha
+combustivel_usado = 70000
+saida = 
+erro = "combustível esgotado"
+
+[caso abortar-descarta-escritas]
+operacao = executar
+modulo = modulo-de-teste
+comunidade = 0101010101010101010101010101010101010101010101010101010101010101
+chamador = cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca
+altura = 7
+metodo = incrementar_e_abortar
+entrada = 
+combustivel = 500000
+cota = 4096
+resultado = falha
+combustivel_usado = 2459
+saida = 
+erro = "abortado: falhou de proposito"
+
+[caso chamador]
+operacao = executar
+modulo = modulo-de-teste
+comunidade = 0101010101010101010101010101010101010101010101010101010101010101
+chamador = cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca
+altura = 7
+metodo = quem
+entrada = 
+combustivel = 500000
+cota = 4096
+resultado = ok
+combustivel_usado = 1070
+saida = cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca
+
+[caso eco]
+operacao = executar
+modulo = modulo-de-teste
+comunidade = 0101010101010101010101010101010101010101010101010101010101010101
+chamador = cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca
+altura = 7
+metodo = eco
+entrada = 656e7472616461206465207465737465
+combustivel = 500000
+cota = 4096
+resultado = ok
+combustivel_usado = 1070
+saida = 656e7472616461206465207465737465
+
+[caso cota-excedida]
+operacao = executar
+modulo = modulo-de-teste
+comunidade = 0101010101010101010101010101010101010101010101010101010101010101
+chamador = cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca
+altura = 7
+metodo = encher
+entrada = 
+combustivel = 5000000
+cota = 4096
+resultado = falha
+combustivel_usado = 206918
+saida = 
+erro = "cota de armazenamento da Comunidade excedida"
+
+[caso memoria-fora-dos-limites]
+operacao = executar
+modulo = modulo-de-teste
+comunidade = 0101010101010101010101010101010101010101010101010101010101010101
+chamador = cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca
+altura = 7
+metodo = fora
+entrada = 
+combustivel = 500000
+cota = 4096
+resultado = falha
+combustivel_usado = 4
+saida = 
+erro = "acesso fora da memória"
+
+[caso crescer-memoria]
+operacao = executar
+modulo = modulo-de-teste
+comunidade = 0101010101010101010101010101010101010101010101010101010101010101
+chamador = cacacacacacacacacacacacacacacacacacacacacacacacacacacacacacacaca
+altura = 7
+metodo = crescer
+entrada = 
+combustivel = 500000
+cota = 4096
+resultado = ok
+combustivel_usado = 3
+saida = 

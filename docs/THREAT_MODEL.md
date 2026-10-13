@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.12.0
-**Status:** Modelo de ameaças — fase de definição (0.12.0: atualizações verificáveis; 0.11.0: reputação; 0.10.0: retirada do Agente Zero; 0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
+**Versão:** 0.13.0
+**Status:** Modelo de ameaças — fase de definição (0.13.0: suíte de conformidade; 0.12.0: atualizações verificáveis; 0.11.0: reputação; 0.10.0: retirada do Agente Zero; 0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -429,7 +429,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 * estruturas ordenadas deterministicamente;
 * proibição de ponto flutuante e de fontes de aleatoriedade locais na transição de estado;
-* vetores de teste públicos e suíte de conformidade (`SPEC §69`);
+* vetores de teste públicos e suíte de conformidade (`SPEC §69`), publicada em `conformance/` e verificada pela CI: inclui uma cadeia que passa por todas as áreas do protocolo, com a raiz do estado após cada bloco (ADR-0022, `spec/CONFORMANCE.md`);
 * testes `AT-DET-*`.
 
 ### THR-TX-006 — Manipulação de taxas
@@ -957,7 +957,7 @@ Antes: Agente Zero (THR-AGT-001..003). O Agente Zero foi retirado do núcleo da 
 | THR-TX-001 | REQ-014..018 | SPEC §11, §21 | AT-DS-* |
 | THR-TX-002 | REQ-021, REQ-022 | SPEC §34, §35 | AT-MONEY-*, AT-ZERO-003 |
 | THR-TX-004 | REQ-016 | SPEC §7, §8 | AT-CAN-*, AT-TID-* |
-| THR-TX-005 | REQ-004, REQ-016 | SPEC §68 | AT-DET-* |
+| THR-TX-005 | REQ-004, REQ-016 | SPEC §68, §69, spec/CONFORMANCE.md | AT-DET-*, conformance/ (zero-conformidade verificar) |
 | THR-CON-001 | REQ-016 | SPEC §16 | AT-BLOCK-003/004 |
 | THR-CON-002 | REQ-005, REQ-015 | SPEC §19, §20, spec/CONSENSUS.md | AT-CON-*, rz-chain bft_tests |
 | THR-CON-007 | REQ-015 | SPEC §22, spec/CONSENSUS.md §1 | rz-chain partition_halts_then_recovers, randomized_adversarial_* |

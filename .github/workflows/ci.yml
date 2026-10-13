@@ -37,6 +37,8 @@ jobs:
         run: cargo test --workspace --locked
       - name: Vetores publicados
         run: cargo run --locked -p rz-crypto --example vectors
+      - name: Suíte de conformidade (SPEC §68–69)
+        run: cargo run --locked -p rz-conformance --bin zero-conformidade -- verificar conformance
 
   secrets:
     name: varredura de chaves no repositório

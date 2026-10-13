@@ -61,6 +61,13 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Suíte de conformidade
+
+* ADR-0022 e `spec/CONFORMANCE.md` (`SPEC §68–§69`): vetores em texto simples em `conformance/`, executáveis por qualquer implementação. Cobrem identidade e assinaturas, hashes, ZERO, codificação canônica, regras sem estado das transações, P2P, decaimento de pontos, Runtime, ponte e manifestos de versão.
+* O conjunto `cadeia.txt` traz um Genesis e 31 blocos com a raiz do estado após cada um. Passa por transferências, privacidade, governança, Comunidades, nomes, Runtime, Mercado e Pool, ponte e troca atômica, defesa e adoção de versão, e inclui blocos inválidos que precisam ser rejeitados pela regra indicada.
+* Crate `rz-conformance` com o verificador de referência e o gerador (`zero-conformidade verificar|gerar`); verificação na CI. O campo `tests` dos manifestos de versão é o hash de árvore de `conformance/`.
+* `THREAT_MODEL.md` v0.13.0, `AUDIT.md` v0.10.0.
+
 ### Adicionado — Atualizações verificáveis
 
 * ADR-0021 e `spec/RELEASES.md`: manifesto de versão (`SPEC §63`) com versões de software, protocolo e P2P, compatibilidade, versão anterior, hashes de árvore da especificação, do código e dos testes, e hashes dos artefatos. `release_id` é o hash do manifesto.

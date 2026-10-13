@@ -28,7 +28,7 @@ Release {
   previous:         option<fixed[32]>     versão adotada que esta sucede
   specification:    fixed[32]             árvore de spec/ e docs/
   implementation:   fixed[32]             árvore de crates/, Cargo.toml, Cargo.lock
-  tests:            fixed[32]             árvore da suíte de conformidade
+  tests:            fixed[32]             árvore de conformance/ (spec/CONFORMANCE.md)
   artifacts:        list<Artifact> (≤ 32), nomes em ordem estritamente crescente
   notes:            fixed[32]             hash das notas da versão (texto fora da cadeia)
 }

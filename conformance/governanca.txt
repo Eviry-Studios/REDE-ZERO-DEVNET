@@ -1,0 +1,58 @@
+# Rede Zero — vetores de conformidade v1 — Governança: decaimento de pontos
+# Gerado por `zero-conformidade gerar`; formato em spec/CONFORMANCE.md.
+
+[caso decaimento-0]
+operacao = decaimento
+valor = 1000000
+idade = 0
+meia_vida = 16
+resultado = 1000000
+
+[caso decaimento-1]
+operacao = decaimento
+valor = 1000000
+idade = 16
+meia_vida = 16
+resultado = 500000
+
+[caso decaimento-2]
+operacao = decaimento
+valor = 1000000
+idade = 8
+meia_vida = 16
+resultado = 707107
+
+[caso decaimento-3]
+operacao = decaimento
+valor = 1000000
+idade = 1
+meia_vida = 16
+resultado = 957603
+
+[caso decaimento-4]
+operacao = decaimento
+valor = 51000000
+idade = 25
+meia_vida = 16
+resultado = 17266764
+
+[caso decaimento-5]
+operacao = decaimento
+valor = 18446744073709551615
+idade = 3
+meia_vida = 7
+resultado = 14224376588957803798
+
+[caso decaimento-6]
+operacao = decaimento
+valor = 123456789
+idade = 1000
+meia_vida = 16
+resultado = 0
+
+[caso decaimento-7]
+operacao = decaimento
+valor = 5
+idade = 0
+meia_vida = 1
+resultado = 5

@@ -1,8 +1,8 @@
 # AUDIT.md — Preparação para auditoria independente
 
-**Versão:** 0.9.0
+**Versão:** 0.10.0
 **Estado:** pronto para auditoria da DEVNET; nenhuma auditoria externa foi realizada
-**Relacionamento:** `THREAT_MODEL.md §11` (aceitações temporárias), ADR-0009, ADR-0011, ADR-0012, ADR-0014..0016, ADR-0021, `SECURITY.md`
+**Relacionamento:** `THREAT_MODEL.md §11` (aceitações temporárias), ADR-0009, ADR-0011, ADR-0012, ADR-0014..0016, ADR-0021, ADR-0022, `SECURITY.md`
 
 ---
 
@@ -96,8 +96,8 @@ Cada invariante lista onde é aplicada e os testes que a exercitam. Uma violaç�
 | INV-20 | Nenhum modo acima de NORMAL dura além do prazo sem renovação atestada; ao sair do nível de incidente, as credenciais do incidente são revogadas | `expire_defense`, `set_mode` | `modes_expire_without_renewal`, `modes_step_down_gradually` |
 | INV-22 | Nenhum conteúdo é aceito, guardado ou exibido sem conferir com o identificador referenciado pelo estado | `ContentInfo::check_chunk`, `ContentStore`, `fetch_content` | `content::tests`, `store_verifies_and_reloads`, `tampered_chunk_detected_by_client` |
 | INV-23 | Uma publicação nunca obtém chaves nem executa operação sem aprovação na interface do Navegador | `rz-browser` (`pedido`, `ui::handle`) | `browser_devnet` |
-| INV-29 | Uma versão só passa a vigente por proposta constitucional ativada que a referencie, e a vigente só é substituída por uma sucessora direta com versão de protocolo igual ou maior | `check_release_proposal`, `end_block` | `release_published_then_adopted_by_constitutional_proposal`, `competing_release_fails_at_activation` |
 | INV-28 | A reputação de uma chave só aumenta por bloco produzido ou contribuição defensiva atestada após o encerramento, e só diminui por decaimento ou punição com evidência | `end_block`, `apply_defense`, `slash` | `contribution_record_distinct_from_participation`, `equivocation_report_slashes_contribution` |
+| INV-29 | Uma versão só passa a vigente por proposta constitucional ativada que a referencie, e a vigente só é substituída por uma sucessora direta com versão de protocolo igual ou maior | `check_release_proposal`, `end_block` | `release_published_then_adopted_by_constitutional_proposal`, `competing_release_fails_at_activation` |
 | INV-26 | A representação de um ativo externo só aumenta por uma queima única, incluída na cadeia de maior trabalho da origem com as confirmações exigidas | `ChainState::check_burn`, `apply_bridge` | `burn_proof_mints_once_after_confirmations`, `reorganization_follows_most_work` |
 | INV-27 | Valores em troca atômica só vão ao destinatário com a pré-imagem antes do prazo, ou ao remetente depois dele, e contam na oferta | `HtlcClaim`, `HtlcRefund`, `check_supply` | `htlc_claim_and_refund_with_zero_and_external_asset` |
 | INV-24 | Um módulo só lê e escreve o armazenamento da Comunidade chamada; nenhuma chamada altera saldos, oferta, validadores, parâmetros ou governança | `runtime.rs` (funções do host), `apply_runtime` | `test_73_malicious_community_module_isolated` |
@@ -112,6 +112,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo run --locked -p rz-crypto --example vectors     # vetores publicados
+cargo run --locked -p rz-conformance --bin zero-conformidade -- verificar conformance   # suíte de conformidade
 
 # Robustez por mutação com mais iterações e outras sementes
 RZ_FUZZ_ITERS=20000 RZ_FUZZ_SEED=7 cargo test --release -p rz-p2p --test robustness
