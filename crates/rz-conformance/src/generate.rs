@@ -433,6 +433,68 @@ fn transactions() -> R<Vec<Case>> {
         VECTOR_NETWORK,
     )?;
     add("publicacao-de-versao", &rel, VECTOR_NETWORK, 1, true);
+    let new = key(9).public_key();
+    let proof = key(9).sign(
+        rz_core::rotation::KEY_ROTATION,
+        VECTOR_NETWORK,
+        &rz_core::rotation::rotation_payload(&k.public_key().address(), &new),
+    );
+    let rot = signed(
+        &k,
+        6,
+        1,
+        TxKind::RotateKey {
+            new_key: new,
+            proof,
+        },
+        VECTOR_NETWORK,
+    )?;
+    add("rotacao-de-chave", &rot, VECTOR_NETWORK, 1, true);
+    let to_self = signed(
+        &k,
+        6,
+        1,
+        TxKind::RotateKey {
+            new_key: k.public_key(),
+            proof,
+        },
+        VECTOR_NETWORK,
+    )?;
+    add(
+        "rotacao-para-a-mesma-chave",
+        &to_self,
+        VECTOR_NETWORK,
+        1,
+        false,
+    );
+    for (name, delay, ok) in [
+        (
+            "recuperacao-prazo-minimo",
+            rz_core::rotation::MIN_RECOVERY_DELAY,
+            true,
+        ),
+        (
+            "recuperacao-prazo-curto",
+            rz_core::rotation::MIN_RECOVERY_DELAY - 1,
+            false,
+        ),
+        (
+            "recuperacao-prazo-longo",
+            rz_core::rotation::MAX_RECOVERY_DELAY + 1,
+            false,
+        ),
+    ] {
+        let t = signed(
+            &k,
+            7,
+            1,
+            TxKind::SetRecovery {
+                recovery: Some(rz_core::rotation::Recovery { key: new, delay }),
+            },
+            VECTOR_NETWORK,
+        )?;
+        add(name, &t, VECTOR_NETWORK, 1, ok);
+    }
     Ok(out)
 }
 
@@ -1110,6 +1172,53 @@ fn chain() -> R<Vec<Case>> {
     let aid = adopt.id().0;
     c.block("proposta-de-versao", vec![adopt])?;
     c.vote_through(aid)?;
+    // 9. Rotação de chave: a conta da Carol passa para uma chave nova; a
+    // antiga deixa de assinar. Recuperação registrada para a conta rica.
+    let carol_acc = carol().public_key().address();
+    let new_carol = key(70);
+    let proof = new_carol.sign(
+        rz_core::rotation::KEY_ROTATION,
+        &net,
+        &rz_core::rotation::rotation_payload(&carol_acc, &new_carol.public_key()),
+    );
+    let rot = c.tx(
+        &carol(),
+        TxKind::RotateKey {
+            new_key: new_carol.public_key(),
+            proof,
+        },
+    )?;
+    let rec = c.tx(
+        &rich(),
+        TxKind::SetRecovery {
+            recovery: Some(rz_core::rotation::Recovery {
+                key: key(71).public_key(),
+                delay: rz_core::rotation::MIN_RECOVERY_DELAY,
+            }),
+        },
+    )?;
+    c.block("rotacao-e-recuperacao", vec![rot, rec])?;
+    let old_key_tx = c.tx(
+        &carol(),
+        TxKind::Transfer {
+            to: poor().public_key().address(),
+            amount: 1,
+        },
+    )?;
+    let b = c.forge(vec![old_key_tx], Hash32::ZERO);
+    c.reject("chave-substituida", &b, "chave substituída")?;
+    let new_tx = signed(
+        &new_carol,
+        c.state.account(&carol_acc).nonce,
+        c.fee(),
+        TxKind::Transfer {
+            to: poor().public_key().address(),
+            amount: 1,
+        },
+        &net,
+    )?;
+    c.block("nova-chave-assina", vec![new_tx])?;
+
     // O cenário precisa ter exercitado cada parte; senão o vetor engana.
     let st = &c.state;
     let carol_addr = carol().public_key().address();

@@ -61,6 +61,17 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Chaves cifradas, rotação e recuperação
+
+* ADR-0023 e `spec/KEYS.md` (SPEC-ID-001, SPEC-ID-005, REQ-012).
+* Arquivo de chave cifrado com Argon2id e XChaCha20-Poly1305: cabeçalho autenticado e limites de derivação na leitura. Os arquivos em aberto continuam legíveis. Chaves novas da Wallet são cifradas por padrão (`--plaintext` só para a DEVNET). Novo comando `zero-wallet key-encrypt`. A senha vem de `--passphrase-file`, de `RZ_KEY_PASSPHRASE` ou do terminal, na Wallet, no Node (`--validator-key`) e no Navegador.
+* Rotação de chave de conta sem trocar de endereço (`RotateKey`, tag `0x15`), com prova de posse da nova chave. A chave antiga é recusada no mempool e nos blocos.
+* Recuperação por chave de recuperação com prazo contestável (`SetRecovery` `0x16`, `RecoverAccount` `0x17`).
+* Pontos de contribuição, vínculos de validador e notas privadas não migram (GOV-INV-5). Chaves delegadas não se vinculam. Transferências para o endereço de origem de uma chave delegada são recusadas.
+* Estado `keys_root`; consulta `GET_KEY`/`KEY` (`P2P_VERSION = 12`). Comandos `key-info`, `key-rotate`, `recovery-set` e `recover`. A Wallet resolve a conta da chave antes de assinar.
+* Vetores de conformidade regenerados: a raiz do estado ganhou a parte de chaves, e a cadeia passa a incluir rotação, recuperação e bloco com chave substituída.
+* `spec/CRYPTOGRAPHY.md` v0.2.0, `THREAT_MODEL.md` v0.14.0, `AUDIT.md` v0.11.0 (INV-30).
+
 ### Adicionado — Suíte de conformidade
 
 * ADR-0022 e `spec/CONFORMANCE.md` (`SPEC §68–§69`): vetores em texto simples em `conformance/`, executáveis por qualquer implementação. Cobrem identidade e assinaturas, hashes, ZERO, codificação canônica, regras sem estado das transações, P2P, decaimento de pontos, Runtime, ponte e manifestos de versão.

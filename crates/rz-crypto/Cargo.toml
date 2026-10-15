@@ -11,6 +11,9 @@ rz-codec.workspace = true
 ed25519-dalek.workspace = true
 blake3.workspace = true
 rand_core.workspace = true
+chacha20poly1305.workspace = true
+argon2.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true

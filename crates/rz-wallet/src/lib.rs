@@ -110,6 +110,47 @@ pub fn account(client: &mut Client, address: Address) -> Result<(u64, u64, u64),
         .map_err(|e| e.to_string())
 }
 
+/// Situação de uma chave na cadeia (ADR-0023).
+pub struct KeyView {
+    pub height: u64,
+    /// Conta pela qual a chave assina; `None` se foi substituída.
+    pub account: Option<Address>,
+    /// Chave que hoje assina pela conta, se a conta já girou.
+    pub current: Option<rz_crypto::PublicKey>,
+    pub recovery: Option<rz_core::rotation::Recovery>,
+    pub pending: Option<rz_core::rotation::PendingRecovery>,
+}
+
+pub fn key_info(client: &mut Client, key: rz_crypto::PublicKey) -> Result<KeyView, String> {
+    client
+        .request(&Message::GetKey(key), |m| match m {
+            Message::Key {
+                height,
+                key: k,
+                account,
+                current,
+                recovery,
+                pending,
+            } if k == key => Some(KeyView {
+                height,
+                account,
+                current,
+                recovery,
+                pending,
+            }),
+            _ => None,
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// Conta pela qual `keys` assina. Depois de uma rotação, o endereço da
+/// conta não é mais o hash da chave.
+pub fn account_address(client: &mut Client, keys: &Keys) -> Result<Address, String> {
+    key_info(client, keys.transparent.public_key())?
+        .account
+        .ok_or_else(|| "esta chave foi substituída e não assina mais pela conta".to_string())
+}
+
 pub fn fetch_outputs(client: &mut Client) -> Result<Vec<OutputData>, String> {
     let mut all = Vec::new();
     loop {
@@ -215,7 +256,8 @@ pub fn send_transparent(
     amount: u64,
     fee: u64,
 ) -> Result<TxId, String> {
-    let (_, nonce, _) = account(client, keys.address())?;
+    let addr = account_address(client, keys)?;
+    let (_, nonce, _) = account(client, addr)?;
     let tx = TxBody {
         version: rz_core::tx::TX_VERSION,
         sender: keys.transparent.public_key(),
@@ -237,7 +279,8 @@ pub fn shield(
     amount: u64,
     fee: u64,
 ) -> Result<TxId, String> {
-    let (_, nonce, _) = account(client, keys.address())?;
+    let addr = account_address(client, keys)?;
+    let (_, nonce, _) = account(client, addr)?;
     let tx = build_shield(
         &keys.transparent,
         &genesis.network_id,
@@ -964,7 +1007,8 @@ pub fn send_account(
     kind: TxKind,
     fee: u64,
 ) -> Result<TxId, String> {
-    let (_, nonce, _) = account(client, keys.address())?;
+    let addr = account_address(client, keys)?;
+    let (_, nonce, _) = account(client, addr)?;
     let tx = TxBody {
         version: rz_core::tx::TX_VERSION,
         sender: keys.transparent.public_key(),

@@ -1,8 +1,8 @@
 # AUDIT.md — Preparação para auditoria independente
 
-**Versão:** 0.10.0
+**Versão:** 0.11.0
 **Estado:** pronto para auditoria da DEVNET; nenhuma auditoria externa foi realizada
-**Relacionamento:** `THREAT_MODEL.md §11` (aceitações temporárias), ADR-0009, ADR-0011, ADR-0012, ADR-0014..0016, ADR-0021, ADR-0022, `SECURITY.md`
+**Relacionamento:** `THREAT_MODEL.md §11` (aceitações temporárias), ADR-0009, ADR-0011, ADR-0012, ADR-0014..0016, ADR-0021..0023, `SECURITY.md`
 
 ---
 
@@ -37,7 +37,8 @@ A revisão interna (§7) **não substitui** a auditoria externa.
 | 11 | Exonet Runtime | `crates/rz-core/src/runtime.rs`, partes em `state.rs`, `block.rs` | ~1 300 | configuração do `wasmi` (determinismo, limites), funções do host (limites de memória, cota, combustível), validação de importações, falhas sem escrita, combustível por bloco, recibos |
 | 12 | Navegador Zero e conteúdo | `crates/rz-browser`, `crates/rz-core/src/content.rs`, `crates/rz-node/src/content.rs` | ~2 300 | verificação por pedaço, aceitação só do que o estado referencia, limites de download, roteamento por host (DNS rebinding), cabeçalhos de isolamento, aprovação de pedidos (origem e token), identidade por site |
 | 13 | Atualizações verificáveis | `crates/rz-core/src/release.rs`, partes em `state.rs`, `release-*` em `rz-wallet` | ~700 | regras de adoção (categoria, sucessão, sem regressão), falha na ativação de versões concorrentes, expiração do registro, hash de árvore (caminhos, arquivos ocultos, links) |
-| 14 | Wallet | `crates/rz-wallet` | ~1 200 | seleção de notas, recusa de conexão direta, manuseio de chaves, unidades e preços do mercado |
+| 14 | Chaves | `crates/rz-crypto/src/keyfile.rs`, `crates/rz-core/src/rotation.rs`, partes em `state.rs` e `rz-chain/src/mempool.rs` | ~700 | formato cifrado (AAD, limites do Argon2id, apagamento), resolução chave → conta em todos os caminhos (mempool, blocos), regras da nova chave, recuperação agendada e cancelamento |
+| 15 | Wallet | `crates/rz-wallet` | ~1 200 | seleção de notas, recusa de conexão direta, manuseio de chaves, unidades e preços do mercado |
 
 ¹ Aproximado, incluindo testes internos aos arquivos.
 
@@ -98,6 +99,7 @@ Cada invariante lista onde é aplicada e os testes que a exercitam. Uma violaç�
 | INV-23 | Uma publicação nunca obtém chaves nem executa operação sem aprovação na interface do Navegador | `rz-browser` (`pedido`, `ui::handle`) | `browser_devnet` |
 | INV-28 | A reputação de uma chave só aumenta por bloco produzido ou contribuição defensiva atestada após o encerramento, e só diminui por decaimento ou punição com evidência | `end_block`, `apply_defense`, `slash` | `contribution_record_distinct_from_participation`, `equivocation_report_slashes_contribution` |
 | INV-29 | Uma versão só passa a vigente por proposta constitucional ativada que a referencie, e a vigente só é substituída por uma sucessora direta com versão de protocolo igual ou maior | `check_release_proposal`, `end_block` | `release_published_then_adopted_by_constitutional_proposal`, `competing_release_fails_at_activation` |
+| INV-30 | Uma transação de conta só é aceita se assinada pela chave hoje autorizada da conta; uma troca de chave exige a prova de posse da nova chave (ou recuperação registrada pela dona, após o prazo) e nunca move pontos de contribuição nem vínculos | `account_of`, `check_new_key`, `apply_recoveries` | `key_rotation_keeps_account_and_disables_old_key`, `recovery_after_delay_and_cancellation`, `bonded_key_cannot_rotate` |
 | INV-26 | A representação de um ativo externo só aumenta por uma queima única, incluída na cadeia de maior trabalho da origem com as confirmações exigidas | `ChainState::check_burn`, `apply_bridge` | `burn_proof_mints_once_after_confirmations`, `reorganization_follows_most_work` |
 | INV-27 | Valores em troca atômica só vão ao destinatário com a pré-imagem antes do prazo, ou ao remetente depois dele, e contam na oferta | `HtlcClaim`, `HtlcRefund`, `check_supply` | `htlc_claim_and_refund_with_zero_and_external_asset` |
 | INV-24 | Um módulo só lê e escreve o armazenamento da Comunidade chamada; nenhuma chamada altera saldos, oferta, validadores, parâmetros ou governança | `runtime.rs` (funções do host), `apply_runtime` | `test_73_malicious_community_module_isolated` |
@@ -141,12 +143,14 @@ Harnesses para `cargo-fuzz`/libFuzzer podem ser construídos sobre as mesmas fun
 | `bulletproofs` | 5.0.0 | provas de faixa de 64 bits |
 | `merlin` | 3.0.0 | transcrições das provas |
 | `x25519-dalek` | 2.0.1 | troca de chaves do canal |
-| `chacha20poly1305` | 0.10.1 | cifragem autenticada do canal |
+| `chacha20poly1305` | 0.10.1 | cifragem autenticada do canal e dos arquivos de chave (XChaCha20) |
+| `argon2` | 0.5.3 | derivação da chave do arquivo a partir da senha (Argon2id) |
+| `zeroize` | 1 | apagamento de sementes e senhas da memória |
 | `rand_core` | 0.6.4 | `OsRng` |
 | `sha2` | 0.10 | SHA-256 das redes de origem (cabeçalhos, Merkle, HTLC) |
 | `wasmi` | 2.0.0 (fixada com `=`) | interpretador do Exonet Runtime; faz parte do protocolo (ADR-0018) |
 
-Versões exatas em `Cargo.lock` (99 pacotes no total; `wat` só em testes). O código do projeto proíbe `unsafe` (`unsafe_code = "forbid"`). Builds de release mantêm `overflow-checks`.
+Versões exatas em `Cargo.lock` (103 pacotes no total; `wat` só em testes e no gerador de conformidade). O código do projeto proíbe `unsafe` (`unsafe_code = "forbid"`). Builds de release mantêm `overflow-checks`.
 
 ## 7. Revisão interna de segurança
 

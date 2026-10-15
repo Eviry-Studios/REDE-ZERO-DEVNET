@@ -200,7 +200,7 @@ fn sample_release() -> rz_core::release::Release {
     rz_core::release::Release {
         version: "0.2.0-rc.1".into(),
         protocol_version: 2,
-        p2p_version: 11,
+        p2p_version: 12,
         compatibility: rz_core::release::Compatibility::PartiallyCompatible,
         previous: Some(Hash32([7; 32])),
         specification: Hash32([1; 32]),
@@ -877,6 +877,30 @@ fn corpus() -> Corpus {
                     release: sample_release(),
                 },
             ),
+            account_tx(
+                n,
+                TxKind::RotateKey {
+                    new_key: rich().public_key(),
+                    proof: rich().sign(rz_core::rotation::KEY_ROTATION, "x", b"y"),
+                },
+            ),
+            account_tx(
+                n,
+                TxKind::SetRecovery {
+                    recovery: Some(rz_core::rotation::Recovery {
+                        key: rich().public_key(),
+                        delay: 100,
+                    }),
+                },
+            ),
+            account_tx(
+                n,
+                TxKind::RecoverAccount {
+                    account: rich().public_key().address(),
+                    new_key: validator().public_key(),
+                    proof: rich().sign(rz_core::rotation::KEY_ROTATION, "x", b"y"),
+                },
+            ),
         ])
         .collect();
     messages.extend([
@@ -923,6 +947,21 @@ fn corpus() -> Corpus {
             ],
         },
         Message::GetReleases,
+        Message::GetKey(rich().public_key()),
+        Message::Key {
+            height: 4,
+            key: rich().public_key(),
+            account: None,
+            current: Some(validator().public_key()),
+            recovery: Some(rz_core::rotation::Recovery {
+                key: validator().public_key(),
+                delay: 10,
+            }),
+            pending: Some(rz_core::rotation::PendingRecovery {
+                new_key: validator().public_key(),
+                at: 30,
+            }),
+        },
         Message::Releases {
             height: 9,
             current: Some(sample_release().id()),

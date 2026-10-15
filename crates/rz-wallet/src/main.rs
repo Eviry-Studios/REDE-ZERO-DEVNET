@@ -29,7 +29,19 @@ const USAGE: &str = "\
 zero-wallet — Wallet da DEVNET da Rede Zero
 
 USO:
-  zero-wallet new     --key FILE
+  zero-wallet new     --key FILE [--plaintext]       cifrada com senha, salvo --plaintext (só DEVNET)
+  zero-wallet key-encrypt --key FILE                 cifra um arquivo de chave em aberto
+Rotação e recuperação (ADR-0023) — o endereço da conta não muda:
+  zero-wallet key-info --genesis FILE --node ADDR (--key FILE | --public-key HEX)
+  zero-wallet key-rotate --genesis FILE --node ADDR --key ATUAL --new-key NOVA
+                      [--new-passphrase-file ARQUIVO]
+  zero-wallet recovery-set --genesis FILE --node ADDR --key FILE
+                      (--recovery-public-key HEX --delay-blocks N | --remove)
+                      também cancela uma recuperação agendada
+  zero-wallet recover --genesis FILE --node ADDR --key RECUPERAÇÃO --account HEX --new-key NOVA
+                      a troca só vale depois do prazo; até lá a chave atual pode cancelar
+  Pontos de contribuição e vínculos de validador ficam com a chave antiga (não migram).
+  Notas privadas pertencem à chave: envie-as ao endereço zs… da nova chave.
   zero-wallet address --key FILE
   zero-wallet balance --genesis FILE --node ADDR (--key FILE | --address HEX)
   zero-wallet shield  --genesis FILE --node ADDR --key FILE --amount ZERO [--to zs…] [--fee ZERO]
@@ -161,6 +173,8 @@ Endereços:
 send para zs… gasta saldo privado. send para HEX gasta saldo transparente.
 shield move saldo transparente para privado; unshield faz o inverso.
 
+Chaves (REQ-012): arquivos cifrados pedem a senha por --passphrase-file ARQUIVO,
+pela variável RZ_KEY_PASSPHRASE ou pela entrada padrão (visível na tela).
 Rede (ADR-0011) — válido para todos os comandos que usam --node:
   --node ADDR       IP:porta ou nome.onion:porta
   --proxy ADDR      proxy SOCKS5 (Tor: 127.0.0.1:9050); o node não vê seu IP
@@ -175,7 +189,7 @@ AVISO: DEVNET — o ZERO desta rede não possui valor econômico.
 struct Args(HashMap<String, String>);
 
 /// Opções sem valor.
-const SWITCHES: &[&str] = &["direct", "permanente"];
+const SWITCHES: &[&str] = &["direct", "permanente", "plaintext", "remove"];
 
 impl Args {
     fn parse(raw: &[String]) -> Result<Self, String> {
@@ -219,6 +233,11 @@ fn main() -> ExitCode {
     };
     let result = Args::parse(rest).and_then(|args| match cmd.as_str() {
         "new" => new(&args),
+        "key-encrypt" => cmd_key_encrypt(&args),
+        "key-info" => cmd_key_info(&args),
+        "key-rotate" => cmd_key_rotate(&args),
+        "recovery-set" => cmd_recovery_set(&args),
+        "recover" => cmd_recover(&args),
         "address" => address(&args),
         "balance" => balance(&args),
         "shield" => cmd_shield(&args),
@@ -291,9 +310,13 @@ fn main() -> ExitCode {
     }
 }
 
+fn passphrase(args: &Args) -> std::io::Result<String> {
+    keyfile::passphrase(args.get("passphrase-file").map(Path::new))
+}
+
 fn load_keys(args: &Args) -> Result<Keys, String> {
     let path = args.req("key")?;
-    keyfile::load(Path::new(path))
+    keyfile::load_with(Path::new(path), || passphrase(args))
         .map(Keys::from_secret)
         .map_err(|e| format!("{path}: {e}"))
 }
@@ -339,11 +362,157 @@ fn fee(args: &Args, genesis: &Genesis) -> Result<u64, String> {
 fn new(args: &Args) -> Result<(), String> {
     let path = args.req("key")?;
     let sk = SecretKey::generate();
-    keyfile::save(Path::new(path), &sk).map_err(|e| format!("{path}: {e}"))?;
+    if args.get("plaintext").is_some() {
+        keyfile::save(Path::new(path), &sk).map_err(|e| format!("{path}: {e}"))?;
+        println!("AVISO: chave gravada SEM cifragem (--plaintext); use só na DEVNET");
+    } else {
+        let pass = passphrase(args).map_err(|e| e.to_string())?;
+        keyfile::save_encrypted(Path::new(path), &sk, &pass).map_err(|e| format!("{path}: {e}"))?;
+        println!("chave cifrada com a senha (Argon2id + XChaCha20-Poly1305)");
+    }
     let keys = Keys::from_secret(sk);
     println!("chave criada em {path} (não compartilhe nem versione este arquivo)");
     println!("endereço privado:      {}", keys.shielded_address());
     println!("endereço transparente: {}", keys.address());
+    Ok(())
+}
+
+fn cmd_key_encrypt(args: &Args) -> Result<(), String> {
+    let path = args.req("key")?;
+    let pass = passphrase(args).map_err(|e| e.to_string())?;
+    keyfile::encrypt_in_place(Path::new(path), &pass).map_err(|e| format!("{path}: {e}"))?;
+    println!("{path} agora está cifrado; o conteúdo em aberto foi sobrescrito");
+    println!("cópias antigas (backups) continuam em aberto: apague-as também");
+    Ok(())
+}
+
+fn load_new_key(args: &Args) -> Result<SecretKey, String> {
+    let path = args.req("new-key")?;
+    keyfile::load_with(Path::new(path), || {
+        keyfile::passphrase(
+            args.get("new-passphrase-file")
+                .or(args.get("passphrase-file"))
+                .map(Path::new),
+        )
+    })
+    .map_err(|e| format!("{path}: {e}"))
+}
+
+fn rotation_proof(genesis: &Genesis, account: &Address, new: &SecretKey) -> rz_crypto::Signature {
+    new.sign(
+        rz_core::rotation::KEY_ROTATION,
+        &genesis.network_id,
+        &rz_core::rotation::rotation_payload(account, &new.public_key()),
+    )
+}
+
+fn cmd_key_info(args: &Args) -> Result<(), String> {
+    let key = match args.get("public-key") {
+        Some(h) => rz_crypto::PublicKey::from_hex(h).map_err(|_| "--public-key: chave inválida")?,
+        None => load_keys(args)?.transparent.public_key(),
+    };
+    let (mut client, _) = open(args)?;
+    let v = rz_wallet::key_info(&mut client, key)?;
+    println!("chave:        {key}");
+    match v.account {
+        Some(a) => println!("assina pela conta {a}"),
+        None => println!("SUBSTITUÍDA: não assina mais por nenhuma conta"),
+    }
+    if let Some(c) = v.current {
+        println!("chave atual da conta: {c}");
+    }
+    match v.recovery {
+        Some(r) => println!("recuperação: {} (prazo de {} blocos)", r.key, r.delay),
+        None => println!("recuperação: nenhuma"),
+    }
+    if let Some(p) = v.pending {
+        println!(
+            "ATENÇÃO: recuperação agendada para {} na altura {} (altura atual {}); cancele com recovery-set se não foi você",
+            p.new_key, p.at, v.height
+        );
+    }
+    Ok(())
+}
+
+fn cmd_key_rotate(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let new = load_new_key(args)?;
+    let (mut client, genesis) = open(args)?;
+    let account = rz_wallet::account_address(&mut client, &keys)?;
+    let fee = fee(args, &genesis)?;
+    let proof = rotation_proof(&genesis, &account, &new);
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::RotateKey {
+            new_key: new.public_key(),
+            proof,
+        },
+        fee,
+    )?;
+    println!(
+        "rotação {id} enviada: a conta {account} passa a ser da chave {}",
+        new.public_key()
+    );
+    println!("a chave antiga deixa de assinar assim que o bloco for finalizado");
+    Ok(())
+}
+
+fn cmd_recovery_set(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let recovery = if args.get("remove").is_some() {
+        None
+    } else {
+        Some(rz_core::rotation::Recovery {
+            key: rz_crypto::PublicKey::from_hex(args.req("recovery-public-key")?)
+                .map_err(|_| "--recovery-public-key: chave inválida")?,
+            delay: args
+                .req("delay-blocks")?
+                .parse()
+                .map_err(|_| "--delay-blocks: número inválido")?,
+        })
+    };
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::SetRecovery { recovery },
+        fee,
+    )?;
+    match recovery {
+        Some(r) => println!(
+            "recuperação {id}: {} poderá trocar a chave depois de {} blocos",
+            r.key, r.delay
+        ),
+        None => println!("recuperação {id}: removida"),
+    }
+    println!("qualquer recuperação agendada foi cancelada");
+    Ok(())
+}
+
+fn cmd_recover(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let new = load_new_key(args)?;
+    let account = Address::from_hex(args.req("account")?).ok_or("--account: endereço inválido")?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let proof = rotation_proof(&genesis, &account, &new);
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::RecoverAccount {
+            account,
+            new_key: new.public_key(),
+            proof,
+        },
+        fee,
+    )?;
+    println!("recuperação {id} agendada para a conta {account}");
+    println!("a troca vale depois do prazo; a chave atual ainda pode cancelar até lá");
     Ok(())
 }
 
@@ -366,7 +535,11 @@ fn balance(args: &Args) -> Result<(), String> {
     }
     let keys = load_keys(args)?;
     let (mut client, _) = open(args)?;
-    let (bal, nonce, height) = account(&mut client, keys.address())?;
+    let addr = rz_wallet::account_address(&mut client, &keys)?;
+    if addr != keys.address() {
+        println!("conta:        {addr} (chave girada)");
+    }
+    let (bal, nonce, height) = account(&mut client, addr)?;
     let (_, notes) = private_view(&mut client, &keys)?;
     let private: u64 = notes.iter().map(|n| n.note.amount).sum();
     println!(
@@ -466,7 +639,11 @@ fn cmd_governance(args: &Args) -> Result<(), String> {
         None => None,
     };
     let (mut client, _) = open(args)?;
-    let v = governance(&mut client, keys.as_ref().map(Keys::address))?;
+    let mine = match &keys {
+        Some(k) => Some(rz_wallet::account_address(&mut client, k)?),
+        None => None,
+    };
+    let v = governance(&mut client, mine)?;
     let g = &v.params.governance;
     println!("altura: {}", v.height);
     println!("parâmetros vigentes:");
@@ -626,7 +803,11 @@ fn cmd_assets(args: &Args) -> Result<(), String> {
         None => None,
     };
     let (mut client, _) = open(args)?;
-    let v = rz_wallet::assets(&mut client, keys.as_ref().map(Keys::address))?;
+    let mine = match &keys {
+        Some(k) => Some(rz_wallet::account_address(&mut client, k)?),
+        None => None,
+    };
+    let v = rz_wallet::assets(&mut client, mine)?;
     println!("altura: {}", v.height);
     println!("Pool permanente: {} ZERO", format_zero(v.pool_zero));
     if v.assets.is_empty() {
@@ -666,7 +847,11 @@ fn cmd_market(args: &Args) -> Result<(), String> {
     let (mut client, _) = open(args)?;
     let a = find_asset(&mut client, args.req("asset")?, None)?;
     let d = a.info.decimals;
-    let v = rz_wallet::market(&mut client, a.id, keys.as_ref().map(Keys::address))?;
+    let mine = match &keys {
+        Some(k) => Some(rz_wallet::account_address(&mut client, k)?),
+        None => None,
+    };
+    let v = rz_wallet::market(&mut client, a.id, mine)?;
     println!(
         "{}:{} / ZERO — altura {}",
         a.info.network, a.info.asset_ref, v.height

@@ -26,6 +26,7 @@ mod market_tests;
 pub mod private;
 pub mod release;
 pub mod reputation;
+pub mod rotation;
 pub mod runtime;
 pub mod state;
 pub mod tx;

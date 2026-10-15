@@ -1,6 +1,6 @@
 # spec/CRYPTOGRAPHY.md — Criptografia
 
-**Versão:** 0.1.0 (DEVNET)
+**Versão:** 0.2.0 (DEVNET)
 **Relacionamento:** `SPECIFICATIONS.md §3, §5, §9`, ADR-0003, THR-ID-002, THR-ID-003, THR-TX-004
 **Implementação de referência:** `crates/rz-crypto`
 
@@ -59,6 +59,8 @@ Todo hash protocolar **deve** usar um contexto da seção 3. O hash "puro" (sem 
 | `RELEASE_FILE` | `rede-zero/release-file/v1` | Hash de um arquivo de uma versão (artefato ou arquivo de árvore) |
 | `RELEASE_TREE` | `rede-zero/release-tree/v1` | Hash de uma árvore de arquivos (especificação, código, testes) |
 | `RELEASES_ROOT` | `rede-zero/releases-root/v1` | Raiz da parte de versões do estado |
+| `KEY_ROTATION` | `rede-zero/key-rotation/v1` | Prova de posse da nova chave de uma conta (`spec/KEYS.md §3`) |
+| `KEYS_ROOT` | `rede-zero/keys-root/v1` | Raiz da parte de chaves do estado |
 
 A ponte usa também **SHA-256** (sem contexto), porque é a função das redes de origem: hash de cabeçalhos e transações de origem (`SHA-256(SHA-256(x))`), árvores de Merkle delas e o bloqueio por hash das trocas atômicas. Nenhum valor próprio da Rede Zero é calculado com SHA-256.
 
@@ -144,6 +146,6 @@ cargo run -p rz-crypto --example vectors
 
 ## 10. Pendências
 
-* Rotação de chaves (`SPEC-ID-005`) — **A DEFINIR**.
-* Armazenamento cifrado de chaves — **A DEFINIR** (na DEVNET, chaves ficam em arquivo local com permissão restrita).
+* Rotação e recuperação de chaves de conta (`SPEC-ID-005`) — definidas em `spec/KEYS.md` (ADR-0023).
+* Armazenamento cifrado de chaves — Argon2id + XChaCha20-Poly1305 (`spec/KEYS.md §1`).
 * Privacidade transacional — fora do escopo desta versão.

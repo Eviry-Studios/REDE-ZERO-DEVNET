@@ -31,7 +31,9 @@ G=devnet-data/genesis.bin
 # Estado da rede
 $W status  --genesis $G --node 127.0.0.1:7100
 
-# Nova carteira (mostra o endereço privado zs… e o transparente)
+# Nova carteira, cifrada com senha (mostra o endereço privado zs… e o transparente).
+# A senha vem de --passphrase-file, de RZ_KEY_PASSPHRASE ou do terminal.
+export RZ_KEY_PASSPHRASE='troque esta senha da devnet'
 $W new --key devnet-data/alice.key
 ALICE=$($W address --key devnet-data/alice.key | awk '/privado/{print $2}')
 
@@ -268,6 +270,7 @@ Seguindo a ordem recomendada em `SPECIFICATIONS.md §73`:
 | Exonet Runtime (WebAssembly determinístico, isolado por Comunidade, combustível pago) | ✅ DEVNET — auditoria pendente ([ADR-0018](docs/adr/0018-exonet-runtime.md)) | AT-COM-003, teste de isolamento §73 |
 | Grande Mercado (leilão por bloco) e Pool permanente | ✅ DEVNET ([ADR-0014](docs/adr/0014-grande-mercado-e-pool.md)) | AT-MKT-001..004, AT-POOL-001..004, propriedades |
 | Reputação (pontos de contribuição verificáveis, com decaimento e registro de eventos) | ✅ DEVNET ([ADR-0020](docs/adr/0020-reputacao.md)) | testes de defesa e governança |
+| Chaves cifradas em disco, rotação de chave sem trocar de endereço e recuperação com prazo contestável | ✅ DEVNET ([ADR-0023](docs/adr/0023-chaves-cifradas-e-rotacao.md)) | testes de estado; ponta a ponta com Nodes reais |
 | Suíte de conformidade independente (vetores em texto: cadeia completa com raiz do estado por bloco, codificação, Runtime, ponte, P2P) | ✅ DEVNET ([ADR-0022](docs/adr/0022-suite-de-conformidade.md)) | `zero-conformidade verificar` na CI |
 | Atualizações verificáveis (manifesto na cadeia, adoção só por proposta constitucional, verificação de artefatos e código) | ✅ DEVNET ([ADR-0021](docs/adr/0021-atualizacoes-verificaveis.md)) | AT-UPD-001..004; ponta a ponta com Nodes reais |
 | Ponte sem custodiante (prova de queima por cliente leve) e trocas atômicas | ✅ DEVNET — auditoria pendente ([ADR-0019](docs/adr/0019-ponte-sem-custodiante.md)) | testes de cliente leve, Merkle e HTLC; ponta a ponta com Nodes reais |
@@ -286,7 +289,7 @@ Aceitas temporariamente e registradas em [`THREAT_MODEL.md §11`](docs/THREAT_MO
 * **Defesa não auditada** ([ADR-0016](docs/adr/0016-defesa-da-exonet.md)): depende de > 2/3 dos validadores; o isolamento só alcança conexões de saída, porque pares de entrada são anônimos; a detecção de anomalias é local.
 * **Governança**: a câmara de contribuição pontua produção de blocos e contribuição defensiva atestada (ADR-0020), mas ainda favorece validadores; votos são públicos nesta versão.
 * **Atualizações**: a adoção registra a versão, mas os builds ainda não são reproduzíveis; quem não confia no binário compila do código conferido com `release-verify --root` ([ADR-0021](docs/adr/0021-atualizacoes-verificaveis.md)).
-* **Chaves em arquivo local** sem cifragem (permissão `0600`).
+* **Chaves**: arquivos novos da Wallet são cifrados (Argon2id + XChaCha20-Poly1305). As chaves geradas pelo script da DEVNET (validadores, faucet) e a chave de identidade do Node ficam em aberto (`0600`); converta com `zero-wallet key-encrypt`. A senha digitada no terminal fica visível; prefira `--passphrase-file`.
 * Sem emissão após o Genesis; política monetária a definir.
 
 ## Contribuição e segurança

@@ -17,6 +17,7 @@ entrada → operação → saída esperada → regra de validação → casos de
 | [P2P.md](P2P.md) | DEVNET v0.10.0 | `crates/rz-p2p`, `crates/rz-node` |
 | [PRIVACY.md](PRIVACY.md) | DEVNET v0.1.0 | `crates/rz-privacy`, `crates/rz-core` |
 | [GOVERNANCE.md](GOVERNANCE.md) | DEVNET v0.2.0 | `crates/rz-core` |
+| [KEYS.md](KEYS.md) | DEVNET v0.1.0 | `crates/rz-crypto`, `crates/rz-core`, `crates/rz-wallet` |
 | [MARKET.md](MARKET.md) | DEVNET v0.1.0 | `crates/rz-core`, `crates/rz-wallet` |
 | [CONFORMANCE.md](CONFORMANCE.md) | DEVNET v0.1.0 | `conformance/`, `crates/rz-conformance` |
 | [COMMUNITIES.md](COMMUNITIES.md) | DEVNET v0.1.0 | `crates/rz-core`, `crates/rz-wallet` |

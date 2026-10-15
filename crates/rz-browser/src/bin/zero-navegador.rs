@@ -19,6 +19,7 @@ Navegador Zero — interface local para a Exonet
 
   zero-navegador --genesis FILE --node ADDR [opções]
       --key FILE          chave da Wallet (sem ela, somente leitura)
+      --passphrase-file F senha da chave, se cifrada (ou RZ_KEY_PASSPHRASE)
       --data DIR          onde guardar identificadores fixados (padrão ./navegador-data)
       --listen ADDR       endereço local (padrão 127.0.0.1:7300; só loopback)
       --proxy ADDR        Tor/SOCKS5 até o Node (o Node não vê seu IP)
@@ -93,7 +94,12 @@ fn run() -> Result<(), String> {
         return Err(rz_wallet::DIRECT_REFUSED.into());
     }
     let key = match args.get("key") {
-        Some(k) => Some(keyfile::load(Path::new(k)).map_err(|e| format!("{k}: {e}"))?),
+        Some(k) => Some(
+            keyfile::load_with(Path::new(k), || {
+                keyfile::passphrase(args.get("passphrase-file").map(Path::new))
+            })
+            .map_err(|e| format!("{k}: {e}"))?,
+        ),
         None => None,
     };
     let listen: SocketAddr = args

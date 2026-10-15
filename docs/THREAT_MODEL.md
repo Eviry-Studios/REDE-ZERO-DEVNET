@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.13.0
-**Status:** Modelo de ameaças — fase de definição (0.13.0: suíte de conformidade; 0.12.0: atualizações verificáveis; 0.11.0: reputação; 0.10.0: retirada do Agente Zero; 0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
+**Versão:** 0.14.0
+**Status:** Modelo de ameaças — fase de definição (0.14.0: chaves cifradas, rotação e recuperação; 0.13.0: suíte de conformidade; 0.12.0: atualizações verificáveis; 0.11.0: reputação; 0.10.0: retirada do Agente Zero; 0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -305,7 +305,8 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 * assinatura local na Wallet (`SPEC-WAL-002`);
 * chaves nunca transmitidas pelo protocolo (`SPEC-ID-001`);
-* armazenamento cifrado quando houver alternativa segura;
+* armazenamento cifrado por padrão: Argon2id + XChaCha20-Poly1305, com cabeçalho autenticado e limites de derivação (`spec/KEYS.md §1`);
+* rotação imediata para uma chave nova sem trocar de endereço, que tira o controle da chave roubada (`spec/KEYS.md §3`);
 * separação entre Wallet e Node (`REQ-011`);
 * Comunidades sem acesso às chaves (LT-3);
 * suporte futuro a dispositivos de assinatura externos (**A DEFINIR**).
@@ -351,7 +352,9 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 **Severidade:** MÉDIA
 **Adversários:** ADV-13
-**Mitigações:** mecanismo de rotação de chaves (`SPEC-ID-005`, **A DEFINIR**); separação entre chave de Node e chave de Wallet.
+**Mitigações:** rotação (`RotateKey`) e recuperação com prazo contestável (`SetRecovery`/`RecoverAccount`), sem trocar de endereço (ADR-0023, `spec/KEYS.md`); separação entre chave de Node e chave de Wallet.
+
+**Risco residual:** sem chave de recuperação registrada, uma chave perdida continua perdida. Uma chave de recuperação roubada só toma a conta se a dona não cancelar dentro do prazo. Pontos de contribuição, vínculos e notas privadas não são recuperáveis por rotação (`spec/KEYS.md §5`).
 
 ### THR-ID-006 — Associação de identidade civil
 
@@ -954,6 +957,7 @@ Antes: Agente Zero (THR-AGT-001..003). O Agente Zero foi retirado do núcleo da 
 | THR-ID-002 | REQ-009 | SPEC §9 | AT-ID-004..006 |
 | THR-ID-003 | REQ-007 | SPEC §66 | AT-GEN-002 |
 | THR-ID-004 | REQ-018 | SPEC §10 | AT-TX-007 |
+| THR-ID-001/005 | REQ-012 | SPEC-ID-001, SPEC-ID-005, spec/KEYS.md | keyfile::tests, key_rotation_keeps_account_and_disables_old_key, recovery_after_delay_and_cancellation, rotation_devnet |
 | THR-TX-001 | REQ-014..018 | SPEC §11, §21 | AT-DS-* |
 | THR-TX-002 | REQ-021, REQ-022 | SPEC §34, §35 | AT-MONEY-*, AT-ZERO-003 |
 | THR-TX-004 | REQ-016 | SPEC §7, §8 | AT-CAN-*, AT-TID-* |

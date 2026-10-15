@@ -42,6 +42,7 @@ use crate::private::{
 };
 use crate::release::{ReleaseRecord, ReleaseState, MAX_RELEASES};
 use crate::reputation::{RepEvent, RepEventKind, ReputationLog};
+use crate::rotation::{KeyState, KeyStatus, PendingRecovery};
 use crate::runtime::{self, ModuleRecord, Receipt, RuntimeState};
 use crate::tx::{AccountTx, Transaction, TxError, TxKind};
 
@@ -151,6 +152,8 @@ pub struct State {
     reputation: ReputationLog,
     /// Versões do protocolo publicadas e adotadas (ADR-0021).
     releases: ReleaseState,
+    /// Chaves autorizadas, de recuperação e recuperações agendadas (ADR-0023).
+    keys: KeyState,
 }
 
 /// ZERO em período de desvinculação.
@@ -188,6 +191,14 @@ struct Effect {
     bridge: Option<BridgeEffect>,
     /// Versão publicada (o custo de publicação já foi debitado e é queimado).
     release: Option<(Hash32, ReleaseRecord, u64)>,
+    keys: Option<KeyEffect>,
+}
+
+/// Alteração de chaves produzida por uma transação.
+enum KeyEffect {
+    Rotate(Address, rz_crypto::PublicKey),
+    SetRecovery(Address, Option<crate::rotation::Recovery>),
+    Schedule(Address, PendingRecovery),
 }
 
 /// Alteração da ponte ou de trocas atômicas produzida por uma transação.
@@ -416,6 +427,7 @@ impl State {
             },
             reputation: ReputationLog::default(),
             releases: ReleaseState::default(),
+            keys: KeyState::default(),
         })
     }
 
@@ -486,6 +498,19 @@ impl State {
     /// Versões do protocolo publicadas e adotadas.
     pub fn releases(&self) -> &ReleaseState {
         &self.releases
+    }
+
+    /// Chaves autorizadas e de recuperação.
+    pub fn keys(&self) -> &KeyState {
+        &self.keys
+    }
+
+    /// Conta pela qual `key` assina, ou erro se a chave foi substituída.
+    pub fn account_of(&self, key: &rz_crypto::PublicKey) -> Result<Address, TxError> {
+        match self.keys.status(key) {
+            KeyStatus::Active(a) => Ok(a),
+            KeyStatus::Replaced { .. } => Err(TxError::KeyReplaced),
+        }
     }
 
     pub fn bridge(&self) -> &BridgeState {
@@ -637,7 +662,8 @@ impl State {
             .put(&self.runtime.root())
             .put(&self.bridge.root())
             .put(&self.reputation.root())
-            .put(&self.releases.root());
+            .put(&self.releases.root())
+            .put(&self.keys.root());
         hash(context::STATE_ROOT, &e.into_bytes())
     }
 
@@ -711,6 +737,20 @@ impl State {
         if let Some(b) = effect.bridge {
             self.apply_bridge(b, p.height)
                 .map_err(|_| TxError::Overflow)?;
+        }
+        match effect.keys {
+            None => {}
+            Some(KeyEffect::Rotate(a, k)) => self.keys.rotate(a, k),
+            Some(KeyEffect::SetRecovery(a, r)) => {
+                match r {
+                    Some(r) => self.keys.recovery.insert(a, r),
+                    None => self.keys.recovery.remove(&a),
+                };
+                self.keys.pending.remove(&a);
+            }
+            Some(KeyEffect::Schedule(a, pending)) => {
+                self.keys.pending.insert(a, pending);
+            }
         }
         if let Some((id, record, burn)) = effect.release {
             // Custo de publicação queimado: ninguém lucra com manifestos.
@@ -839,6 +879,7 @@ impl State {
             .communities
             .retain(|_, c| c.status == CommunityStatus::Recognized || c.expires_at > height);
         self.expire_releases(height);
+        self.apply_recoveries(height);
 
         // Consenso: o conjunto que validou este bloco; nova época recalcula.
         self.last_validators = used_validators;
@@ -934,6 +975,73 @@ impl State {
             }
         }
         Ok(())
+    }
+
+    /// Regras da nova chave de uma conta (`spec/KEYS.md §3`): prova de posse
+    /// ligada à conta; a chave não controla outra conta nem tem endereço
+    /// próprio em uso; a chave atual não tem vínculo de validador.
+    fn check_new_key(
+        &self,
+        account: &Address,
+        new_key: &rz_crypto::PublicKey,
+        proof: &rz_crypto::Signature,
+        network_id: &str,
+    ) -> Result<(), TxError> {
+        if self.account_of(new_key).ok() == Some(*account) {
+            return Err(TxError::Key("a nova chave é a atual"));
+        }
+        new_key
+            .verify(
+                crate::rotation::KEY_ROTATION,
+                network_id,
+                &crate::rotation::rotation_payload(account, new_key),
+                proof,
+            )
+            .map_err(|_| TxError::Key("prova de posse da nova chave inválida"))?;
+        if !self.key_is_free(account, new_key) {
+            return Err(TxError::Key("a nova chave já está em uso"));
+        }
+        if self.account_bonded(account) {
+            return Err(TxError::Key(
+                "chave com vínculo de validador: desvincule antes de girar",
+            ));
+        }
+        Ok(())
+    }
+
+    /// A chave pode passar a controlar `account`: é a de origem da própria
+    /// conta, ou não controla outra conta e seu endereço não está em uso.
+    fn key_is_free(&self, account: &Address, key: &rz_crypto::PublicKey) -> bool {
+        key.address() == *account
+            || !(self.keys.delegated.contains_key(key)
+                || self.accounts.contains_key(&key.address())
+                || self.keys.authorized.contains_key(&key.address())
+                || self.bonds.contains_key(key))
+    }
+
+    /// A chave que hoje assina por `account` tem vínculo de validador?
+    fn account_bonded(&self, account: &Address) -> bool {
+        match self.keys.current_key(account) {
+            Some(k) => self.bonds.contains_key(&k),
+            None => self.bonds.keys().any(|k| k.address() == *account),
+        }
+    }
+
+    /// Aplica as recuperações cujo prazo venceu, se a troca ainda for válida.
+    fn apply_recoveries(&mut self, height: u64) {
+        let due: Vec<(Address, PendingRecovery)> = self
+            .keys
+            .pending
+            .iter()
+            .filter(|(_, p)| p.at <= height)
+            .map(|(a, p)| (*a, *p))
+            .collect();
+        for (account, p) in due {
+            self.keys.pending.remove(&account);
+            if !self.account_bonded(&account) && self.key_is_free(&account, &p.new_key) {
+                self.keys.rotate(account, p.new_key);
+            }
+        }
     }
 
     /// Uma proposta com `release_id` (`spec/RELEASES.md §4`): constitucional,
@@ -1040,7 +1148,7 @@ impl State {
         tx.check_stateless(self.params.min_fee)?;
         tx.verify_signature(p.network_id)?;
 
-        let sender = tx.body.sender_address();
+        let sender = self.account_of(&tx.body.sender)?;
         let mut sender_acc = self.account(&sender);
         if tx.body.nonce != sender_acc.nonce {
             return Err(TxError::BadNonce {
@@ -1083,6 +1191,9 @@ impl State {
                 .ok_or(TxError::Overflow)?,
             TxKind::BindModule { .. } | TxKind::CallModule { .. } => 0,
             TxKind::PublishRelease { .. } => self.params.governance.deposit,
+            TxKind::RotateKey { .. }
+            | TxKind::SetRecovery { .. }
+            | TxKind::RecoverAccount { .. } => 0,
             TxKind::HtlcLock { asset, amount, .. } if asset.is_zero() => *amount,
             TxKind::HtlcLock { .. }
             | TxKind::HtlcClaim { .. }
@@ -1119,10 +1230,16 @@ impl State {
             runtime: None,
             bridge: None,
             release: None,
+            keys: None,
         };
         let g = &self.params.governance;
 
         match &tx.body.kind {
+            TxKind::Transfer { to, .. } if self.keys.is_shadowed(to) => {
+                return Err(TxError::Key(
+                    "endereço de origem de uma chave delegada: ninguém o controla",
+                ));
+            }
             TxKind::Transfer { to, amount } => {
                 if *to == sender {
                     sender_acc.balance = sender_acc
@@ -1606,6 +1723,39 @@ impl State {
                 effect.bridge = Some(BridgeEffect::Refund(*id));
                 effect.accounts.push((sender, sender_acc));
             }
+            TxKind::RotateKey { new_key, proof } => {
+                self.check_new_key(&sender, new_key, proof, p.network_id)?;
+                effect.keys = Some(KeyEffect::Rotate(sender, *new_key));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::SetRecovery { recovery } => {
+                effect.keys = Some(KeyEffect::SetRecovery(sender, *recovery));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::RecoverAccount {
+                account,
+                new_key,
+                proof,
+            } => {
+                let r = self
+                    .keys
+                    .recovery
+                    .get(account)
+                    .ok_or(TxError::Key("conta sem chave de recuperação"))?;
+                if r.key != tx.body.sender {
+                    return Err(TxError::Key("não é a chave de recuperação da conta"));
+                }
+                self.check_new_key(account, new_key, proof, p.network_id)?;
+                let at = p.height.saturating_add(r.delay);
+                effect.keys = Some(KeyEffect::Schedule(
+                    *account,
+                    PendingRecovery {
+                        new_key: *new_key,
+                        at,
+                    },
+                ));
+                effect.accounts.push((sender, sender_acc));
+            }
             TxKind::PublishRelease { release } => {
                 let id = release.id();
                 if self.releases.releases.contains_key(&id) {
@@ -1965,6 +2115,13 @@ impl State {
             }
             TxKind::Bond { amount } => {
                 let key = tx.body.sender;
+                // O vínculo pertence ao endereço da própria chave
+                // (`spec/KEYS.md §5`): chaves delegadas não se vinculam.
+                if sender != key.address() {
+                    return Err(TxError::Staking(
+                        "chave delegada não se vincula como validador",
+                    ));
+                }
                 if self.jailed.contains(&key) {
                     return Err(TxError::Staking("validador excluído por punição"));
                 }
@@ -2108,6 +2265,7 @@ impl State {
             runtime: None,
             bridge: None,
             release: None,
+            keys: None,
         })
     }
 }

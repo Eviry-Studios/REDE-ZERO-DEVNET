@@ -1,6 +1,6 @@
 //! Testes de governança sobre blocos reais (`spec/GOVERNANCE.md §8`).
 
-use rz_crypto::{Hash32, SecretKey};
+use rz_crypto::{Address, Hash32, SecretKey};
 
 use crate::block::{Block, BlockId};
 use crate::genesis::tests::sample;
@@ -1728,4 +1728,229 @@ fn unadopted_release_expires() {
     assert!(sim.state.releases().releases.contains_key(&r.id()));
     sim.advance_to(published + ttl);
     assert!(!sim.state.releases().releases.contains_key(&r.id()));
+}
+
+// ---------------------------------------- rotação de chaves (ADR-0023)
+
+fn rotate_tx(sim: &Sim, signer: &SecretKey, account: Address, new: &SecretKey) -> Transaction {
+    let proof = new.sign(
+        crate::rotation::KEY_ROTATION,
+        &sim.g.network_id,
+        &crate::rotation::rotation_payload(&account, &new.public_key()),
+    );
+    sim.tx_on(
+        signer,
+        account,
+        TxKind::RotateKey {
+            new_key: new.public_key(),
+            proof,
+        },
+    )
+}
+
+impl Sim {
+    /// Transação assinada por `key` pela conta `account` (nonce da conta).
+    fn tx_on(&self, key: &SecretKey, account: Address, kind: TxKind) -> Transaction {
+        TxBody {
+            version: TX_VERSION,
+            sender: key.public_key(),
+            nonce: self.state.account(&account).nonce,
+            fee: self.state.params().min_fee,
+            kind,
+        }
+        .sign(key, &self.g.network_id)
+        .unwrap()
+    }
+}
+
+// SPEC-ID-005 — a conta troca de chave sem mudar de endereço.
+#[test]
+fn key_rotation_keeps_account_and_disables_old_key() {
+    let mut sim = Sim::new();
+    let acc = rich().public_key().address();
+    sim.lock(&rich(), 100_000, 100);
+    let new = SecretKey::from_seed([60; 32]);
+    let balance = sim.state.account(&acc).balance;
+
+    // Prova assinada por outra chave: recusada.
+    let mut bad = rotate_tx(&sim, &rich(), acc, &new);
+    if let Transaction::Account(a) = &mut bad {
+        if let TxKind::RotateKey { proof, .. } = &mut a.body.kind {
+            *proof = poor().sign(crate::rotation::KEY_ROTATION, &sim.g.network_id, b"x");
+        }
+        *a = match a.body.clone().sign(&rich(), &sim.g.network_id).unwrap() {
+            Transaction::Account(x) => x,
+            Transaction::Private(_) => unreachable!(),
+        };
+    }
+    assert_eq!(
+        sim.check(&bad),
+        Err(TxError::Key("prova de posse da nova chave inválida"))
+    );
+    // Chave já em uso (tem conta própria): recusada.
+    assert_eq!(
+        sim.check(&rotate_tx(&sim, &rich(), acc, &poor())),
+        Err(TxError::Key("a nova chave já está em uso"))
+    );
+
+    let tx = rotate_tx(&sim, &rich(), acc, &new);
+    sim.block(vec![tx]);
+    assert_eq!(sim.state.account_of(&new.public_key()), Ok(acc));
+    assert_eq!(
+        sim.state.account_of(&rich().public_key()),
+        Err(TxError::KeyReplaced)
+    );
+    let to = poor().public_key().address();
+    let old = sim.tx(&rich(), TxKind::Transfer { to, amount: 5 });
+    assert_eq!(sim.check(&old), Err(TxError::KeyReplaced));
+
+    // A nova chave move o saldo do mesmo endereço; o bloqueio continua dele.
+    let t = sim.tx_on(&new, acc, TxKind::Transfer { to, amount: 5 });
+    sim.block(vec![t]);
+    assert_eq!(sim.state.account(&acc).balance, balance - 1 - 5 - 1);
+    assert!(sim.state.locks().any(|(_, l)| l.owner == acc));
+    // O endereço de origem da nova chave não recebe: ninguém o controla.
+    let stuck = sim.tx_on(
+        &new,
+        acc,
+        TxKind::Transfer {
+            to: new.public_key().address(),
+            amount: 1,
+        },
+    );
+    assert!(matches!(sim.check(&stuck), Err(TxError::Key(_))));
+    // Chave delegada não se vincula como validador.
+    let bond = sim.tx_on(&new, acc, TxKind::Bond { amount: 100_000 });
+    assert!(matches!(sim.check(&bond), Err(TxError::Staking(_))));
+
+    // Girar de novo e voltar à chave de origem.
+    let newer = SecretKey::from_seed([61; 32]);
+    let tx = rotate_tx(&sim, &new, acc, &newer);
+    sim.block(vec![tx]);
+    assert_eq!(sim.state.account_of(&newer.public_key()), Ok(acc));
+    assert_eq!(
+        sim.state.account_of(&new.public_key()),
+        Ok(new.public_key().address()),
+        "a chave anterior fica livre, sem conta"
+    );
+    let tx = rotate_tx(&sim, &newer, acc, &rich());
+    sim.block(vec![tx]);
+    assert_eq!(sim.state.account_of(&rich().public_key()), Ok(acc));
+    assert_eq!(
+        sim.state.account_of(&newer.public_key()),
+        Ok(newer.public_key().address())
+    );
+}
+
+// Chave perdida: a chave de recuperação agenda a troca; a chave atual pode
+// cancelar durante o prazo.
+#[test]
+fn recovery_after_delay_and_cancellation() {
+    let mut sim = Sim::new();
+    let acc = rich().public_key().address();
+    let rec = SecretKey::from_seed([62; 32]);
+    let lost_replacement = SecretKey::from_seed([63; 32]);
+    let fund = sim.tx(
+        &rich(),
+        TxKind::Transfer {
+            to: rec.public_key().address(),
+            amount: 100,
+        },
+    );
+    sim.block(vec![fund]);
+    // Prazo abaixo do mínimo: recusado sem estado.
+    let short = sim.tx(
+        &rich(),
+        TxKind::SetRecovery {
+            recovery: Some(crate::rotation::Recovery {
+                key: rec.public_key(),
+                delay: 1,
+            }),
+        },
+    );
+    assert!(matches!(sim.check(&short), Err(TxError::Key(_))));
+    let delay = crate::rotation::MIN_RECOVERY_DELAY;
+    let set = sim.tx(
+        &rich(),
+        TxKind::SetRecovery {
+            recovery: Some(crate::rotation::Recovery {
+                key: rec.public_key(),
+                delay,
+            }),
+        },
+    );
+    sim.block(vec![set]);
+
+    let recover = |sim: &Sim, signer: &SecretKey| {
+        let proof = lost_replacement.sign(
+            crate::rotation::KEY_ROTATION,
+            &sim.g.network_id,
+            &crate::rotation::rotation_payload(&acc, &lost_replacement.public_key()),
+        );
+        sim.tx(
+            signer,
+            TxKind::RecoverAccount {
+                account: acc,
+                new_key: lost_replacement.public_key(),
+                proof,
+            },
+        )
+    };
+    // Só a chave de recuperação registrada agenda.
+    assert!(matches!(
+        sim.check(&recover(&sim, &poor())),
+        Err(TxError::Key(_))
+    ));
+    let r = recover(&sim, &rec);
+    sim.block(vec![r]);
+    let at = sim.state.keys().pending[&acc].at;
+    assert_eq!(at, sim.height + delay - 1 + 1);
+
+    // A dona ainda tem a chave: cancela reafirmando a recuperação.
+    let cancel = sim.tx(
+        &rich(),
+        TxKind::SetRecovery {
+            recovery: Some(crate::rotation::Recovery {
+                key: rec.public_key(),
+                delay,
+            }),
+        },
+    );
+    sim.block(vec![cancel]);
+    assert!(sim.state.keys().pending.is_empty());
+    sim.advance_to(at + 1);
+    assert_eq!(sim.state.account_of(&rich().public_key()), Ok(acc));
+
+    // Agora sem cancelamento: a troca vale depois do prazo.
+    let r = recover(&sim, &rec);
+    sim.block(vec![r]);
+    let at = sim.state.keys().pending[&acc].at;
+    sim.advance_to(at - 1);
+    assert_eq!(sim.state.account_of(&rich().public_key()), Ok(acc));
+    sim.advance_to(at);
+    assert_eq!(
+        sim.state.account_of(&lost_replacement.public_key()),
+        Ok(acc)
+    );
+    assert_eq!(
+        sim.state.account_of(&rich().public_key()),
+        Err(TxError::KeyReplaced)
+    );
+}
+
+// Vínculos de validador ficam presos à chave (GOV-INV-5): quem está
+// vinculado desvincula antes de girar.
+#[test]
+fn bonded_key_cannot_rotate() {
+    let mut sim = Sim::new();
+    let acc = rich().public_key().address();
+    let min = sim.state.params().consensus.min_bond;
+    bond(&mut sim, &rich(), min);
+    let new = SecretKey::from_seed([64; 32]);
+    assert_eq!(
+        sim.check(&rotate_tx(&sim, &rich(), acc, &new)),
+        Err(TxError::Key(
+            "chave com vínculo de validador: desvincule antes de girar"
+        ))
+    );
 }

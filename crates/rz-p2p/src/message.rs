@@ -13,6 +13,7 @@ use rz_core::limits::MAX_NETWORK_ID_LEN;
 use rz_core::market::{AssetId, AssetView, BookLevel, Order, MAX_ASSETS};
 use rz_core::release::{ReleaseRecord, MAX_RELEASES};
 use rz_core::reputation::{RepEvent, MAX_EVENTS_PER_MSG};
+use rz_core::rotation::{PendingRecovery, Recovery};
 use rz_core::runtime::{Receipt, MAX_ARGS, MAX_METHOD, MAX_OUTPUT};
 use rz_core::{BlockId, CommittedBlock, Proposal, Transaction, TxId, Vote};
 use rz_crypto::{Address, Hash32};
@@ -460,6 +461,18 @@ pub enum Message {
         points: u64,
         events: Vec<RepEvent>,
     },
+    /// `0x37` — conta controlada por uma chave (`spec/KEYS.md §6`).
+    GetKey(rz_crypto::PublicKey),
+    /// `0x38` — `account` é `None` se a chave foi substituída; `current` é
+    /// a chave que hoje assina pela conta.
+    Key {
+        height: u64,
+        key: rz_crypto::PublicKey,
+        account: Option<Address>,
+        current: Option<rz_crypto::PublicKey>,
+        recovery: Option<Recovery>,
+        pending: Option<PendingRecovery>,
+    },
     /// `0x35` — versões do protocolo registradas na cadeia.
     GetReleases,
     /// `0x36` — versões publicadas (com altura de adoção) e a vigente.
@@ -789,6 +802,25 @@ impl Encode for Message {
             Message::GetReleases => {
                 e.u8(0x35);
             }
+            Message::GetKey(k) => {
+                e.u8(0x37).put(k);
+            }
+            Message::Key {
+                height,
+                key,
+                account,
+                current,
+                recovery,
+                pending,
+            } => {
+                e.u8(0x38)
+                    .u64(*height)
+                    .put(key)
+                    .option(account)
+                    .option(current)
+                    .option(recovery)
+                    .option(pending);
+            }
             Message::Releases {
                 height,
                 current,
@@ -970,6 +1002,15 @@ impl Decode for Message {
                 events: d.list(MAX_EVENTS_PER_MSG)?,
             },
             0x35 => Message::GetReleases,
+            0x37 => Message::GetKey(d.get()?),
+            0x38 => Message::Key {
+                height: d.u64()?,
+                key: d.get()?,
+                account: d.option()?,
+                current: d.option()?,
+                recovery: d.option()?,
+                pending: d.option()?,
+            },
             0x36 => Message::Releases {
                 height: d.u64()?,
                 current: d.option()?,
@@ -1053,6 +1094,8 @@ impl Message {
             Message::GetReputation(_) => "GET_REPUTATION",
             Message::Reputation { .. } => "REPUTATION",
             Message::GetReleases => "GET_RELEASES",
+            Message::GetKey(_) => "GET_KEY",
+            Message::Key { .. } => "KEY",
             Message::Releases { .. } => "RELEASES",
         }
     }

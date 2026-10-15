@@ -1487,7 +1487,8 @@ impl Shared {
             | Message::Bridge { .. }
             | Message::Htlc { .. }
             | Message::Reputation { .. }
-            | Message::Releases { .. } => Flow::Continue,
+            | Message::Releases { .. }
+            | Message::Key { .. } => Flow::Continue,
             Message::GetManifest(h) => self.handle_get_manifest(ctx, h),
             Message::Manifest { hash, bytes } => self.handle_manifest(ctx, hash, bytes),
             Message::GetContent(id) => self.handle_get_content(ctx, id),
@@ -1615,6 +1616,27 @@ impl Shared {
                         asset: st.map_or(rz_core::market::AssetId::ZERO, |s| s.config.asset()),
                         claimed: st.map_or(0, |s| s.claimed.len() as u64),
                         chain,
+                    }
+                };
+                self.send_to(ctx.id, msg);
+                Flow::Continue
+            }
+            Message::GetKey(key) => {
+                let msg = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let ks = state.keys();
+                    let (account, base) = match ks.status(&key) {
+                        rz_core::rotation::KeyStatus::Active(a) => (Some(a), a),
+                        rz_core::rotation::KeyStatus::Replaced { account, .. } => (None, account),
+                    };
+                    Message::Key {
+                        height: c.chain.height(),
+                        key,
+                        account,
+                        current: ks.current_key(&base),
+                        recovery: ks.recovery.get(&base).copied(),
+                        pending: ks.pending.get(&base).copied(),
                     }
                 };
                 self.send_to(ctx.id, msg);

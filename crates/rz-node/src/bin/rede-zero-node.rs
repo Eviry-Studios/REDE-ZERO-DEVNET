@@ -49,6 +49,7 @@ USO:
       --advertise ADDR    endereço público anunciado (ex.: seu serviço nome.onion:porta)
       --max-inbound-per-ip N  conexões de entrada por IP (padrão 8)
       --validator-key F   chave do validador (omitir para node não validador)
+      --passphrase-file F senha da chave do validador, se cifrada (ou RZ_KEY_PASSPHRASE)
       --content-quota-mb N  cota de conteúdo da Exonet hospedado (padrão 1024 MiB)
       --checkpoint H:ID   ponto de verificação: o bloco da altura H deve ter o id
                           ID (obtenha de fontes em que confia; pode repetir)
@@ -331,7 +332,10 @@ fn run(args: &Args) -> Result<(), String> {
         cfg.checkpoints.push((h, rz_core::BlockId(id)));
     }
     if let Some(k) = args.get("validator-key") {
-        let key = keyfile::load(Path::new(k)).map_err(|e| format!("{k}: {e}"))?;
+        let key = keyfile::load_with(Path::new(k), || {
+            keyfile::passphrase(args.get("passphrase-file").map(Path::new))
+        })
+        .map_err(|e| format!("{k}: {e}"))?;
         if !cfg
             .genesis
             .validators

@@ -39,6 +39,7 @@ Uma decisão com escopo `DEVNET` **não** vale automaticamente para outros ambie
 | [0020](0020-reputacao.md) | Reputação como pontos de contribuição verificáveis | DEVNET → TESTNET | Aceita |
 | [0021](0021-atualizacoes-verificaveis.md) | Atualizações verificáveis adotadas pela governança | DEVNET → TESTNET | Aceita |
 | [0022](0022-suite-de-conformidade.md) | Suíte de conformidade em vetores de texto | DEVNET → TESTNET | Aceita |
+| [0023](0023-chaves-cifradas-e-rotacao.md) | Chaves cifradas em disco, rotação e recuperação de conta | DEVNET → TESTNET | Aceita |
 
 ## Modelo
 

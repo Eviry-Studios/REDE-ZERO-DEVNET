@@ -98,9 +98,10 @@ O cenário passa por:
 * leilão do Grande Mercado e depósito no Pool;
 * cabeçalhos da ponte, cunhagem por prova de queima (com reaproveitamento rejeitado) e troca atômica;
 * transição de defesa atestada;
-* publicação e adoção de versão.
+* publicação e adoção de versão;
+* rotação de chave de conta e registro de recuperação.
 
-Rejeições cobrem nonce, saldo, raiz do estado, assinatura, pai, altura e raiz de transações.
+Rejeições cobrem nonce, saldo, raiz do estado, assinatura, pai, altura, raiz de transações e chave substituída.
 
 A raiz do estado compromete todo o estado (`spec/STATE.md §3`). Coincidir em todas as raízes é coincidir em todo o resultado.
 

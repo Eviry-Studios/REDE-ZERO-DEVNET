@@ -19,6 +19,7 @@ A operação `TxKind::Shield` (tag `0x01`) está descrita em `spec/PRIVACY.md §
 | Tags | Operações | Especificação |
 | --- | --- | --- |
 | `0x10–0x14` | governança (`LockStake`, `Unlock`, `Propose`, `Vote`, `ReportEquivocation`) | `spec/GOVERNANCE.md` |
+| `0x15–0x17` | chaves de conta (`RotateKey`, `SetRecovery`, `RecoverAccount`) | `spec/KEYS.md` |
 | `0x20–0x23` | participação no consenso (`Bond`, `Unbond`, `ReportDoubleVote`, `ReportDoubleProposal`) | `spec/CONSENSUS.md §6` |
 | `0x30–0x33` | Grande Mercado e Pool (`TransferAsset`, `PoolDeposit`, `PlaceOrder`, `CancelOrder`) | `spec/MARKET.md` |
 | `0x40–0x42` | Comunidades (`DeclareCommunity`, `CommunityPosition`, `UpdateCommunity`) | `spec/COMMUNITIES.md` |

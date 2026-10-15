@@ -310,7 +310,7 @@ pub(crate) mod tests {
         Release {
             version: "0.2.0".into(),
             protocol_version: 1,
-            p2p_version: 11,
+            p2p_version: 12,
             compatibility: Compatibility::Incompatible,
             previous: None,
             specification: Hash32([1; 32]),

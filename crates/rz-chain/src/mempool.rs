@@ -109,7 +109,10 @@ impl Mempool {
                     .map_err(MempoolError::Invalid)?;
                 a.verify_signature(params.network_id)
                     .map_err(MempoolError::Invalid)?;
-                let sender = a.body.sender_address();
+                // A conta pela qual a chave assina (a chave pode ter girado).
+                let sender = state
+                    .account_of(&a.body.sender)
+                    .map_err(MempoolError::Invalid)?;
                 let nonce = a.body.nonce;
                 let current = state.account(&sender).nonce;
                 if nonce < current {

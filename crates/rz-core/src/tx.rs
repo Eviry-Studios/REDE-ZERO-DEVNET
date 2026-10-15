@@ -86,6 +86,25 @@ pub enum TxKind {
         first: Box<SignedHeader>,
         second: Box<SignedHeader>,
     },
+    /// Tag `0x15` — troca a chave autorizada da conta (`spec/KEYS.md §3`).
+    /// Assinada pela chave atual; `proof` é a assinatura da nova chave
+    /// sobre `rotation_payload(conta, new_key)`.
+    RotateKey {
+        new_key: PublicKey,
+        proof: Signature,
+    },
+    /// Tag `0x16` — registra (ou remove) a chave de recuperação e o prazo.
+    /// Também cancela uma recuperação agendada.
+    SetRecovery {
+        recovery: Option<crate::rotation::Recovery>,
+    },
+    /// Tag `0x17` — assinada pela chave de recuperação de `account`: agenda
+    /// a troca para `new_key`, aplicada depois do prazo.
+    RecoverAccount {
+        account: Address,
+        new_key: PublicKey,
+        proof: Signature,
+    },
     /// Tag `0x20` — bloqueia ZERO como validador (ADR-0012). A chave do
     /// remetente passa a ser candidata; efeito a partir da próxima época.
     Bond { amount: u64 },
@@ -312,6 +331,19 @@ impl Encode for TxKind {
             }
             TxKind::ReportEquivocation { first, second } => {
                 e.u8(0x14).put(first.as_ref()).put(second.as_ref());
+            }
+            TxKind::RotateKey { new_key, proof } => {
+                e.u8(0x15).put(new_key).put(proof);
+            }
+            TxKind::SetRecovery { recovery } => {
+                e.u8(0x16).option(recovery);
+            }
+            TxKind::RecoverAccount {
+                account,
+                new_key,
+                proof,
+            } => {
+                e.u8(0x17).put(account).put(new_key).put(proof);
             }
             TxKind::Bond { amount } => {
                 e.u8(0x20).u64(*amount);
@@ -572,6 +604,18 @@ impl Decode for TxKind {
             0x14 => Ok(TxKind::ReportEquivocation {
                 first: Box::new(d.get()?),
                 second: Box::new(d.get()?),
+            }),
+            0x15 => Ok(TxKind::RotateKey {
+                new_key: d.get()?,
+                proof: d.get()?,
+            }),
+            0x16 => Ok(TxKind::SetRecovery {
+                recovery: d.option()?,
+            }),
+            0x17 => Ok(TxKind::RecoverAccount {
+                account: d.get()?,
+                new_key: d.get()?,
+                proof: d.get()?,
             }),
             0x20 => Ok(TxKind::Bond { amount: d.u64()? }),
             0x21 => Ok(TxKind::Unbond { amount: d.u64()? }),
@@ -995,6 +1039,21 @@ impl AccountTx {
             TxKind::PublishRelease { release } => {
                 release.validate().map_err(TxError::Release)?;
             }
+            TxKind::RotateKey { new_key, .. } if *new_key == self.body.sender => {
+                return Err(TxError::Key("a nova chave é a atual"));
+            }
+            TxKind::RotateKey { .. } | TxKind::RecoverAccount { .. } => {}
+            TxKind::SetRecovery { recovery: Some(r) } => {
+                if r.key == self.body.sender {
+                    return Err(TxError::Key("a chave de recuperação é a própria chave"));
+                }
+                if !(crate::rotation::MIN_RECOVERY_DELAY..=crate::rotation::MAX_RECOVERY_DELAY)
+                    .contains(&r.delay)
+                {
+                    return Err(TxError::Key("prazo de recuperação fora dos limites"));
+                }
+            }
+            TxKind::SetRecovery { recovery: None } => {}
             TxKind::CallModule { method, fuel, .. } => {
                 crate::runtime::check_method(method).map_err(TxError::Runtime)?;
                 if *fuel == 0 {
@@ -1081,6 +1140,10 @@ pub enum TxError {
     Bridge(&'static str),
     /// Regra de versões do protocolo violada.
     Release(&'static str),
+    /// Regra de rotação ou recuperação de chave violada.
+    Key(&'static str),
+    /// A chave foi substituída e não assina mais pela conta.
+    KeyReplaced,
 }
 
 impl fmt::Display for TxError {
@@ -1116,6 +1179,8 @@ impl fmt::Display for TxError {
             Self::Runtime(w) => write!(f, "runtime: {w}"),
             Self::Bridge(w) => write!(f, "ponte: {w}"),
             Self::Release(w) => write!(f, "versão: {w}"),
+            Self::Key(w) => write!(f, "chave: {w}"),
+            Self::KeyReplaced => write!(f, "chave substituída: não assina mais pela conta"),
         }
     }
 }
