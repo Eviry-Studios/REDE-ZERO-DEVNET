@@ -1567,6 +1567,7 @@ impl Shared {
                         height: c.chain.height(),
                         target: cs.resolve(&name, kind),
                         owner: cs.names.get(&(kind, name.clone())).map(|r| r.owner),
+                        expires_at: cs.names.get(&(kind, name.clone())).map(|r| r.expires_at),
                         name,
                         kind,
                     }

@@ -286,6 +286,8 @@ pub enum ParamChange {
     WithdrawCommunity(Hash32),
     /// Devolve o reconhecimento a uma Comunidade retirada.
     RestoreCommunity(Hash32),
+    /// Validade de nomes `zero://` (`spec/NAMING.md §4.1`); constitucional.
+    NamePeriod(u64),
 }
 
 impl ParamChange {
@@ -333,6 +335,7 @@ impl ParamChange {
             ParamChange::DefenseContributionPoints(_) => 32,
             ParamChange::WithdrawCommunity(_) => 33,
             ParamChange::RestoreCommunity(_) => 34,
+            ParamChange::NamePeriod(_) => 35,
         }
     }
 
@@ -373,6 +376,7 @@ impl ParamChange {
             ParamChange::DefenseContributionPoints(_) => "defense_contribution_points",
             ParamChange::WithdrawCommunity(_) => "community_withdraw",
             ParamChange::RestoreCommunity(_) => "community_restore",
+            ParamChange::NamePeriod(_) => "name_period_blocks",
         }
     }
 
@@ -422,6 +426,7 @@ impl ParamChange {
             "runtime_module_byte_fee" => ParamChange::ModuleByteFee(v),
             "runtime_storage_quota" => ParamChange::StorageQuota(v),
             "defense_contribution_points" => ParamChange::DefenseContributionPoints(v),
+            "name_period_blocks" => ParamChange::NamePeriod(v),
             _ => return None,
         })
     }
@@ -470,7 +475,8 @@ impl ParamChange {
             | ParamChange::MaxBlockFuel(v)
             | ParamChange::ModuleByteFee(v)
             | ParamChange::StorageQuota(v)
-            | ParamChange::DefenseContributionPoints(v) => v,
+            | ParamChange::DefenseContributionPoints(v)
+            | ParamChange::NamePeriod(v) => v,
         }
     }
 
@@ -513,6 +519,7 @@ impl ParamChange {
             ParamChange::ModuleByteFee(v) => p.runtime.module_byte_fee = v,
             ParamChange::StorageQuota(v) => p.runtime.storage_quota = v,
             ParamChange::DefenseContributionPoints(v) => p.defense.contribution_points = v,
+            ParamChange::NamePeriod(v) => p.communities.name_period_blocks = v,
             // Mudam o registro de Comunidades, não os parâmetros: aplicadas
             // pelo estado na ativação.
             ParamChange::WithdrawCommunity(_) | ParamChange::RestoreCommunity(_) => {}
@@ -575,6 +582,7 @@ impl Decode for ParamChange {
             32 => ParamChange::DefenseContributionPoints(d.u64()?),
             33 => ParamChange::WithdrawCommunity(d.get()?),
             34 => ParamChange::RestoreCommunity(d.get()?),
+            35 => ParamChange::NamePeriod(d.u64()?),
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }

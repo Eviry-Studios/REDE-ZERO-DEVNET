@@ -106,6 +106,7 @@ A lógica de uma Comunidade roda no Exonet Runtime (`spec/RUNTIME.md`, ADR-0018)
 | `name_fee` | 10 ZERO | `name_fee` (tag 22), constitucional |
 | `declaration_ttl_blocks` | 1 296 000 (~30 dias com blocos de 2 s) | `community_declaration_ttl_blocks` (tag 23), constitucional |
 | `max_pending` | 1 000 | — |
+| `name_period_blocks` | 15 768 000 (~1 ano com blocos de 2 s) | `name_period_blocks` (tag 35), constitucional (`spec/NAMING.md §4.1`) |
 
 ## 9. Raiz do estado
 

@@ -452,12 +452,14 @@ pub fn community(
         .map_err(|e| e.to_string())
 }
 
-/// Resolve `zero://nome.tipo`: `(alvo, dono)`.
+/// Resolve `zero://nome.tipo`: `(alvo, dono, vencimento)`. Um nome vencido
+/// tem dono e vencimento, mas não alvo.
+#[allow(clippy::type_complexity)]
 pub fn resolve(
     client: &mut Client,
     name: &str,
     kind: rz_core::community::NameKind,
-) -> Result<(Option<Hash32>, Option<Address>), String> {
+) -> Result<(Option<Hash32>, Option<Address>, Option<u64>), String> {
     client
         .request(
             &Message::Resolve {
@@ -470,8 +472,9 @@ pub fn resolve(
                     kind: k,
                     target,
                     owner,
+                    expires_at,
                     ..
-                } if n == name && k == kind => Some((target, owner)),
+                } if n == name && k == kind => Some((target, owner, expires_at)),
                 _ => None,
             },
         )

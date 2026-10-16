@@ -285,6 +285,9 @@ pub enum TxKind {
     HtlcClaim { id: Hash32, preimage: Vec<u8> },
     /// Tag `0x74` — devolve ao remetente depois do prazo.
     HtlcRefund { id: Hash32 },
+    /// Tag `0x45` — o dono renova um nome por mais um período
+    /// (`spec/NAMING.md §4.1`); paga `name_fee`, que vai para o Pool.
+    RenewName { name: String, kind: NameKind },
     /// Tag `0x80` — publica o manifesto de uma versão do protocolo
     /// (`spec/RELEASES.md`). Publicar não adota: só a governança adota.
     PublishRelease { release: crate::release::Release },
@@ -569,6 +572,9 @@ impl Encode for TxKind {
             TxKind::PublishRelease { release } => {
                 e.u8(0x80).put(release);
             }
+            TxKind::RenewName { name, kind } => {
+                e.u8(0x45).str(name).put(kind);
+            }
         }
     }
 }
@@ -767,6 +773,10 @@ impl Decode for TxKind {
             }),
             0x74 => Ok(TxKind::HtlcRefund { id: d.get()? }),
             0x80 => Ok(TxKind::PublishRelease { release: d.get()? }),
+            0x45 => Ok(TxKind::RenewName {
+                name: d.str(MAX_NAME_LEN)?,
+                kind: d.get()?,
+            }),
             t => Err(DecodeError::InvalidTag(t)),
         }
     }
@@ -1043,6 +1053,14 @@ impl AccountTx {
                 return Err(TxError::Key("a nova chave é a atual"));
             }
             TxKind::RotateKey { .. } | TxKind::RecoverAccount { .. } => {}
+            TxKind::RenewName { name, kind } => {
+                crate::community::check_name(name).map_err(TxError::Community)?;
+                if *kind == NameKind::Community {
+                    return Err(TxError::Community(
+                        "nomes .comunidade valem enquanto a Comunidade é reconhecida",
+                    ));
+                }
+            }
             TxKind::SetRecovery { recovery: Some(r) } => {
                 if r.key == self.body.sender {
                     return Err(TxError::Key("a chave de recuperação é a própria chave"));

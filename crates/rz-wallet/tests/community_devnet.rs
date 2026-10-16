@@ -255,7 +255,7 @@ fn community_recognized_and_replicated() {
         "laboratorio",
         NameKind::App
     )
-    .map(|(t, _)| t == Some(Hash32([0x1a; 32])))
+    .map(|(t, _, _)| t == Some(Hash32([0x1a; 32])))
     .unwrap_or(false)));
 
     // Interface publicada num Node e obtida pelo outro, verificada contra o

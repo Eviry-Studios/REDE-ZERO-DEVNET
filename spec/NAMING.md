@@ -1,6 +1,6 @@
 # spec/NAMING.md — Nomes `zero://`
 
-**Versão:** 0.1.0 (DEVNET)
+**Versão:** 0.2.0 (DEVNET)
 **Decisão:** ADR-0015
 **Relacionamento:** `SPECIFICATIONS.md §5`, `§60`, `docs/DEMOCRACIA_ORGANICA.md` N-3, N-4, THR-BRW-002
 **Implementação de referência:** `crates/rz-core/src/community.rs`
@@ -49,17 +49,29 @@ Um nome não pode ser registrado se já existir, **no mesmo tipo**, outro nome c
 | Tag | Operação | Campos | Débito | Regras |
 | --- | --- | --- | --- | --- |
 | `0x43` | `RegisterName` | `name, kind, target` | taxa + `name_fee` (vai para o Pool) | sintaxe; tipo ≠ `comunidade`; nome disponível (§3) |
-| `0x44` | `UpdateName` | `name, kind, target, new_owner?` | taxa | o nome existe e pertence ao remetente |
+| `0x44` | `UpdateName` | `name, kind, target, new_owner?` | taxa | o nome existe, pertence ao remetente e não está vencido |
+| `0x45` | `RenewName` | `name, kind` | taxa + `name_fee` (vai para o Pool) | o nome existe e pertence ao remetente; tipo ≠ `comunidade`; o novo vencimento não passa de dois períodos à frente |
 
 ```text
-NameRecord { owner: Address, target: fixed[32], registered_at: u64 }
+NameRecord { owner: Address, target: fixed[32], registered_at: u64, expires_at: u64, lapsed: bool }
 ```
 
-Nomes não expiram nesta versão (renovação A DEFINIR).
+### 4.1 Validade e renovação
+
+Um nome ocupa um recurso escasso de todos: sem prazo, um nome abandonado ou especulado ficaria preso para sempre. Por isso:
+
+* **Validade:** o registro vale `name_period_blocks` blocos. O padrão é 15 768 000, cerca de 1 ano com blocos de 2 s. O parâmetro é constitucional, tag 35 (`spec/GOVERNANCE.md §3`).
+* **Renovação:** `RenewName` estende o vencimento por mais um período, contado a partir do vencimento atual, ou da altura atual se ele já passou. O custo é `name_fee`, como o registro, e vai para o Pool. Ninguém renova além de dois períodos à frente, nem renova por outra pessoa.
+* **Vencimento:** no fim do bloco em que `h ≥ expires_at`, o nome fica `lapsed`. Ele deixa de resolver e não pode ser alterado nem transferido. Só o dono pode renová-lo.
+* **Liberação:** passada a carência de `name_period_blocks / 12` blocos (cerca de 1 mês) sem renovação, o registro sai do estado, e o nome fica livre para qualquer pessoa, pelas regras do §3.
+
+Os nomes `.comunidade` não vencem: valem enquanto a Comunidade é reconhecida (`spec/COMMUNITIES.md §4`, §6.1).
+
+Regras objetivas, iguais para todos (N-3): ninguém decide que um nome é "abandonado"; o prazo decide.
 
 ## 5. Resolução
 
-`RESOLVE { name, kind }` → `RESOLVED { height, name, kind, target?, owner? }` (`spec/P2P.md`). O Navegador Zero e outras interfaces devem:
+`RESOLVE { name, kind }` → `RESOLVED { height, name, kind, target?, owner?, expires_at? }` (`spec/P2P.md`). Um nome vencido aparece com dono e vencimento, mas sem alvo. O Navegador Zero e outras interfaces devem:
 
 * mostrar o identificador criptográfico resolvido;
 * alertar quando um nome for parecido com outro conhecido, mesmo de outro tipo;
@@ -67,4 +79,4 @@ Nomes não expiram nesta versão (renovação A DEFINIR).
 
 ## 6. Testes
 
-`community::tests` (sintaxe, esqueletos, endereços), `names_registered_resolved_and_protected` (registro, confundíveis, dono), `community_devnet` (resolução em Nodes reais).
+`community::tests` (sintaxe, esqueletos, endereços), `names_registered_resolved_and_protected` (registro, confundíveis, dono), `names_expire_renew_and_free_after_grace` (validade, renovação, carência, liberação), `community_devnet` (resolução em Nodes reais).

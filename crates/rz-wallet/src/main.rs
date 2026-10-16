@@ -93,6 +93,8 @@ Comunidades e nomes zero:// (ADR-0015):
   zero-wallet name-register --genesis FILE --node ADDR --key FILE --name zero://NOME.TIPO --target HEX
   zero-wallet name-update   --genesis FILE --node ADDR --key FILE --name zero://NOME.TIPO --target HEX
                       [--new-owner HEX]
+  zero-wallet name-renew --genesis FILE --node ADDR --key FILE --name zero://NOME.TIPO
+                      mais um período (~1 ano); até dois períodos à frente
   zero-wallet resolve --genesis FILE --node ADDR --name zero://NOME.TIPO
 Conteúdo da Exonet (ADR-0017) — publicações verificadas por hash:
   zero-wallet content-pack --dir DIRETORIO --out ARQUIVO     empacota um site e mostra o id
@@ -261,6 +263,7 @@ fn main() -> ExitCode {
         "community-update" => cmd_community_update(&args),
         "name-register" => cmd_name(&args, true),
         "name-update" => cmd_name(&args, false),
+        "name-renew" => cmd_name_renew(&args),
         "resolve" => cmd_resolve(&args),
         "content-pack" => cmd_content_pack(&args),
         "content-publish" => cmd_content_publish(&args),
@@ -1237,19 +1240,42 @@ fn cmd_name(args: &Args, register: bool) -> Result<(), String> {
     Ok(())
 }
 
+fn cmd_name_renew(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let (name, kind) = address_arg(args)?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::RenewName { name, kind },
+        fee,
+    )?;
+    eprintln!("aviso: a taxa de renovação vai para o Pool permanente");
+    println!("transação: {id} — aceita, aguardando inclusão em bloco");
+    Ok(())
+}
+
 fn cmd_resolve(args: &Args) -> Result<(), String> {
     let (name, kind) = address_arg(args)?;
     let (mut client, _) = open(args)?;
-    let (target, owner) = rz_wallet::resolve(&mut client, &name, kind)?;
+    let (target, owner, expires_at) = rz_wallet::resolve(&mut client, &name, kind)?;
     let address = rz_core::community::format_address(&name, kind);
-    match target {
-        Some(t) => {
+    match (target, owner) {
+        (Some(t), _) => {
             println!("{address} → {t}");
             if let Some(o) = owner {
                 println!("  dono: {o}");
             }
+            if let Some(e) = expires_at {
+                println!("  vence na altura {e} (renove com name-renew)");
+            }
         }
-        None => println!("{address} não está registrado"),
+        (None, Some(o)) => {
+            println!("{address} VENCIDO (dono {o}); só o dono pode renovar até a liberação")
+        }
+        (None, None) => println!("{address} não está registrado"),
     }
     Ok(())
 }

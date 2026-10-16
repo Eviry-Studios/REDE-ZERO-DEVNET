@@ -23,7 +23,7 @@ A operação `TxKind::Shield` (tag `0x01`) está descrita em `spec/PRIVACY.md §
 | `0x20–0x23` | participação no consenso (`Bond`, `Unbond`, `ReportDoubleVote`, `ReportDoubleProposal`) | `spec/CONSENSUS.md §6` |
 | `0x30–0x33` | Grande Mercado e Pool (`TransferAsset`, `PoolDeposit`, `PlaceOrder`, `CancelOrder`) | `spec/MARKET.md` |
 | `0x40–0x42` | Comunidades (`DeclareCommunity`, `CommunityPosition`, `UpdateCommunity`) | `spec/COMMUNITIES.md` |
-| `0x43–0x44` | nomes `zero://` (`RegisterName`, `UpdateName`) | `spec/NAMING.md` |
+| `0x43–0x45` | nomes `zero://` (`RegisterName`, `UpdateName`, `RenewName`) | `spec/NAMING.md` |
 | `0x70–0x74` | Ponte e trocas atômicas (`BridgeHeaders`, `BridgeDeposit`, `HtlcLock`, `HtlcClaim`, `HtlcRefund`) | `spec/BRIDGE.md` |
 | `0x60–0x62` | Exonet Runtime (`PublishModule`, `BindModule`, `CallModule`) | `spec/RUNTIME.md` |
 | `0x80` | Atualizações verificáveis (`PublishRelease`) | `spec/RELEASES.md` |

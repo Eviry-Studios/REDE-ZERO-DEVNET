@@ -220,7 +220,7 @@ fn go(nav: &Navegador, input: &str) -> (String, String) {
             }
             if let Origin::Named { name, kind } = &o {
                 if *kind != NameKind::Community {
-                    if let Ok((_, Some(owner))) =
+                    if let Ok((_, Some(owner), _)) =
                         nav.with_client(|c| rz_wallet::resolve(c, name, *kind))
                     {
                         rows.push(("Dono do nome", code(owner)));

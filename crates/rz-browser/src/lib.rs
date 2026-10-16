@@ -303,7 +303,7 @@ impl Navegador {
                 Ok((c.manifest_hash, frontend))
             }
             Origin::Named { name, kind } => {
-                let (target, _) = self.with_client(|cl| rz_wallet::resolve(cl, name, *kind))?;
+                let (target, _, _) = self.with_client(|cl| rz_wallet::resolve(cl, name, *kind))?;
                 let t = target.ok_or("nome não registrado")?;
                 Ok((t, t))
             }

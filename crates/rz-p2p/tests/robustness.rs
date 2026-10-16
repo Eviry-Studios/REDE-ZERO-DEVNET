@@ -200,7 +200,7 @@ fn sample_release() -> rz_core::release::Release {
     rz_core::release::Release {
         version: "0.2.0-rc.1".into(),
         protocol_version: 2,
-        p2p_version: 12,
+        p2p_version: 13,
         compatibility: rz_core::release::Compatibility::PartiallyCompatible,
         previous: Some(Hash32([7; 32])),
         specification: Hash32([1; 32]),
@@ -609,6 +609,13 @@ fn corpus() -> Corpus {
         ),
         account_tx(
             n,
+            TxKind::RenewName {
+                name: "editorzero".into(),
+                kind: rz_core::community::NameKind::App,
+            },
+        ),
+        account_tx(
+            n,
             TxKind::UpdateName {
                 name: "editorzero".into(),
                 kind: rz_core::community::NameKind::App,
@@ -646,6 +653,7 @@ fn corpus() -> Corpus {
             kind: rz_core::community::NameKind::App,
             target: Some(Hash32([7; 32])),
             owner: None,
+            expires_at: Some(99),
         },
     ]);
     for tx in &community_txs {

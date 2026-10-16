@@ -186,11 +186,19 @@ pub struct NameRecord {
     /// de aplicação etc.).
     pub target: Hash32,
     pub registered_at: u64,
+    /// Altura em que o nome vence (`spec/NAMING.md §4.1`).
+    pub expires_at: u64,
+    /// Vencido e ainda não liberado: não resolve; só o dono renova.
+    pub lapsed: bool,
 }
 
 impl Encode for NameRecord {
     fn encode(&self, e: &mut Encoder) {
-        e.put(&self.owner).put(&self.target).u64(self.registered_at);
+        e.put(&self.owner)
+            .put(&self.target)
+            .u64(self.registered_at)
+            .u64(self.expires_at)
+            .bool(self.lapsed);
     }
 }
 
@@ -200,6 +208,8 @@ impl Decode for NameRecord {
             owner: d.get()?,
             target: d.get()?,
             registered_at: d.u64()?,
+            expires_at: d.u64()?,
+            lapsed: d.bool()?,
         })
     }
 }
@@ -432,6 +442,8 @@ pub struct CommunityParams {
     pub declaration_ttl_blocks: u64,
     /// Máximo de declarações pendentes.
     pub max_pending: u32,
+    /// Validade de um nome registrado ou renovado, em blocos.
+    pub name_period_blocks: u64,
 }
 
 impl Default for CommunityParams {
@@ -441,6 +453,8 @@ impl Default for CommunityParams {
             // ~30 dias com blocos de 2 s.
             declaration_ttl_blocks: 1_296_000,
             max_pending: 1_000,
+            // ~1 ano com blocos de 2 s.
+            name_period_blocks: 15_768_000,
         }
     }
 }
@@ -450,7 +464,15 @@ impl CommunityParams {
         if self.declaration_ttl_blocks == 0 || self.max_pending == 0 {
             return Err("parâmetros de Comunidades devem ser positivos");
         }
+        if self.name_period_blocks < 12 {
+            return Err("validade de nome curta demais");
+        }
         Ok(())
+    }
+
+    /// Prazo, depois do vencimento, em que só o dono pode renovar.
+    pub fn name_grace_blocks(&self) -> u64 {
+        self.name_period_blocks / 12
     }
 }
 
@@ -458,7 +480,8 @@ impl Encode for CommunityParams {
     fn encode(&self, e: &mut Encoder) {
         e.u64(self.name_fee)
             .u64(self.declaration_ttl_blocks)
-            .u32(self.max_pending);
+            .u32(self.max_pending)
+            .u64(self.name_period_blocks);
     }
 }
 
@@ -468,6 +491,7 @@ impl Decode for CommunityParams {
             name_fee: d.u64()?,
             declaration_ttl_blocks: d.u64()?,
             max_pending: d.u32()?,
+            name_period_blocks: d.u64()?,
         })
     }
 }
@@ -503,7 +527,11 @@ impl CommunityState {
                 .by_name(name)
                 .filter(|c| c.status == CommunityStatus::Recognized)
                 .map(|c| c.id),
-            _ => self.names.get(&(kind, name.to_owned())).map(|r| r.target),
+            _ => self
+                .names
+                .get(&(kind, name.to_owned()))
+                .filter(|r| !r.lapsed)
+                .map(|r| r.target),
         }
     }
 

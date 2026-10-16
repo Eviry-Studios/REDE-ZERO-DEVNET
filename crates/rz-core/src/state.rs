@@ -303,6 +303,12 @@ enum CommunityEffect {
         record: NameRecord,
         fee: u64,
     },
+    RenewName {
+        kind: NameKind,
+        name: String,
+        expires_at: u64,
+        fee: u64,
+    },
     UpdateName {
         kind: NameKind,
         name: String,
@@ -880,6 +886,7 @@ impl State {
             .communities
             .retain(|_, c| c.status != CommunityStatus::Declared || c.expires_at > height);
         self.expire_releases(height);
+        self.expire_names(height);
         self.apply_recoveries(height);
 
         // Consenso: o conjunto que validou este bloco; nova época recalcula.
@@ -984,6 +991,19 @@ impl State {
             self.params = next;
         }
         Ok(())
+    }
+
+    /// Nomes vencidos deixam de resolver; depois da carência, ficam livres
+    /// (`spec/NAMING.md §4.1`).
+    fn expire_names(&mut self, height: u64) {
+        let grace = self.params.communities.name_grace_blocks();
+        let names = &mut self.communities.names;
+        names.retain(|_, r| r.expires_at.saturating_add(grace) > height);
+        for r in names.values_mut() {
+            if r.expires_at <= height {
+                r.lapsed = true;
+            }
+        }
     }
 
     /// Retirada e restauração de reconhecimento (`spec/COMMUNITIES.md §6.1`):
@@ -1225,7 +1245,9 @@ impl State {
             | TxKind::PlaceOrder { .. }
             | TxKind::TransferAsset { .. }
             | TxKind::CancelOrder { .. } => 0,
-            TxKind::RegisterName { .. } => self.params.communities.name_fee,
+            TxKind::RegisterName { .. } | TxKind::RenewName { .. } => {
+                self.params.communities.name_fee
+            }
             TxKind::DeclareCommunity { .. }
             | TxKind::CommunityPosition { .. }
             | TxKind::UpdateCommunity { .. }
@@ -1669,7 +1691,40 @@ impl State {
                         owner: sender,
                         target: *target,
                         registered_at: p.height,
+                        expires_at: p
+                            .height
+                            .saturating_add(self.params.communities.name_period_blocks),
+                        lapsed: false,
                     },
+                    fee: self.params.communities.name_fee,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::RenewName { name, kind } => {
+                let r = self
+                    .communities
+                    .names
+                    .get(&(*kind, name.clone()))
+                    .ok_or(TxError::Community("nome não registrado"))?;
+                if r.owner != sender {
+                    return Err(TxError::Community("nome pertence a outra conta"));
+                }
+                let period = self.params.communities.name_period_blocks;
+                let expires_at = r
+                    .expires_at
+                    .max(p.height)
+                    .checked_add(period)
+                    .ok_or(TxError::Overflow)?;
+                // Sem pagar décadas adiantadas: no máximo dois períodos à frente.
+                if expires_at > p.height.saturating_add(period.saturating_mul(2)) {
+                    return Err(TxError::Community(
+                        "renovação além de dois períodos à frente",
+                    ));
+                }
+                effect.community = Some(CommunityEffect::RenewName {
+                    kind: *kind,
+                    name: name.clone(),
+                    expires_at,
                     fee: self.params.communities.name_fee,
                 });
                 effect.accounts.push((sender, sender_acc));
@@ -1917,6 +1972,9 @@ impl State {
                     None => return Err(TxError::Community("nome não registrado")),
                     Some(r) if r.owner != sender => {
                         return Err(TxError::Community("nome pertence a outra conta"))
+                    }
+                    Some(r) if r.lapsed => {
+                        return Err(TxError::Community("nome vencido: renove antes de alterar"))
                     }
                     Some(_) => {}
                 }
@@ -2532,6 +2590,20 @@ impl State {
                 fee,
             } => {
                 cs.names.insert((kind, name), record);
+                self.add_to_pool(AssetId::ZERO, fee)?;
+            }
+            CommunityEffect::RenewName {
+                kind,
+                name,
+                expires_at,
+                fee,
+            } => {
+                let r = cs
+                    .names
+                    .get_mut(&(kind, name))
+                    .ok_or(StateError::Overflow)?;
+                r.expires_at = expires_at;
+                r.lapsed = false;
                 self.add_to_pool(AssetId::ZERO, fee)?;
             }
             CommunityEffect::UpdateName {

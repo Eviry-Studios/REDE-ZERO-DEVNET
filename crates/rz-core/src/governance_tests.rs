@@ -2118,3 +2118,110 @@ fn community_withdrawn_and_restored_only_by_constitutional_proposal() {
     sim.check(&sim.call(&rich(), id, "incrementar", 500_000))
         .unwrap();
 }
+
+// ------------------------------- validade e renovação de nomes (NAMING §4.1)
+
+#[test]
+fn names_expire_renew_and_free_after_grace() {
+    use crate::community::NameKind;
+    let mut sim = Sim::new();
+    sim.state.params_mut().communities.name_fee = 50;
+    sim.state.params_mut().communities.name_period_blocks = 24;
+    let reg = sim.tx(
+        &rich(),
+        TxKind::RegisterName {
+            name: "efemero".into(),
+            kind: NameKind::Blog,
+            target: Hash32([0x5a; 32]),
+        },
+    );
+    sim.block(vec![reg]);
+    let rec = sim.state.communities().names[&(NameKind::Blog, "efemero".to_string())].clone();
+    assert_eq!(rec.expires_at, sim.height + 24);
+    let renew = |sim: &Sim, k: &SecretKey| {
+        sim.tx(
+            k,
+            TxKind::RenewName {
+                name: "efemero".into(),
+                kind: NameKind::Blog,
+            },
+        )
+    };
+    // Só o dono renova; no máximo dois períodos à frente.
+    assert!(matches!(
+        sim.check(&renew(&sim, &poor())),
+        Err(TxError::Community(_))
+    ));
+    let pool = sim
+        .state
+        .market()
+        .pool_balance(&crate::market::AssetId::ZERO);
+    let r = renew(&sim, &rich());
+    sim.block(vec![r]);
+    assert_eq!(
+        sim.state
+            .market()
+            .pool_balance(&crate::market::AssetId::ZERO),
+        pool + 50,
+        "a renovação vai para o Pool"
+    );
+    assert!(matches!(
+        sim.check(&renew(&sim, &rich())),
+        Err(TxError::Community(_))
+    ));
+
+    // Vencido: não resolve, não se altera e não se registra por outro.
+    let expires =
+        sim.state.communities().names[&(NameKind::Blog, "efemero".to_string())].expires_at;
+    sim.advance_to(expires);
+    assert!(sim
+        .state
+        .communities()
+        .resolve("efemero", NameKind::Blog)
+        .is_none());
+    let upd = sim.tx(
+        &rich(),
+        TxKind::UpdateName {
+            name: "efemero".into(),
+            kind: NameKind::Blog,
+            target: Hash32([1; 32]),
+            new_owner: None,
+        },
+    );
+    assert!(matches!(sim.check(&upd), Err(TxError::Community(_))));
+    let steal = sim.tx(
+        &poor(),
+        TxKind::RegisterName {
+            name: "efemero".into(),
+            kind: NameKind::Blog,
+            target: Hash32([2; 32]),
+        },
+    );
+    assert!(sim.check(&steal).is_err(), "carência: só o dono renova");
+    // O dono renova na carência e o nome volta a resolver.
+    let r = renew(&sim, &rich());
+    sim.block(vec![r]);
+    assert_eq!(
+        sim.state.communities().resolve("efemero", NameKind::Blog),
+        Some(Hash32([0x5a; 32]))
+    );
+
+    // Sem renovação, passada a carência, o nome fica livre.
+    let rec = sim.state.communities().names[&(NameKind::Blog, "efemero".to_string())].clone();
+    let grace = sim.state.params().communities.name_grace_blocks();
+    sim.advance_to(rec.expires_at + grace);
+    assert!(!sim
+        .state
+        .communities()
+        .names
+        .contains_key(&(NameKind::Blog, "efemero".to_string())));
+    let steal = sim.tx(
+        &poor(),
+        TxKind::RegisterName {
+            name: "efemero".into(),
+            kind: NameKind::Blog,
+            target: Hash32([2; 32]),
+        },
+    );
+    sim.check(&steal).unwrap();
+}

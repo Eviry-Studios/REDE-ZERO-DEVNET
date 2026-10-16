@@ -61,6 +61,14 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Validade e renovação de nomes `zero://`
+
+* `spec/NAMING.md` v0.2.0 §4.1 resolve a pendência de renovação.
+* Os nomes passam a valer `name_period_blocks` (padrão de cerca de 1 ano; parâmetro constitucional, tag 35). A renovação usa `RenewName` (tag `0x45`), com `name_fee` destinada ao Pool; só o dono renova, e no máximo dois períodos à frente.
+* Um nome vencido não resolve e não se altera. Depois de uma carência de 1/12 do período, fica livre para qualquer pessoa. Os nomes `.comunidade` não vencem.
+* `RESOLVED` ganha `expires_at` (`P2P_VERSION = 13`). Novo comando `zero-wallet name-renew`; `resolve` mostra o vencimento.
+* Vetores de conformidade regenerados (mudam o registro de nome e os parâmetros).
+
 ### Adicionado — Retirada e restauração de Comunidade por governança
 
 * `spec/COMMUNITIES.md` v0.2.0 §6.1 (REQ-074, THR-COM-003).

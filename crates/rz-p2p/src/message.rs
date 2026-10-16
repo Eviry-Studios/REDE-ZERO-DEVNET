@@ -361,6 +361,8 @@ pub enum Message {
         kind: NameKind,
         target: Option<Hash32>,
         owner: Option<Address>,
+        /// Altura em que o nome vence (`None` para `.comunidade`).
+        expires_at: Option<u64>,
     },
     /// `0x20` — consulta o estado de defesa.
     GetDefense,
@@ -656,13 +658,15 @@ impl Encode for Message {
                 kind,
                 target,
                 owner,
+                expires_at,
             } => {
                 e.u8(0x1f)
                     .u64(*height)
                     .str(name)
                     .put(kind)
                     .option(target)
-                    .option(owner);
+                    .option(owner)
+                    .option(expires_at);
             }
             Message::GetDefense => {
                 e.u8(0x20);
@@ -1030,6 +1034,7 @@ impl Decode for Message {
                 kind: d.get()?,
                 target: d.option()?,
                 owner: d.option()?,
+                expires_at: d.option()?,
             },
             t => return Err(DecodeError::InvalidTag(t)),
         })
