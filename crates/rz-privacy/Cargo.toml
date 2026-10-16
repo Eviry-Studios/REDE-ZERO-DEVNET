@@ -1,0 +1,18 @@
+[package]
+name = "rz-privacy"
+description = "Primitivas de privacidade transacional da Rede Zero (spec/PRIVACY.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rz-codec.workspace = true
+curve25519-dalek.workspace = true
+bulletproofs.workspace = true
+merlin.workspace = true
+blake3.workspace = true
+rand_core.workspace = true
+
+[lints]
+workspace = true

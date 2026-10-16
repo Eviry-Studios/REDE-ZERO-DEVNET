@@ -1,0 +1,70 @@
+# Rede Zero — vetores de conformidade v1 — Identidade: chaves, endereços e assinaturas
+# Gerado por `zero-conformidade gerar`; formato em spec/CONFORMANCE.md.
+
+[caso chave-0]
+semente = 0000000000000000000000000000000000000000000000000000000000000000
+chave_publica = 3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29
+node_id = 9d847b86f86710acb1e14f95f3ec06b305959e231c86d0a2aa4c6cc0e054e47f
+endereco = 0a26c7bc6f00ba8e98e0e8e898be028fe292af017ac847e9b90adf40bfdd12ff
+contexto = rede-zero/tx-signature/v1
+rede = rede-zero-devnet-conformidade
+mensagem = 7a65726f
+assinatura = 58be70fa9a18839d6df61ab76f6778190699f751c6f2cd71d78c038836a5c246892ffc547af63fcb9c7f402a9f9ffea8c59b0372fa16f015f4e14f60f53d2b09
+valida = sim
+
+[caso chave-1]
+semente = 0101010101010101010101010101010101010101010101010101010101010101
+chave_publica = 8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c
+node_id = 20a09f3a82f2ea8144e5b5fda01764841f287e572a210948d36cae69f034dd14
+endereco = 3c5385626729bf35550029e68fc6ae6f88e24c542f5d63b3e24b2cd687dd1fb6
+contexto = rede-zero/block-signature/v1
+rede = rede-zero-devnet-conformidade
+mensagem = 
+assinatura = 2eb01305a25ff29b51293c51592a119475378101cbd201a437ac04b4543569b0638b1f9a2b9478f9383624330356136b91b71da257d21392700dba0ed7ef1f08
+valida = sim
+
+[caso chave-2]
+semente = ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+chave_publica = 76a1592044a6e4f511265bca73a604d90b0529d1df602be30a19a9257660d1f5
+node_id = 8c0ba4925a1d33a89f0323a15c96655c42a1576e11b7e1da40cd7891b7c39fca
+endereco = a0d99b3f326b6385e165f190c8c6cf06abf647d31ae0b6c17fc39a40db130cf9
+contexto = rede-zero/tx-signature/v1
+rede = rede-zero-testnet-1
+mensagem = 7a65726f
+assinatura = eddc5ce82c18acc1126f65fc8dd15e576dbf71a7b9868fd6da103b9bbc65949cf1a5e8e5833d352fdcdb9669c85581bfca473d0a752bed5bf03864a4c8764300
+valida = sim
+
+[caso chave-3]
+semente = 726564652d7a65726f2d6964656e7469646164652d7665746f722d3030303031
+chave_publica = b400171c19060c7fde59886f254df2489d6bff8b7c04b86750ab1e8b3ad8c387
+node_id = b8322a2ab087408e5e31f8c1782d592d593b2451a56434521501458657059a33
+endereco = f8eb860cf509883861a70c6c1d7cbe3c36719ed9e8560c9275dae3ac0789708f
+contexto = rede-zero/tx-signature/v1
+rede = rede-zero-devnet-conformidade
+mensagem = 7a65726f
+assinatura = 28d3408f1847fb5b1027b14ed35f51fe8ec4d4bc3da4af84d5e0b4a0ef69d43a36ae4b55d761c6cb4c3c82a7e43404e9e14ff5d0015f8c6f33e565780303300e
+valida = sim
+
+[caso assinatura-alterada]
+chave_publica = 8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c
+contexto = rede-zero/tx-signature/v1
+rede = rede-zero-devnet-conformidade
+mensagem = 7a65726f
+assinatura = 54cb9579a10b1c2f311abf1dc8e9f74fb7f01d68ac185da67280475ca547af2e51f0cb01dfc1c7d509a8117593b7eebd42854e629d5def9768779407a62ff90f
+valida = nao
+
+[caso assinatura-de-outra-rede]
+chave_publica = 8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c
+contexto = rede-zero/tx-signature/v1
+rede = rede-zero-devnet-conformidade
+mensagem = 7a65726f
+assinatura = 6e6c20fc86b85d317a119a2a6662cf3a71b2f46155dc290fb57bed6fdd789f79bfb4a3b7ff82123843e4f4e967737320648c7e78665f9c9bb161347851d5f501
+valida = nao
+
+[caso assinatura-de-outro-contexto]
+chave_publica = 8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c
+contexto = rede-zero/tx-signature/v1
+rede = rede-zero-devnet-conformidade
+mensagem = 7a65726f
+assinatura = cd0ac62c5460dfbbec5421f1d5b814716433b6203f798bcf61bf65cfa1b6d485cfb0ba4c92a5c6ad8ed5839d2e04bae5c5f1922810f2c6f2c200036643151c0c
+valida = nao

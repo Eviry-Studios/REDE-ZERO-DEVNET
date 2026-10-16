@@ -1,0 +1,28 @@
+[package]
+name = "rz-wallet"
+description = "Wallet de linha de comando da DEVNET da Rede Zero"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# A Wallet não depende do Node (SPEC-WAL-001): apenas do protocolo.
+[dependencies]
+rz-codec.workspace = true
+rz-crypto.workspace = true
+rz-core.workspace = true
+rz-p2p.workspace = true
+rz-privacy.workspace = true
+
+[dev-dependencies]
+rz-node.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "zero-wallet"
+path = "src/main.rs"
+
+[lints]
+workspace = true

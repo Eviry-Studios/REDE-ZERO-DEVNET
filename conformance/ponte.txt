@@ -1,0 +1,82 @@
+# Rede Zero — vetores de conformidade v1 — Ponte: prova de trabalho, Merkle e queima
+# Gerado por `zero-conformidade gerar`; formato em spec/CONFORMANCE.md.
+
+[caso compacto-0]
+operacao = compacto
+bits = 1d00ffff
+resultado = ok
+alvo = 00000000ffff0000000000000000000000000000000000000000000000000000
+
+[caso compacto-1]
+operacao = compacto
+bits = 207fffff
+resultado = ok
+alvo = 7fffff0000000000000000000000000000000000000000000000000000000000
+
+[caso compacto-2]
+operacao = compacto
+bits = 1b0404cb
+resultado = ok
+alvo = 00000000000404cb000000000000000000000000000000000000000000000000
+
+[caso compacto-3]
+operacao = compacto
+bits = 03000001
+resultado = ok
+alvo = 0000000000000000000000000000000000000000000000000000000000000001
+
+[caso compacto-4]
+operacao = compacto
+bits = 04800000
+resultado = rejeitado
+
+[caso compacto-5]
+operacao = compacto
+bits = ff123456
+resultado = rejeitado
+
+[caso compacto-6]
+operacao = compacto
+bits = 00000000
+resultado = rejeitado
+
+[caso compacto-7]
+operacao = compacto
+bits = 01003456
+resultado = rejeitado
+
+[caso cabecalho-minerado]
+operacao = cabecalho
+bytes = 000000200000000000000000000000000000000000000000000000000000000000000000222222222222222222222222222222222222222222222222222222222222222200f15365ffff7f2000000000
+limite = 7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+hash = 47f784aaa96b7b83250f12ac4c30bbb9c9e3c4929f59fe63bdbfa9b0f1487d3a
+resultado = ok
+
+[caso cabecalho-sem-trabalho]
+operacao = cabecalho
+bytes = 000000200000000000000000000000000000000000000000000000000000000000000000222222222222222222222222222222222222222222222222222222222222222200f15365ffff7f2001000000
+limite = 7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+hash = 492e0ccb58290de9aa5b5e5a327341e203742c46cea3bc13ee3da545c1b0c5c4
+resultado = rejeitado
+
+[caso script-de-queima]
+operacao = queima
+rede = rede-zero-devnet-conformidade
+destinatario = b78adf1c3ab7315a062e68d9f59e0417fc0641d33eb457d81e43634564235325
+script = 6a2b525a31709ba71614bda12db78adf1c3ab7315a062e68d9f59e0417fc0641d33eb457d81e43634564235325
+
+[caso merkle-0]
+operacao = merkle
+folha = 1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a
+indice = 0
+caminho = 9c12cfdc04c74584d787ac3d23772132c18524bc7ab28dec4219b8fc5b425f70
+caminho = 02a429965de5e45f5b42f3e8decbd4f19ccc58e2ac86a3c0b66dbb443937283d
+raiz = e129dfe02f567fc612d126596d43406144f40a771810ac7143421d2df3e5c1d0
+
+[caso merkle-1]
+operacao = merkle
+folha = 1cc3adea40ebfd94433ac004777d68150cce9db4c771bc7de1b297a7b795bbba
+indice = 2
+caminho = 1cc3adea40ebfd94433ac004777d68150cce9db4c771bc7de1b297a7b795bbba
+caminho = 4bbe83bc38ebe2bcc7520d234139df1c0eb9ffa51f83eab1c5129b5b906b7655
+raiz = e129dfe02f567fc612d126596d43406144f40a771810ac7143421d2df3e5c1d0

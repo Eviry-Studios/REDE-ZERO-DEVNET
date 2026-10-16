@@ -1,0 +1,22 @@
+[package]
+name = "rz-conformance"
+description = "Suíte de conformidade da Rede Zero: vetores publicados e verificador de referência"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rz-codec.workspace = true
+rz-crypto.workspace = true
+rz-core.workspace = true
+rz-p2p.workspace = true
+rz-privacy.workspace = true
+wat.workspace = true
+
+[[bin]]
+name = "zero-conformidade"
+path = "src/bin/zero-conformidade.rs"
+
+[lints]
+workspace = true
