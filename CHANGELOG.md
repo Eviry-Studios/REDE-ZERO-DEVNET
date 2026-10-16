@@ -61,6 +61,10 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Alterado — Senha sem eco
+
+* A senha das chaves cifradas é lida do terminal sem eco (`rpassword`). Sem terminal, vale a entrada padrão; arquivo de senha e `RZ_KEY_PASSPHRASE` continuam valendo.
+
 ### Adicionado — Voto secreto por compromisso e revelação
 
 * `spec/GOVERNANCE.md` v0.4.0 §3.2 (THR-GOV-006, `SPEC §45`).

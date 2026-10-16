@@ -31,7 +31,7 @@ cifra <XChaCha20-Poly1305(semente de 32 bytes) com etiqueta, hex>
 
 1. `--passphrase-file ARQUIVO` (primeira linha);
 2. a variável `RZ_KEY_PASSPHRASE`;
-3. a entrada padrão, com aviso de que a digitação fica visível.
+3. o terminal, **sem eco**; sem terminal (serviços), uma linha da entrada padrão.
 
 Arquivos são criados com permissão `0600` e nunca sobrescrevem um arquivo existente.
 

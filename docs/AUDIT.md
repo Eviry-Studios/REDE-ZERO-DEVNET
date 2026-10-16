@@ -146,11 +146,12 @@ Harnesses para `cargo-fuzz`/libFuzzer podem ser construídos sobre as mesmas fun
 | `chacha20poly1305` | 0.10.1 | cifragem autenticada do canal e dos arquivos de chave (XChaCha20) |
 | `argon2` | 0.5.3 | derivação da chave do arquivo a partir da senha (Argon2id) |
 | `zeroize` | 1 | apagamento de sementes e senhas da memória |
+| `rpassword` | 7 | leitura da senha no terminal sem eco |
 | `rand_core` | 0.6.4 | `OsRng` |
 | `sha2` | 0.10 | SHA-256 das redes de origem (cabeçalhos, Merkle, HTLC) |
 | `wasmi` | 2.0.0 (fixada com `=`) | interpretador do Exonet Runtime; faz parte do protocolo (ADR-0018) |
 
-Versões exatas em `Cargo.lock` (103 pacotes no total; `wat` só em testes e no gerador de conformidade). O código do projeto proíbe `unsafe` (`unsafe_code = "forbid"`). Builds de release mantêm `overflow-checks`.
+Versões exatas em `Cargo.lock` (107 pacotes no total; `wat` só em testes e no gerador de conformidade). O código do projeto proíbe `unsafe` (`unsafe_code = "forbid"`). Builds de release mantêm `overflow-checks`.
 
 ## 7. Revisão interna de segurança
 

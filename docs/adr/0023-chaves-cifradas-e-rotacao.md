@@ -28,11 +28,11 @@
 | Levar pontos de contribuição na rotação | Permitiria vendê-los girando para a chave do comprador (GOV-INV-5) |
 | Recuperação imediata pela chave de recuperação | Quem roubasse a chave de recuperação tomaria a conta sem chance de reação |
 | Recuperação social (guardiões por limiar) | Mais complexa; pode ser construída depois sobre o mesmo mecanismo, com uma Comunidade como recuperação |
-| Senha lida sem eco do terminal | Exige código `unsafe` ou uma dependência de terminal; a senha por arquivo ou variável de ambiente cobre serviços, e a leitura visível vem com aviso |
 | Cifrar também a chave de identidade do Node | Impede o reinício sem intervenção, e essa chave não move fundos |
 
 ## Consequências
 
+* A senha é lida do terminal sem eco (crate `rpassword`); arquivo de senha e variável de ambiente cobrem serviços sem terminal.
 * Uma chave vazada deixa de ser uma perda definitiva: a pessoa gira a chave, e com isso dispensa o prazo de recuperação, desde que chegue antes do ladrão.
 * A Wallet precisa consultar o Node para saber por qual conta a chave assina (P2P `GET_KEY`).
 * O endereço de origem de uma chave delegada não é controlado por ninguém, então transferências para ele são recusadas.
@@ -41,5 +41,4 @@
 ## Condições de revisão
 
 * Recuperação por limiar de guardiões.
-* Leitura de senha sem eco.
 * Carteiras de hardware.

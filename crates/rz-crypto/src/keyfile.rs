@@ -300,8 +300,8 @@ pub fn encrypt_in_place_with(path: &Path, pass: &str, k: &KdfParams) -> io::Resu
 pub const PASSPHRASE_ENV: &str = "RZ_KEY_PASSPHRASE";
 
 /// Obtém a senha, nesta ordem: primeira linha de `file`, a variável
-/// [`PASSPHRASE_ENV`] ou uma linha da entrada padrão (com aviso em `stderr`,
-/// pois a digitação fica visível).
+/// [`PASSPHRASE_ENV`], o terminal (sem eco) ou, sem terminal, uma linha da
+/// entrada padrão.
 pub fn passphrase(file: Option<&Path>) -> io::Result<String> {
     if let Some(f) = file {
         let text = Zeroizing::new(fs::read_to_string(f)?);
@@ -310,7 +310,12 @@ pub fn passphrase(file: Option<&Path>) -> io::Result<String> {
     if let Ok(v) = std::env::var(PASSPHRASE_ENV) {
         return Ok(v);
     }
-    eprint!("senha da chave (a digitação aparece na tela; prefira --passphrase-file): ");
+    // Terminal: leitura sem eco. Sem terminal (serviços, testes), uma
+    // linha da entrada padrão.
+    if let Ok(p) = rpassword::prompt_password("senha da chave: ") {
+        return Ok(p);
+    }
+    eprint!("senha da chave (sem terminal: lida da entrada padrão): ");
     let mut line = String::new();
     io::stdin().read_line(&mut line)?;
     if line.is_empty() {

@@ -185,7 +185,7 @@ send para zs… gasta saldo privado. send para HEX gasta saldo transparente.
 shield move saldo transparente para privado; unshield faz o inverso.
 
 Chaves (REQ-012): arquivos cifrados pedem a senha por --passphrase-file ARQUIVO,
-pela variável RZ_KEY_PASSPHRASE ou pela entrada padrão (visível na tela).
+pela variável RZ_KEY_PASSPHRASE ou pelo terminal (sem eco).
 Rede (ADR-0011) — válido para todos os comandos que usam --node:
   --node ADDR       IP:porta ou nome.onion:porta
   --proxy ADDR      proxy SOCKS5 (Tor: 127.0.0.1:9050); o node não vê seu IP

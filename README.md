@@ -290,7 +290,7 @@ Aceitas temporariamente e registradas em [`THREAT_MODEL.md §11`](docs/THREAT_MO
 * **Defesa não auditada** ([ADR-0016](docs/adr/0016-defesa-da-exonet.md)): depende de > 2/3 dos validadores; o isolamento só alcança conexões de saída, porque pares de entrada são anônimos; a detecção de anomalias é local.
 * **Governança**: a câmara de contribuição pontua produção de blocos e contribuição defensiva atestada (ADR-0020), mas ainda favorece validadores. Os votos são públicos, salvo quando a governança liga o voto secreto (compromisso e revelação, `vote_reveal_blocks`). Esse modo esconde a escolha durante a votação, mas não impede quem queira provar o próprio voto a terceiros.
 * **Atualizações**: a adoção registra a versão, mas os builds ainda não são reproduzíveis; quem não confia no binário compila do código conferido com `release-verify --root` ([ADR-0021](docs/adr/0021-atualizacoes-verificaveis.md)).
-* **Chaves**: arquivos novos da Wallet são cifrados (Argon2id + XChaCha20-Poly1305). As chaves geradas pelo script da DEVNET (validadores, faucet) e a chave de identidade do Node ficam em aberto (`0600`); converta com `zero-wallet key-encrypt`. A senha digitada no terminal fica visível; prefira `--passphrase-file`.
+* **Chaves**: arquivos novos da Wallet são cifrados (Argon2id + XChaCha20-Poly1305). As chaves geradas pelo script da DEVNET (validadores, faucet) e a chave de identidade do Node ficam em aberto (`0600`); converta com `zero-wallet key-encrypt`. A senha é lida do terminal sem eco, ou de `--passphrase-file` / `RZ_KEY_PASSPHRASE` em serviços.
 * Sem emissão após o Genesis; política monetária a definir.
 
 ## Contribuição e segurança
