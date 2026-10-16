@@ -61,6 +61,13 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Recuperação por guardiões
+
+* `spec/KEYS.md` v0.2.0 §4 (ADR-0023). A recuperação passa a ter de 1 a 16 guardiões e limiar `k`; a chave única anterior é o caso 1-de-1.
+* Os guardiões assinam fora da cadeia uma aprovação que cita um contador de recuperação. O contador muda a cada configuração, agendamento ou rotação, para que aprovações de uma recuperação cancelada não valham de novo.
+* Qualquer conta submete `RecoverAccount` com as aprovações. O prazo contestável e o cancelamento pela chave atual não mudaram.
+* Consulta `GET_RECOVERY`/`RECOVERY` pelo endereço (`P2P_VERSION = 14`). Comandos `recovery-set --guardians --threshold`, `recovery-approve` e `recover --approvals`. Vetores de conformidade regenerados.
+
 ### Adicionado — Builds reproduzíveis
 
 * `rust-toolchain.toml` fixa o compilador (1.98.1). `scripts/build-reproduzivel.sh` compila os quatro binários com caminhos locais substituídos e grava o SHA-256 de cada um.

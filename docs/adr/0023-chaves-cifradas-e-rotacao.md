@@ -17,7 +17,11 @@
 
 1. **Arquivo cifrado por padrão.** A chave é derivada da senha por Argon2id (64 MiB, 3 passadas) e cifrada com XChaCha20-Poly1305; o cabeçalho é autenticado. Os arquivos legados continuam legíveis e podem ser convertidos no lugar.
 2. **Endereço estável, chave substituível.** O estado guarda a chave autorizada de cada conta que girou. `RotateKey` é assinada pela chave atual e traz a prova de posse da nova chave, ligada à conta. A chave antiga deixa de assinar no mesmo bloco.
-3. **Recuperação com prazo contestável.** A conta registra uma chave de recuperação e um prazo. A chave de recuperação agenda a troca, que a chave atual pode cancelar até o prazo vencer.
+3. **Recuperação por guardiões, com prazo contestável.** A conta registra de 1 a 16 guardiões, um limiar `k` e um prazo.
+   * `k` guardiões aprovam fora da cadeia a troca para uma nova chave, citando um contador que impede o reuso de aprovações.
+   * Qualquer conta submete as aprovações e paga a taxa.
+   * A troca é agendada, e a chave atual pode cancelá-la até o prazo vencer.
+   * Uma chave de recuperação única é o caso 1-de-1.
 4. **Só migra o que já é transferível.** Pontos de contribuição, vínculos de validador, credenciais e chaves de Comunidades continuam presos à chave. Notas privadas pertencem à chave de visualização.
 
 ## Alternativas consideradas
@@ -27,7 +31,6 @@
 | Rotação = transferir tudo para o endereço da nova chave | Exige migrar bloqueios, nomes, ordens, HTLCs e o resto, área por área, e cada omissão vira perda de fundos |
 | Levar pontos de contribuição na rotação | Permitiria vendê-los girando para a chave do comprador (GOV-INV-5) |
 | Recuperação imediata pela chave de recuperação | Quem roubasse a chave de recuperação tomaria a conta sem chance de reação |
-| Recuperação social (guardiões por limiar) | Mais complexa; pode ser construída depois sobre o mesmo mecanismo, com uma Comunidade como recuperação |
 | Cifrar também a chave de identidade do Node | Impede o reinício sem intervenção, e essa chave não move fundos |
 
 ## Consequências
@@ -40,5 +43,4 @@
 
 ## Condições de revisão
 
-* Recuperação por limiar de guardiões.
 * Carteiras de hardware.

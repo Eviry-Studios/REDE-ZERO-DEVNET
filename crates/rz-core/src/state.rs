@@ -767,9 +767,11 @@ impl State {
                     None => self.keys.recovery.remove(&a),
                 };
                 self.keys.pending.remove(&a);
+                self.keys.bump(a);
             }
             Some(KeyEffect::Schedule(a, pending)) => {
                 self.keys.pending.insert(a, pending);
+                self.keys.bump(a);
             }
         }
         if let Some((id, record, burn)) = effect.release {
@@ -2029,21 +2031,26 @@ impl State {
                 effect.accounts.push((sender, sender_acc));
             }
             TxKind::SetRecovery { recovery } => {
-                effect.keys = Some(KeyEffect::SetRecovery(sender, *recovery));
+                effect.keys = Some(KeyEffect::SetRecovery(sender, recovery.clone()));
                 effect.accounts.push((sender, sender_acc));
             }
             TxKind::RecoverAccount {
                 account,
                 new_key,
                 proof,
+                approvals,
             } => {
                 let r = self
                     .keys
                     .recovery
                     .get(account)
                     .ok_or(TxError::Key("conta sem chave de recuperação"))?;
-                if r.key != tx.body.sender {
-                    return Err(TxError::Key("não é a chave de recuperação da conta"));
+                let payload =
+                    crate::rotation::recovery_payload(account, new_key, self.keys.nonce(account));
+                if !r.approved(p.network_id, &payload, approvals) {
+                    return Err(TxError::Key(
+                        "aprovações de guardiões insuficientes ou inválidas",
+                    ));
                 }
                 self.check_new_key(account, new_key, proof, p.network_id)?;
                 let at = p.height.saturating_add(r.delay);

@@ -489,7 +489,7 @@ fn transactions() -> R<Vec<Case>> {
             7,
             1,
             TxKind::SetRecovery {
-                recovery: Some(rz_core::rotation::Recovery { key: new, delay }),
+                recovery: Some(rz_core::rotation::Recovery::single(new, delay)),
             },
             VECTOR_NETWORK,
         )?;
@@ -1192,7 +1192,12 @@ fn chain() -> R<Vec<Case>> {
         &rich(),
         TxKind::SetRecovery {
             recovery: Some(rz_core::rotation::Recovery {
-                key: key(71).public_key(),
+                guardians: vec![
+                    key(71).public_key(),
+                    key(72).public_key(),
+                    key(73).public_key(),
+                ],
+                threshold: 2,
                 delay: rz_core::rotation::MIN_RECOVERY_DELAY,
             }),
         },

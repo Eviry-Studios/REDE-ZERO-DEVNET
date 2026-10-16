@@ -143,6 +143,33 @@ pub fn key_info(client: &mut Client, key: rz_crypto::PublicKey) -> Result<KeyVie
         .map_err(|e| e.to_string())
 }
 
+/// Recuperação de uma conta: `(recuperação, contador, agendada)`.
+#[allow(clippy::type_complexity)]
+pub fn recovery_info(
+    client: &mut Client,
+    account: Address,
+) -> Result<
+    (
+        Option<rz_core::rotation::Recovery>,
+        u64,
+        Option<rz_core::rotation::PendingRecovery>,
+    ),
+    String,
+> {
+    client
+        .request(&Message::GetRecovery(account), |m| match m {
+            Message::Recovery {
+                account: a,
+                recovery,
+                nonce,
+                pending,
+                ..
+            } if a == account => Some((recovery, nonce, pending)),
+            _ => None,
+        })
+        .map_err(|e| e.to_string())
+}
+
 /// Conta pela qual `keys` assina. Depois de uma rotação, o endereço da
 /// conta não é mais o hash da chave.
 pub fn account_address(client: &mut Client, keys: &Keys) -> Result<Address, String> {

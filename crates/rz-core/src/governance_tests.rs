@@ -1864,10 +1864,7 @@ fn recovery_after_delay_and_cancellation() {
     let short = sim.tx(
         &rich(),
         TxKind::SetRecovery {
-            recovery: Some(crate::rotation::Recovery {
-                key: rec.public_key(),
-                delay: 1,
-            }),
+            recovery: Some(crate::rotation::Recovery::single(rec.public_key(), 1)),
         },
     );
     assert!(matches!(sim.check(&short), Err(TxError::Key(_))));
@@ -1875,35 +1872,41 @@ fn recovery_after_delay_and_cancellation() {
     let set = sim.tx(
         &rich(),
         TxKind::SetRecovery {
-            recovery: Some(crate::rotation::Recovery {
-                key: rec.public_key(),
-                delay,
-            }),
+            recovery: Some(crate::rotation::Recovery::single(rec.public_key(), delay)),
         },
     );
     sim.block(vec![set]);
 
-    let recover = |sim: &Sim, signer: &SecretKey| {
+    let recover = |sim: &Sim, guardian: &SecretKey| {
         let proof = lost_replacement.sign(
             crate::rotation::KEY_ROTATION,
             &sim.g.network_id,
             &crate::rotation::rotation_payload(&acc, &lost_replacement.public_key()),
         );
+        let approval = crate::rotation::approve_recovery(
+            guardian,
+            &sim.g.network_id,
+            &acc,
+            &lost_replacement.public_key(),
+            sim.state.keys().nonce(&acc),
+        );
         sim.tx(
-            signer,
+            &rec,
             TxKind::RecoverAccount {
                 account: acc,
                 new_key: lost_replacement.public_key(),
                 proof,
+                approvals: vec![approval],
             },
         )
     };
-    // Só a chave de recuperação registrada agenda.
+    // Só a aprovação da chave de recuperação registrada agenda.
     assert!(matches!(
         sim.check(&recover(&sim, &poor())),
         Err(TxError::Key(_))
     ));
     let r = recover(&sim, &rec);
+    let stale = r.clone();
     sim.block(vec![r]);
     let at = sim.state.keys().pending[&acc].at;
     assert_eq!(at, sim.height + delay - 1 + 1);
@@ -1912,14 +1915,22 @@ fn recovery_after_delay_and_cancellation() {
     let cancel = sim.tx(
         &rich(),
         TxKind::SetRecovery {
-            recovery: Some(crate::rotation::Recovery {
-                key: rec.public_key(),
-                delay,
-            }),
+            recovery: Some(crate::rotation::Recovery::single(rec.public_key(), delay)),
         },
     );
     sim.block(vec![cancel]);
     assert!(sim.state.keys().pending.is_empty());
+    // As mesmas aprovações não servem de novo depois do cancelamento.
+    let replay = match stale {
+        Transaction::Account(a) => sim.tx(&rec, a.body.kind),
+        Transaction::Private(_) => unreachable!(),
+    };
+    assert_eq!(
+        sim.check(&replay),
+        Err(TxError::Key(
+            "aprovações de guardiões insuficientes ou inválidas"
+        ))
+    );
     sim.advance_to(at + 1);
     assert_eq!(sim.state.account_of(&rich().public_key()), Ok(acc));
 
@@ -2344,4 +2355,68 @@ fn unrevealed_commit_does_not_count_and_last_vote_wins() {
         0
     );
     assert!(t.economic.yes > 0);
+}
+
+// Recuperação social: 2 de 3 guardiões aprovam; um só não basta, e uma
+// aprovação repetida não conta duas vezes.
+#[test]
+fn guardian_threshold_recovery() {
+    let mut sim = Sim::new();
+    let acc = rich().public_key().address();
+    let guardians: Vec<SecretKey> = (80..83).map(|i| SecretKey::from_seed([i; 32])).collect();
+    let rec = crate::rotation::Recovery {
+        guardians: guardians.iter().map(SecretKey::public_key).collect(),
+        threshold: 2,
+        delay: crate::rotation::MIN_RECOVERY_DELAY,
+    };
+    let mut bad = rec.clone();
+    bad.threshold = 4;
+    assert!(matches!(
+        sim.check(&sim.tx(
+            &rich(),
+            TxKind::SetRecovery {
+                recovery: Some(bad)
+            }
+        )),
+        Err(TxError::Key(_))
+    ));
+    let set = sim.tx(
+        &rich(),
+        TxKind::SetRecovery {
+            recovery: Some(rec),
+        },
+    );
+    sim.block(vec![set]);
+    let new = SecretKey::from_seed([84; 32]);
+    let proof = new.sign(
+        crate::rotation::KEY_ROTATION,
+        &sim.g.network_id,
+        &crate::rotation::rotation_payload(&acc, &new.public_key()),
+    );
+    let nonce = sim.state.keys().nonce(&acc);
+    let ap = |k: &SecretKey| {
+        crate::rotation::approve_recovery(k, &sim.g.network_id, &acc, &new.public_key(), nonce)
+    };
+    let tx = |approvals| {
+        sim.tx(
+            &poor(),
+            TxKind::RecoverAccount {
+                account: acc,
+                new_key: new.public_key(),
+                proof,
+                approvals,
+            },
+        )
+    };
+    for approvals in [
+        vec![ap(&guardians[0])],
+        vec![ap(&guardians[1]), ap(&guardians[1])],
+    ] {
+        assert!(matches!(sim.check(&tx(approvals)), Err(TxError::Key(_))));
+    }
+    let ok = tx(vec![ap(&guardians[0]), ap(&guardians[2])]);
+    sim.block(vec![ok]);
+    let at = sim.state.keys().pending[&acc].at;
+    sim.advance_to(at);
+    assert_eq!(sim.state.account_of(&new.public_key()), Ok(acc));
 }

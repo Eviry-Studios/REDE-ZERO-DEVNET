@@ -34,23 +34,108 @@ pub fn rotation_payload(account: &Address, new_key: &PublicKey) -> Vec<u8> {
     e.into_bytes()
 }
 
-/// Chave de recuperação de uma conta.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Contexto das aprovações de guardiões (`spec/KEYS.md §4`).
+pub const KEY_RECOVERY: &str = "rede-zero/key-recovery/v1";
+/// Guardiões por conta.
+pub const MAX_GUARDIANS: usize = 16;
+
+/// Mensagem que cada guardião aprova: a conta, a nova chave e o contador de
+/// recuperação vigente (aprovações de uma recuperação cancelada não valem
+/// de novo).
+pub fn recovery_payload(account: &Address, new_key: &PublicKey, nonce: u64) -> Vec<u8> {
+    let mut e = Encoder::new();
+    e.put(account).put(new_key).u64(nonce);
+    e.into_bytes()
+}
+
+/// Aprovação de um guardião.
+pub fn approve_recovery(
+    guardian: &rz_crypto::SecretKey,
+    network_id: &str,
+    account: &Address,
+    new_key: &PublicKey,
+    nonce: u64,
+) -> crate::community::Approval {
+    crate::community::Approval {
+        key: guardian.public_key(),
+        signature: guardian.sign(
+            KEY_RECOVERY,
+            network_id,
+            &recovery_payload(account, new_key, nonce),
+        ),
+    }
+}
+
+/// Recuperação de uma conta: `threshold` dos `guardians` aprovam a troca,
+/// aplicada depois de `delay` blocos. Uma chave de recuperação única é o
+/// caso 1-de-1.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Recovery {
-    pub key: PublicKey,
+    pub guardians: Vec<PublicKey>,
+    pub threshold: u8,
     pub delay: u64,
+}
+
+impl Recovery {
+    pub fn single(key: PublicKey, delay: u64) -> Self {
+        Self {
+            guardians: vec![key],
+            threshold: 1,
+            delay,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.guardians.is_empty() || self.guardians.len() > MAX_GUARDIANS {
+            return Err("guardiões: de 1 a 16");
+        }
+        let mut sorted = self.guardians.clone();
+        sorted.sort_by_key(|k| *k.as_bytes());
+        if sorted.windows(2).any(|w| w[0] == w[1]) {
+            return Err("guardião repetido");
+        }
+        if self.threshold == 0 || self.threshold as usize > self.guardians.len() {
+            return Err("limiar de guardiões inválido");
+        }
+        if !(MIN_RECOVERY_DELAY..=MAX_RECOVERY_DELAY).contains(&self.delay) {
+            return Err("prazo de recuperação fora dos limites");
+        }
+        Ok(())
+    }
+
+    /// Ao menos `threshold` guardiões distintos aprovaram `payload`.
+    pub fn approved(
+        &self,
+        network_id: &str,
+        payload: &[u8],
+        approvals: &[crate::community::Approval],
+    ) -> bool {
+        let mut seen = std::collections::BTreeSet::new();
+        for a in approvals {
+            if !self.guardians.contains(&a.key)
+                || !seen.insert(*a.key.as_bytes())
+                || a.key
+                    .verify(KEY_RECOVERY, network_id, payload, &a.signature)
+                    .is_err()
+            {
+                return false;
+            }
+        }
+        seen.len() >= self.threshold as usize
+    }
 }
 
 impl Encode for Recovery {
     fn encode(&self, e: &mut Encoder) {
-        e.put(&self.key).u64(self.delay);
+        e.list(&self.guardians).u8(self.threshold).u64(self.delay);
     }
 }
 
 impl Decode for Recovery {
     fn decode(d: &mut Decoder<'_>) -> Result<Self, DecodeError> {
         Ok(Self {
-            key: d.get()?,
+            guardians: d.list(MAX_GUARDIANS)?,
+            threshold: d.u8()?,
             delay: d.u64()?,
         })
     }
@@ -89,6 +174,9 @@ pub struct KeyState {
     pub delegated: BTreeMap<PublicKey, Address>,
     pub recovery: BTreeMap<Address, Recovery>,
     pub pending: BTreeMap<Address, PendingRecovery>,
+    /// Contador de recuperação por conta; muda a cada configuração,
+    /// agendamento ou rotação.
+    pub recovery_nonce: BTreeMap<Address, u64>,
 }
 
 /// Resultado da resolução de uma chave.
@@ -140,6 +228,18 @@ impl KeyState {
             self.authorized.insert(account, new_key);
         }
         self.pending.remove(&account);
+        self.bump(account);
+    }
+
+    /// Contador de recuperação vigente da conta.
+    pub fn nonce(&self, account: &Address) -> u64 {
+        self.recovery_nonce.get(account).copied().unwrap_or(0)
+    }
+
+    /// Invalida aprovações já dadas para a conta.
+    pub fn bump(&mut self, account: Address) {
+        let n = self.recovery_nonce.entry(account).or_default();
+        *n = n.saturating_add(1);
     }
 
     pub fn root(&self) -> Hash32 {
@@ -155,6 +255,10 @@ impl KeyState {
         e.u64(self.pending.len() as u64);
         for (a, p) in &self.pending {
             e.put(a).put(p);
+        }
+        e.u64(self.recovery_nonce.len() as u64);
+        for (a, n) in &self.recovery_nonce {
+            e.put(a).u64(*n);
         }
         hash(KEYS_ROOT, &e.into_bytes())
     }

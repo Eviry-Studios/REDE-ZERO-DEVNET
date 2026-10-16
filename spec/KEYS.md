@@ -1,6 +1,6 @@
 # spec/KEYS.md — Guarda, rotação e recuperação de chaves
 
-**Versão:** 0.1.0 (DEVNET)
+**Versão:** 0.2.0 (DEVNET)
 **Decisão:** ADR-0023
 **Relacionamento:** REQ-010..012, REQ-046, `SPECIFICATIONS.md` SPEC-ID-001, SPEC-ID-005, SPEC-WAL-002/003, `spec/GOVERNANCE.md §7` (GOV-INV-5), THR-ID-001, THR-ID-005
 **Implementação de referência:** `crates/rz-crypto/src/keyfile.rs`, `crates/rz-core/src/rotation.rs`, `crates/rz-core/src/state.rs`, `crates/rz-wallet`
@@ -56,8 +56,8 @@ Uma transação de conta é executada sobre a conta indicada por `status(remeten
 | Tag | Operação | Assinada por | Campos |
 | --- | --- | --- | --- |
 | `0x15` | `RotateKey` | chave atual | `new_key: PublicKey, proof: Signature` |
-| `0x16` | `SetRecovery` | chave atual | `recovery: option<{ key: PublicKey, delay: u64 }>` |
-| `0x17` | `RecoverAccount` | chave de recuperação | `account: Address, new_key: PublicKey, proof: Signature` |
+| `0x16` | `SetRecovery` | chave atual | `recovery: option<{ guardians: list<PublicKey> (1..16), threshold: u8, delay: u64 }>` |
+| `0x17` | `RecoverAccount` | qualquer conta (paga a taxa) | `account: Address, new_key: PublicKey, proof: Signature, approvals: list<Approval> (≤16)` |
 
 `proof` é a assinatura da **nova** chave com o contexto `rede-zero/key-rotation/v1` sobre `encode(account ‖ new_key)`. Ela prova posse da chave e o consentimento em controlar aquela conta. Sem ela, alguém poderia girar para uma chave que ninguém controla, ou para a de outra pessoa.
 
@@ -77,14 +77,32 @@ Efeito imediato de `RotateKey`:
 
 O endereço de origem de uma chave delegada a outra conta não é controlado por ninguém. Por isso, transferências para ele são recusadas.
 
-## 4. Recuperação de chave perdida
+## 4. Recuperação de chave perdida (guardiões por limiar)
 
-1. Enquanto tem a chave, a pessoa registra uma chave de recuperação e um prazo com `SetRecovery`. O prazo vai de 10 a 10 000 000 blocos.
-2. Se perder a chave, assina `RecoverAccount` com a chave de recuperação. A taxa sai da conta da própria chave de recuperação. A troca fica **agendada** para `h + prazo`.
-3. Durante o prazo, a chave atual cancela a troca com qualquer `SetRecovery` ou `RotateKey`. É a defesa contra uma chave de recuperação roubada. `zero-wallet key-info` mostra a recuperação agendada.
-4. No fim do bloco da altura agendada, a troca é aplicada se as regras do §3 ainda valerem. Se não valerem, é descartada.
+1. Enquanto tem a chave, a pessoa registra com `SetRecovery`:
+   * de 1 a 16 **guardiões**, que podem ser chaves próprias guardadas em outro lugar, pessoas de confiança ou chaves de uma Comunidade;
+   * o **limiar** `k`, de 1 até o número de guardiões;
+   * o **prazo**, de 10 a 10 000 000 blocos.
 
-Pagar a taxa não basta para tomar uma conta: é preciso a chave de recuperação registrada pela própria dona, e esperar um prazo que ela escolheu e pode interromper.
+   Uma chave de recuperação única é o caso 1-de-1. A própria chave atual não pode ser guardiã.
+2. Se perder a chave, reúne a aprovação de `k` guardiões distintos. Cada um assina, fora da cadeia, com o contexto `rede-zero/key-recovery/v1`:
+
+   ```text
+   recovery_payload = encode(conta ‖ nova_chave ‖ u64(contador))
+   ```
+
+   O `contador` é o de recuperação da conta (consulta `GET_RECOVERY`). Ele muda a cada `SetRecovery`, a cada agendamento e a cada rotação, então aprovações de uma recuperação cancelada **não valem de novo**.
+3. Qualquer conta submete `RecoverAccount` com as aprovações e paga a taxa. A troca fica **agendada** para `h + prazo`.
+4. Durante o prazo, a chave atual cancela a troca com qualquer `SetRecovery` ou `RotateKey`. É a defesa contra guardiões coniventes ou roubados. `zero-wallet key-info` mostra a recuperação agendada.
+5. No fim do bloco da altura agendada, a troca é aplicada se as regras do §3 ainda valerem. Se não valerem, é descartada.
+
+Pagar a taxa não basta para tomar uma conta: são precisos `k` guardiões escolhidos pela própria dona, e a espera de um prazo que ela escolheu e pode interromper.
+
+Na Wallet:
+
+* `recovery-set --guardians HEX,... --threshold K --delay-blocks N`;
+* cada guardião roda `recovery-approve --account HEX --new-public-key HEX` e entrega a aprovação em hexadecimal;
+* quem recupera roda `recover --account HEX --new-key ARQUIVO --approvals HEX,...`.
 
 ## 5. O que não migra
 
@@ -102,7 +120,10 @@ O que migra, por continuar no mesmo endereço, é tudo o que já é transferíve
 | `0x37` | `GET_KEY` | `PublicKey key` |
 | `0x38` | `KEY` | `u64 height, PublicKey key, option<Address> account, option<PublicKey> current, option<Recovery>, option<PendingRecovery>` |
 
-`account` é `None` para uma chave substituída. A Wallet usa a consulta para saber por qual conta a chave assina (nonce, saldo, bloqueios).
+| `0x39` | `GET_RECOVERY` | `Address account` |
+| `0x3a` | `RECOVERY` | `u64 height, Address account, option<PublicKey> current, option<Recovery>, u64 nonce, option<PendingRecovery>` |
+
+`account` é `None` para uma chave substituída. A Wallet usa `GET_KEY` para saber por qual conta a chave assina (nonce, saldo, bloqueios), e `GET_RECOVERY`, pelo endereço, para recuperar uma conta cuja chave se perdeu.
 
 ## 7. Estado
 
@@ -110,7 +131,8 @@ O que migra, por continuar no mesmo endereço, é tudo o que já é transferíve
 keys_root = H("rede-zero/keys-root/v1",
               u64(n) ‖ Σ (conta ‖ chave_autorizada) ‖
               u64(n) ‖ Σ (conta ‖ recuperação) ‖
-              u64(n) ‖ Σ (conta ‖ recuperação_agendada))
+              u64(n) ‖ Σ (conta ‖ recuperação_agendada) ‖
+              u64(n) ‖ Σ (conta ‖ u64(contador_de_recuperação)))
 ```
 
 Ela entra na raiz do estado depois de `releases_root` (`spec/STATE.md §3`).
@@ -122,7 +144,8 @@ Ela entra na raiz do estado depois de `releases_root` (`spec/STATE.md §3`).
 | `keyfile::tests::*` | cifra e decifra, senha errada, adulteração do cabeçalho, parâmetros absurdos, conversão no lugar |
 | `rotation::tests::rotation_chain_and_return_to_origin` | encadeamento de rotações e volta à chave de origem |
 | `key_rotation_keeps_account_and_disables_old_key` | prova de posse, chave em uso, chave antiga recusada, endereço de origem protegido, delegada não se vincula |
-| `recovery_after_delay_and_cancellation` | só a chave de recuperação agenda; a chave atual cancela; a troca só vale após o prazo |
+| `recovery_after_delay_and_cancellation` | só a aprovação da guardiã agenda; a chave atual cancela; aprovações antigas não valem de novo; a troca só vale após o prazo |
+| `guardian_threshold_recovery` | 2 de 3 guardiões; um só não basta; aprovação repetida não conta duas vezes |
 | `bonded_key_cannot_rotate` | vínculo de validador preso à chave |
 | `rz-wallet rotation_devnet` | Nodes reais: rotação, consulta `KEY`, chave antiga recusada, nova chave movendo a mesma conta |
 | `conformance/cadeia.txt` | rotação, recuperação registrada e bloco com chave substituída rejeitado |

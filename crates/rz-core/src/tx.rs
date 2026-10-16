@@ -111,12 +111,15 @@ pub enum TxKind {
     SetRecovery {
         recovery: Option<crate::rotation::Recovery>,
     },
-    /// Tag `0x17` — assinada pela chave de recuperação de `account`: agenda
-    /// a troca para `new_key`, aplicada depois do prazo.
+    /// Tag `0x17` — por qualquer conta, com as aprovações de guardiões de
+    /// `account` (limiar): agenda a troca para `new_key`, aplicada depois do
+    /// prazo.
     RecoverAccount {
         account: Address,
         new_key: PublicKey,
         proof: Signature,
+        /// Aprovações dos guardiões sobre `recovery_payload`.
+        approvals: Vec<Approval>,
     },
     /// Tag `0x20` — bloqueia ZERO como validador (ADR-0012). A chave do
     /// remetente passa a ser candidata; efeito a partir da próxima época.
@@ -374,8 +377,13 @@ impl Encode for TxKind {
                 account,
                 new_key,
                 proof,
+                approvals,
             } => {
-                e.u8(0x17).put(account).put(new_key).put(proof);
+                e.u8(0x17)
+                    .put(account)
+                    .put(new_key)
+                    .put(proof)
+                    .list(approvals);
             }
             TxKind::Bond { amount } => {
                 e.u8(0x20).u64(*amount);
@@ -663,6 +671,7 @@ impl Decode for TxKind {
                 account: d.get()?,
                 new_key: d.get()?,
                 proof: d.get()?,
+                approvals: d.list(crate::rotation::MAX_GUARDIANS)?,
             }),
             0x20 => Ok(TxKind::Bond { amount: d.u64()? }),
             0x21 => Ok(TxKind::Unbond { amount: d.u64()? }),
@@ -1108,13 +1117,9 @@ impl AccountTx {
                 }
             }
             TxKind::SetRecovery { recovery: Some(r) } => {
-                if r.key == self.body.sender {
+                r.validate().map_err(TxError::Key)?;
+                if r.guardians.contains(&self.body.sender) {
                     return Err(TxError::Key("a chave de recuperação é a própria chave"));
-                }
-                if !(crate::rotation::MIN_RECOVERY_DELAY..=crate::rotation::MAX_RECOVERY_DELAY)
-                    .contains(&r.delay)
-                {
-                    return Err(TxError::Key("prazo de recuperação fora dos limites"));
                 }
             }
             TxKind::SetRecovery { recovery: None } => {}

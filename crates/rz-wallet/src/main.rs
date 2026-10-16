@@ -35,10 +35,13 @@ Rotação e recuperação (ADR-0023) — o endereço da conta não muda:
   zero-wallet key-info --genesis FILE --node ADDR (--key FILE | --public-key HEX)
   zero-wallet key-rotate --genesis FILE --node ADDR --key ATUAL --new-key NOVA
                       [--new-passphrase-file ARQUIVO]
-  zero-wallet recovery-set --genesis FILE --node ADDR --key FILE
-                      (--recovery-public-key HEX --delay-blocks N | --remove)
+  zero-wallet recovery-set --genesis FILE --node ADDR --key FILE --delay-blocks N
+                      (--guardians HEX,HEX,... --threshold K | --recovery-public-key HEX | --remove)
                       também cancela uma recuperação agendada
-  zero-wallet recover --genesis FILE --node ADDR --key RECUPERAÇÃO --account HEX --new-key NOVA
+  zero-wallet recovery-approve --genesis FILE --node ADDR --key GUARDIÃO --account HEX
+                      --new-public-key HEX                 aprovação de guardião (hex)
+  zero-wallet recover --genesis FILE --node ADDR --key FILE --account HEX --new-key NOVA
+                      [--approvals HEX,HEX,...]            sem --approvals: a chave é a guardiã (1 de 1)
                       a troca só vale depois do prazo; até lá a chave atual pode cancelar
   Pontos de contribuição e vínculos de validador ficam com a chave antiga (não migram).
   Notas privadas pertencem à chave: envie-as ao endereço zs… da nova chave.
@@ -249,6 +252,7 @@ fn main() -> ExitCode {
         "key-rotate" => cmd_key_rotate(&args),
         "recovery-set" => cmd_recovery_set(&args),
         "recover" => cmd_recover(&args),
+        "recovery-approve" => cmd_recovery_approve(&args),
         "address" => address(&args),
         "balance" => balance(&args),
         "shield" => cmd_shield(&args),
@@ -437,7 +441,17 @@ fn cmd_key_info(args: &Args) -> Result<(), String> {
         println!("chave atual da conta: {c}");
     }
     match v.recovery {
-        Some(r) => println!("recuperação: {} (prazo de {} blocos)", r.key, r.delay),
+        Some(r) => println!(
+            "recuperação: {} de {} guardiões (prazo de {} blocos): {}",
+            r.threshold,
+            r.guardians.len(),
+            r.delay,
+            r.guardians
+                .iter()
+                .map(|k| k.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         None => println!("recuperação: nenhuma"),
     }
     if let Some(p) = v.pending {
@@ -479,14 +493,36 @@ fn cmd_recovery_set(args: &Args) -> Result<(), String> {
     let recovery = if args.get("remove").is_some() {
         None
     } else {
-        Some(rz_core::rotation::Recovery {
-            key: rz_crypto::PublicKey::from_hex(args.req("recovery-public-key")?)
-                .map_err(|_| "--recovery-public-key: chave inválida")?,
-            delay: args
-                .req("delay-blocks")?
-                .parse()
-                .map_err(|_| "--delay-blocks: número inválido")?,
-        })
+        let delay = args
+            .req("delay-blocks")?
+            .parse()
+            .map_err(|_| "--delay-blocks: número inválido")?;
+        let r = match (args.get("guardians"), args.get("recovery-public-key")) {
+            (Some(list), _) => rz_core::rotation::Recovery {
+                guardians: split_list(list)
+                    .iter()
+                    .map(|h| rz_crypto::PublicKey::from_hex(h))
+                    .collect::<Result<_, _>>()
+                    .map_err(|_| "--guardians: chave inválida")?,
+                threshold: args
+                    .req("threshold")?
+                    .parse()
+                    .map_err(|_| "--threshold: número inválido")?,
+                delay,
+            },
+            (None, Some(h)) => rz_core::rotation::Recovery::single(
+                rz_crypto::PublicKey::from_hex(h)
+                    .map_err(|_| "--recovery-public-key: chave inválida")?,
+                delay,
+            ),
+            (None, None) => {
+                return Err(
+                    "informe --guardians HEX,... --threshold N ou --recovery-public-key HEX".into(),
+                )
+            }
+        };
+        r.validate()?;
+        Some(r)
     };
     let (mut client, genesis) = open(args)?;
     let fee = fee(args, &genesis)?;
@@ -494,17 +530,46 @@ fn cmd_recovery_set(args: &Args) -> Result<(), String> {
         &mut client,
         &genesis,
         &keys,
-        TxKind::SetRecovery { recovery },
+        TxKind::SetRecovery {
+            recovery: recovery.clone(),
+        },
         fee,
     )?;
     match recovery {
         Some(r) => println!(
-            "recuperação {id}: {} poderá trocar a chave depois de {} blocos",
-            r.key, r.delay
+            "recuperação {id}: {} de {} guardiões poderão trocar a chave depois de {} blocos",
+            r.threshold,
+            r.guardians.len(),
+            r.delay
         ),
         None => println!("recuperação {id}: removida"),
     }
     println!("qualquer recuperação agendada foi cancelada");
+    Ok(())
+}
+
+/// Aprovação de guardião (assinada localmente) para recuperar `account`.
+fn cmd_recovery_approve(args: &Args) -> Result<(), String> {
+    let guardian = load_keys(args)?;
+    let account = Address::from_hex(args.req("account")?).ok_or("--account: endereço inválido")?;
+    let new_key = rz_crypto::PublicKey::from_hex(args.req("new-public-key")?)
+        .map_err(|_| "--new-public-key: chave inválida")?;
+    let (mut client, genesis) = open(args)?;
+    let (recovery, nonce, _) = rz_wallet::recovery_info(&mut client, account)?;
+    let r = recovery.ok_or("a conta não tem recuperação registrada")?;
+    if !r.guardians.contains(&guardian.transparent.public_key()) {
+        return Err("esta chave não é guardiã da conta".into());
+    }
+    let a = rz_core::rotation::approve_recovery(
+        &guardian.transparent,
+        &genesis.network_id,
+        &account,
+        &new_key,
+        nonce,
+    );
+    println!("aprovação (entregue a quem vai submeter a recuperação):");
+    println!("{}", rz_crypto::hex::encode(&a.to_canonical_bytes()));
+    println!("confira antes de aprovar: a conta {account} passará para a chave {new_key}");
     Ok(())
 }
 
@@ -515,6 +580,27 @@ fn cmd_recover(args: &Args) -> Result<(), String> {
     let (mut client, genesis) = open(args)?;
     let fee = fee(args, &genesis)?;
     let proof = rotation_proof(&genesis, &account, &new);
+    let approvals = match args.get("approvals") {
+        Some(list) => split_list(list)
+            .iter()
+            .map(|h| {
+                rz_crypto::hex::decode(h)
+                    .and_then(|b| rz_core::community::Approval::from_canonical_bytes(&b).ok())
+                    .ok_or_else(|| format!("--approvals: aprovação inválida '{h}'"))
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        // 1-de-1: a própria chave é a guardiã.
+        None => {
+            let (_, nonce, _) = rz_wallet::recovery_info(&mut client, account)?;
+            vec![rz_core::rotation::approve_recovery(
+                &keys.transparent,
+                &genesis.network_id,
+                &account,
+                &new.public_key(),
+                nonce,
+            )]
+        }
+    };
     let id = send_account(
         &mut client,
         &genesis,
@@ -523,6 +609,7 @@ fn cmd_recover(args: &Args) -> Result<(), String> {
             account,
             new_key: new.public_key(),
             proof,
+            approvals,
         },
         fee,
     )?;

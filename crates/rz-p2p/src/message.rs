@@ -475,6 +475,18 @@ pub enum Message {
         recovery: Option<Recovery>,
         pending: Option<PendingRecovery>,
     },
+    /// `0x39` — recuperação de uma conta, pelo endereço (quem perdeu a chave
+    /// pode não saber a chave de origem).
+    GetRecovery(Address),
+    /// `0x3a` — `nonce` é o contador que as aprovações de guardiões citam.
+    Recovery {
+        height: u64,
+        account: Address,
+        current: Option<rz_crypto::PublicKey>,
+        recovery: Option<Recovery>,
+        nonce: u64,
+        pending: Option<PendingRecovery>,
+    },
     /// `0x35` — versões do protocolo registradas na cadeia.
     GetReleases,
     /// `0x36` — versões publicadas (com altura de adoção) e a vigente.
@@ -825,6 +837,25 @@ impl Encode for Message {
                     .option(recovery)
                     .option(pending);
             }
+            Message::GetRecovery(a) => {
+                e.u8(0x39).put(a);
+            }
+            Message::Recovery {
+                height,
+                account,
+                current,
+                recovery,
+                nonce,
+                pending,
+            } => {
+                e.u8(0x3a)
+                    .u64(*height)
+                    .put(account)
+                    .option(current)
+                    .option(recovery)
+                    .u64(*nonce)
+                    .option(pending);
+            }
             Message::Releases {
                 height,
                 current,
@@ -1015,6 +1046,15 @@ impl Decode for Message {
                 recovery: d.option()?,
                 pending: d.option()?,
             },
+            0x39 => Message::GetRecovery(d.get()?),
+            0x3a => Message::Recovery {
+                height: d.u64()?,
+                account: d.get()?,
+                current: d.option()?,
+                recovery: d.option()?,
+                nonce: d.u64()?,
+                pending: d.option()?,
+            },
             0x36 => Message::Releases {
                 height: d.u64()?,
                 current: d.option()?,
@@ -1101,6 +1141,8 @@ impl Message {
             Message::GetReleases => "GET_RELEASES",
             Message::GetKey(_) => "GET_KEY",
             Message::Key { .. } => "KEY",
+            Message::GetRecovery(_) => "GET_RECOVERY",
+            Message::Recovery { .. } => "RECOVERY",
             Message::Releases { .. } => "RELEASES",
         }
     }

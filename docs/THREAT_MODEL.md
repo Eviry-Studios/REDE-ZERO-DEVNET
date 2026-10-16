@@ -352,9 +352,9 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 **Severidade:** MÉDIA
 **Adversários:** ADV-13
-**Mitigações:** rotação (`RotateKey`) e recuperação com prazo contestável (`SetRecovery`/`RecoverAccount`), sem trocar de endereço (ADR-0023, `spec/KEYS.md`); separação entre chave de Node e chave de Wallet.
+**Mitigações:** rotação (`RotateKey`) e recuperação por guardiões (k de até 16), com prazo contestável e aprovações que não valem duas vezes (`SetRecovery`/`RecoverAccount`), sem trocar de endereço (ADR-0023, `spec/KEYS.md`); separação entre chave de Node e chave de Wallet.
 
-**Risco residual:** sem chave de recuperação registrada, uma chave perdida continua perdida. Uma chave de recuperação roubada só toma a conta se a dona não cancelar dentro do prazo. Pontos de contribuição, vínculos e notas privadas não são recuperáveis por rotação (`spec/KEYS.md §5`).
+**Risco residual:** sem recuperação registrada, uma chave perdida continua perdida. `k` guardiões coniventes ou roubados só tomam a conta se a dona não cancelar dentro do prazo. Pontos de contribuição, vínculos e notas privadas não são recuperáveis por rotação (`spec/KEYS.md §5`).
 
 ### THR-ID-006 — Associação de identidade civil
 

@@ -1623,7 +1623,8 @@ impl Shared {
             | Message::Htlc { .. }
             | Message::Reputation { .. }
             | Message::Releases { .. }
-            | Message::Key { .. } => Flow::Continue,
+            | Message::Key { .. }
+            | Message::Recovery { .. } => Flow::Continue,
             Message::GetManifest(h) => self.handle_get_manifest(ctx, h),
             Message::Manifest { hash, bytes } => self.handle_manifest(ctx, hash, bytes),
             Message::GetContent(id) => self.handle_get_content(ctx, id),
@@ -1782,8 +1783,25 @@ impl Shared {
                         key,
                         account,
                         current: ks.current_key(&base),
-                        recovery: ks.recovery.get(&base).copied(),
+                        recovery: ks.recovery.get(&base).cloned(),
                         pending: ks.pending.get(&base).copied(),
+                    }
+                };
+                self.send_to(ctx.id, msg);
+                Flow::Continue
+            }
+            Message::GetRecovery(account) => {
+                let msg = {
+                    let c = lock(&self.core);
+                    let state = c.chain.state();
+                    let ks = state.keys();
+                    Message::Recovery {
+                        height: c.chain.height(),
+                        account,
+                        current: ks.current_key(&account),
+                        recovery: ks.recovery.get(&account).cloned(),
+                        nonce: ks.nonce(&account),
+                        pending: ks.pending.get(&account).copied(),
                     }
                 };
                 self.send_to(ctx.id, msg);

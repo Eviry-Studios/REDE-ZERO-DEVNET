@@ -1,6 +1,6 @@
 # spec/P2P.md — Protocolo P2P da DEVNET
 
-**Versão:** 0.14.0 (DEVNET), `P2P_VERSION = 13`
+**Versão:** 0.15.0 (DEVNET), `P2P_VERSION = 14`
 **Relacionamento:** `SPECIFICATIONS.md §23–§30`, ADR-0007, ADR-0010, ADR-0011, THR-P2P-001..006, THR-PRIV-002..004
 **Implementação de referência:** `crates/rz-p2p` (mensagens) e `crates/rz-node` (orquestração)
 
@@ -97,6 +97,8 @@ m = enc(Message)
 | `0x36` | `RELEASES` | `u64 height, option<fixed[32]> current, list<ReleaseRecord> releases` (≤256) (`spec/RELEASES.md §8`) |
 | `0x37` | `GET_KEY` | `PublicKey key` |
 | `0x38` | `KEY` | `u64 height, PublicKey key, option<Address> account, option<PublicKey> current, option<Recovery>, option<PendingRecovery>` (`spec/KEYS.md §6`) |
+| `0x39` | `GET_RECOVERY` | `Address account` |
+| `0x3a` | `RECOVERY` | `u64 height, Address account, option<PublicKey> current, option<Recovery>, u64 nonce, option<PendingRecovery>` (`spec/KEYS.md §4, §6`) |
 | `0x2e` | `MODULE_INFO` | `u64 height, fixed[32] community, option<fixed[32]> module, u32 seq, u64 usage` |
 
 `PeerAddr` (tag `u8`):

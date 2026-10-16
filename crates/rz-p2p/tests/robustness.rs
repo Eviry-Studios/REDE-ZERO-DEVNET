@@ -200,7 +200,7 @@ fn sample_release() -> rz_core::release::Release {
     rz_core::release::Release {
         version: "0.2.0-rc.1".into(),
         protocol_version: 2,
-        p2p_version: 13,
+        p2p_version: 14,
         compatibility: rz_core::release::Compatibility::PartiallyCompatible,
         previous: Some(Hash32([7; 32])),
         specification: Hash32([1; 32]),
@@ -938,7 +938,8 @@ fn corpus() -> Corpus {
                 n,
                 TxKind::SetRecovery {
                     recovery: Some(rz_core::rotation::Recovery {
-                        key: rich().public_key(),
+                        guardians: vec![rich().public_key(), validator().public_key()],
+                        threshold: 2,
                         delay: 100,
                     }),
                 },
@@ -949,6 +950,13 @@ fn corpus() -> Corpus {
                     account: rich().public_key().address(),
                     new_key: validator().public_key(),
                     proof: rich().sign(rz_core::rotation::KEY_ROTATION, "x", b"y"),
+                    approvals: vec![rz_core::rotation::approve_recovery(
+                        &rich(),
+                        "x",
+                        &rich().public_key().address(),
+                        &validator().public_key(),
+                        3,
+                    )],
                 },
             ),
         ])
@@ -1003,14 +1011,26 @@ fn corpus() -> Corpus {
             key: rich().public_key(),
             account: None,
             current: Some(validator().public_key()),
-            recovery: Some(rz_core::rotation::Recovery {
-                key: validator().public_key(),
-                delay: 10,
-            }),
+            recovery: Some(rz_core::rotation::Recovery::single(
+                validator().public_key(),
+                10,
+            )),
             pending: Some(rz_core::rotation::PendingRecovery {
                 new_key: validator().public_key(),
                 at: 30,
             }),
+        },
+        Message::GetRecovery(rich().public_key().address()),
+        Message::Recovery {
+            height: 4,
+            account: rich().public_key().address(),
+            current: None,
+            recovery: Some(rz_core::rotation::Recovery::single(
+                validator().public_key(),
+                10,
+            )),
+            nonce: 7,
+            pending: None,
         },
         Message::Releases {
             height: 9,
