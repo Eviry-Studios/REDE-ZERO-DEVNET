@@ -342,6 +342,52 @@ fn browser_end_to_end() {
         .map(|a| a.0 == 2 * rz_core::UNITS_PER_ZERO)
         .unwrap_or(false)));
 
+    // 4b. Privado pelo Navegador: blindar e enviar para um endereço zs…,
+    //     sempre com aprovação na interface; as notas são varridas localmente.
+    let approve_from_site = |form: &str| {
+        let r = http(port, "POST", &host, "/.zero/pedido", Some(&site_url), form);
+        assert_eq!(r.status, 200, "{}", r.body);
+        let pid = r.body.split("\"pedido\":\"").nth(1).unwrap()[..32].to_string();
+        let page = http(port, "GET", &ui, &format!("/pedidos/{pid}"), None, "");
+        let token = token_from(&page.body);
+        let ok = http(
+            port,
+            "POST",
+            &ui,
+            &format!("/pedidos/{pid}/aprovar"),
+            Some(&ui_url),
+            &format!("token={token}"),
+        );
+        assert_eq!(ok.status, 303);
+        let st = http(
+            port,
+            "GET",
+            &host,
+            &format!("/.zero/pedido/{pid}"),
+            None,
+            "",
+        )
+        .body;
+        assert!(st.contains("\"estado\":\"aprovado\""), "{st}");
+        page.body
+    };
+    let page = approve_from_site("tipo=blindar&valor=5");
+    assert!(page.contains("blindar"));
+    assert!(wait_until(|| rz_wallet::private_view(&mut c1, &u)
+        .map(|(_, n)| n.iter().map(|x| x.note.amount).sum::<u64>() == 5 * rz_core::UNITS_PER_ZERO)
+        .unwrap_or(false)));
+    let friend = Keys::from_secret(SecretKey::from_seed([232; 32]));
+    let page = approve_from_site(&format!(
+        "tipo=transferencia&para={}&valor=1",
+        friend.shielded_address().encode()
+    ));
+    assert!(page.contains("PRIVADO"), "a revisão avisa que é privado");
+    assert!(wait_until(|| rz_wallet::private_view(&mut c2, &friend)
+        .map(|(_, n)| n.iter().map(|x| x.note.amount).sum::<u64>() == rz_core::UNITS_PER_ZERO)
+        .unwrap_or(false)));
+    let wallet_page = http(port, "GET", &ui, "/carteira", None, "").body;
+    assert!(wallet_page.contains("Saldo privado"));
+
     // 5. Identidade por site: verificável e diferente entre sites, sem
     //    revelar a Wallet.
     let sign = |origin_url: &str, h: &str| {

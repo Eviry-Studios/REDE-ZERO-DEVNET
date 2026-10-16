@@ -61,6 +61,13 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Envios privados pelo Navegador Zero
+
+* A página `/carteira` mostra o saldo privado, com as notas varridas localmente, e passa a oferecer envio privado (RingCT) para `zs…`, envio transparente para hexadecimal e blindagem.
+* Pedidos de publicações aceitam `para=zs…` (envio privado) e `tipo=blindar`, sempre com aprovação na interface e aviso de privacidade.
+* Na Wallet do Navegador, a conta é resolvida pela chave (correto também depois de uma rotação, ADR-0023).
+* `spec/BROWSER.md` v0.2.0.
+
 ### Adicionado — Redes da ponte adotadas por governança
 
 * `spec/BRIDGE.md` v0.2.0 §2.1 resolve a pendência.

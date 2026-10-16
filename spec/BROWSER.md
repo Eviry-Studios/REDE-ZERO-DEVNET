@@ -1,6 +1,6 @@
 # spec/BROWSER.md — Navegador Zero
 
-**Versão:** 0.1.0 (DEVNET)
+**Versão:** 0.2.0 (DEVNET)
 **Decisão:** ADR-0017
 **Relacionamento:** `SPECIFICATIONS.md §58–§59`, `§62`, REQ-064..067, AC-BRW-001..004, AT-BRW-001..003, THR-BRW-001/002, THR-COM-001, THR-PRIV-*, INV-008
 **Implementação de referência:** `crates/rz-browser` (`zero-navegador`)
@@ -77,7 +77,8 @@ Publicações nunca recebem chaves. A API da publicação, na própria origem:
 | `GET /.zero/pedido/ID` | estado do pedido, só para a origem que o criou |
 
 ```text
-tipo=transferencia & para=ENDEREÇO & valor=ZERO
+tipo=transferencia & para=ENDEREÇO & valor=ZERO      // zs… = envio PRIVADO (RingCT); hex = transparente
+tipo=blindar & valor=ZERO                            // transparente → nota privada própria
 tipo=ordem & ativo=HEX|rede:ativo & lado=compra|venda & quantidade=Q & preco=ZERO_POR_UNIDADE [& blocos=N]
 tipo=cancelar & ordem=HEX
 tipo=voto & proposta=HEX & escolha=sim|nao|abstencao
@@ -99,7 +100,7 @@ Ele só é executado quando a pessoa clica em **Aprovar** na interface. Formulá
 | --- | --- |
 | identificação e conexão | `/` (rede, Node, altura, modo de conexão, endereço, fixados) |
 | navegação | `/ir?endereco=` |
-| Wallet | `/carteira` (saldo, transferência transparente; envios privados pela `zero-wallet`) |
+| Wallet | `/carteira` (saldos privado e transparente, envio privado para `zs…` ou transparente, blindagem; as notas privadas são varridas localmente pelo Navegador) |
 | Grande Mercado | `/mercado`, `/mercado/ativo?id=` (Pool, livro, ordens próprias, nova ordem, cancelamento) |
 | governança | `/governanca` (propostas e voto) |
 | Comunidades | `/comunidade?nome=` (estado, regra, manifesto, versões) |

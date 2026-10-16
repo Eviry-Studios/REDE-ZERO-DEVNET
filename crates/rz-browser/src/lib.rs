@@ -550,6 +550,34 @@ impl Navegador {
         }
         let txid = self.with_client(|c| {
             let params = rz_wallet::governance(c, None)?.params;
+            match op {
+                Operation::PrivateSend { to, amount } => {
+                    let Some(to @ rz_wallet::Destination::Shielded(_)) =
+                        rz_wallet::Destination::parse(to)
+                    else {
+                        return Err("endereço privado inválido".into());
+                    };
+                    return rz_wallet::send_private(
+                        c,
+                        &self.genesis,
+                        keys,
+                        to,
+                        *amount,
+                        params.min_fee,
+                    );
+                }
+                Operation::Shield { amount } => {
+                    return rz_wallet::shield(
+                        c,
+                        &self.genesis,
+                        keys,
+                        &keys.shielded_address(),
+                        *amount,
+                        params.min_fee,
+                    );
+                }
+                _ => {}
+            }
             let fuel_fee = match op {
                 Operation::Call { fuel, .. } => params
                     .runtime
@@ -558,7 +586,8 @@ impl Navegador {
                 _ => 0,
             };
             let fee = params.min_fee.saturating_add(fuel_fee);
-            let (_, _, height) = rz_wallet::account(c, keys.address())?;
+            let account = rz_wallet::account_address(c, keys)?;
+            let (_, _, height) = rz_wallet::account(c, account)?;
             let kind = op.tx_kind(height).ok_or("operação sem transação")?;
             rz_wallet::send_account(c, &self.genesis, keys, kind, fee)
         })?;

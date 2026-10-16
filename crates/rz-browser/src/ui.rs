@@ -268,31 +268,57 @@ fn wallet(nav: &Navegador) -> (String, String) {
         );
     };
     let mut b = String::from("<h1>Wallet</h1>");
-    match nav.with_client(|c| rz_wallet::account(c, keys.address())) {
-        Ok((balance, nonce, height)) => b.push_str(&kv(&[
-            ("Endereço transparente", code(keys.address())),
+    let view = nav.with_client(|c| {
+        let account = rz_wallet::account_address(c, keys)?;
+        let (balance, nonce, height) = rz_wallet::account(c, account)?;
+        // As notas privadas são varridas aqui, localmente: o Node não sabe
+        // quais são suas.
+        let (_, notes) = rz_wallet::private_view(c, keys)?;
+        Ok((account, balance, nonce, height, notes))
+    });
+    match view {
+        Ok((account, balance, nonce, height, notes)) => b.push_str(&kv(&[
+            (
+                "Endereço privado (recomendado)",
+                code(keys.shielded_address()),
+            ),
+            (
+                "Saldo privado",
+                format!(
+                    "{} ZERO ({} notas)",
+                    format_zero(notes.iter().map(|n| n.note.amount).sum()),
+                    notes.len()
+                ),
+            ),
+            ("Conta transparente", code(account)),
             (
                 "Saldo transparente",
                 format!("{} ZERO", format_zero(balance)),
             ),
             ("Nonce", nonce.to_string()),
             ("Altura", height.to_string()),
-            ("Endereço privado", code(keys.shielded_address())),
         ])),
         Err(e) => b.push_str(&err_box(&e)),
     }
-    b.push_str("<h2>Transferir (transparente)</h2>");
+    b.push_str("<h2>Enviar</h2>");
+    b.push_str(
+        "<p>Para um endereço <code>zs…</code> o envio é PRIVADO (gasta saldo privado: remetente, destinatário e valor ocultos). Para um endereço hexadecimal, é transparente e público.</p>",
+    );
     b.push_str(&form(
         "/pedir",
         &nav.token,
         &(hidden("tipo", "transferencia")
-            + &field("Para (endereço transparente)", "para", "")
+            + &field("Para (zs… ou hexadecimal)", "para", "")
             + &field("Valor em ZERO", "valor", "")),
         "Revisar",
     ));
-    b.push_str(
-        "<p>Envios privados (RingCT) continuam na <code>zero-wallet send</code>, que varre suas notas localmente.</p>",
-    );
+    b.push_str("<h2>Blindar (transparente → privado)</h2>");
+    b.push_str(&form(
+        "/pedir",
+        &nav.token,
+        &(hidden("tipo", "blindar") + &field("Valor em ZERO", "valor", "")),
+        "Revisar",
+    ));
     ("Wallet".into(), b)
 }
 

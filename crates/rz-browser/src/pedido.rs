@@ -30,6 +30,15 @@ pub enum Operation {
         to: Address,
         amount: u64,
     },
+    /// Envio privado (RingCT) para um endereço `zs…`, guardado codificado.
+    PrivateSend {
+        to: String,
+        amount: u64,
+    },
+    /// Blindagem: saldo transparente → nota privada própria.
+    Shield {
+        amount: u64,
+    },
     Order {
         asset: AssetId,
         label: String,
@@ -118,6 +127,23 @@ impl Operation {
                 l(
                     "Privacidade",
                     "remetente, destinatário e valor ficam públicos".into(),
+                ),
+            ],
+            Operation::PrivateSend { to, amount } => vec![
+                l("Operação", "envio PRIVADO de ZERO (RingCT)".into()),
+                l("Para", to.clone()),
+                l("Valor", format!("{} ZERO", format_zero(*amount))),
+                l(
+                    "Privacidade",
+                    "remetente, destinatário e valor ficam ocultos; o remetente se esconde num anel de 11 (anonimato probabilístico, não absoluto)".into(),
+                ),
+            ],
+            Operation::Shield { amount } => vec![
+                l("Operação", "blindar ZERO (transparente → privado)".into()),
+                l("Valor", format!("{} ZERO", format_zero(*amount))),
+                l(
+                    "Privacidade",
+                    "a saída da sua conta transparente e o valor ficam públicos; a nota privada criada, não".into(),
                 ),
             ],
             Operation::Order {
@@ -244,7 +270,9 @@ impl Operation {
                 args: args.clone(),
                 fuel: *fuel,
             },
-            Operation::Sign { .. } => return None,
+            Operation::Sign { .. } | Operation::PrivateSend { .. } | Operation::Shield { .. } => {
+                return None
+            }
         })
     }
 }
@@ -262,8 +290,27 @@ pub fn parse(f: &BTreeMap<String, String>, lookup: &dyn Lookup) -> Result<Operat
         Hash32::from_hex(get(k)?).ok_or(format!("campo '{k}': identificador inválido"))
     };
     match get("tipo")? {
-        "transferencia" => Ok(Operation::Transfer {
-            to: Address::from_hex(get("para")?).ok_or("campo 'para': endereço inválido")?,
+        "transferencia" => {
+            let to = get("para")?;
+            let amount = parse_zero(get("valor")?)
+                .filter(|v| *v > 0)
+                .ok_or("campo 'valor' inválido")?;
+            // `zs…` é privado; hexadecimal, transparente.
+            if matches!(
+                rz_wallet::Destination::parse(to),
+                Some(rz_wallet::Destination::Shielded(_))
+            ) {
+                return Ok(Operation::PrivateSend {
+                    to: to.to_string(),
+                    amount,
+                });
+            }
+            Ok(Operation::Transfer {
+                to: Address::from_hex(to).ok_or("campo 'para': endereço inválido")?,
+                amount,
+            })
+        }
+        "blindar" => Ok(Operation::Shield {
             amount: parse_zero(get("valor")?)
                 .filter(|v| *v > 0)
                 .ok_or("campo 'valor' inválido")?,
@@ -530,5 +577,36 @@ mod tests {
             )
             .is_err());
         assert!(p.items["0"].json().contains("\"estado\":\"pendente\""));
+    }
+
+    #[test]
+    fn private_destinations_and_shield() {
+        let keys = rz_wallet::Keys::from_secret(rz_crypto::SecretKey::from_seed([9; 32]));
+        let zs = keys.shielded_address().encode();
+        let op = parse(
+            &form(&[("tipo", "transferencia"), ("para", &zs), ("valor", "1.5")]),
+            &NoLookup,
+        )
+        .unwrap();
+        assert_eq!(
+            op,
+            Operation::PrivateSend {
+                to: zs,
+                amount: 150_000_000
+            }
+        );
+        assert!(
+            op.tx_kind(1).is_none(),
+            "envio privado não é transação de conta"
+        );
+        assert!(op.describe().iter().any(|(_, v)| v.contains("ocultos")));
+        let sh = parse(&form(&[("tipo", "blindar"), ("valor", "2")]), &NoLookup).unwrap();
+        assert_eq!(
+            sh,
+            Operation::Shield {
+                amount: 200_000_000
+            }
+        );
+        assert!(parse(&form(&[("tipo", "blindar"), ("valor", "0")]), &NoLookup).is_err());
     }
 }
