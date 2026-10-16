@@ -38,6 +38,28 @@ pub const BURN_MAGIC: &[u8; 3] = b"RZ1";
 pub const BURN_PAYLOAD_LEN: usize = 3 + 8 + 32;
 
 pub const MAX_CHAINS: usize = 16;
+/// Contexto do identificador de uma configuração de rede proposta.
+pub const BRIDGE_CHAIN_ID: &str = "rede-zero/bridge-chain/v1";
+/// Configurações publicadas aguardando adoção.
+pub const MAX_PROPOSED_CHAINS: usize = 16;
+
+/// Identificador de uma configuração publicada (`spec/BRIDGE.md §2.1`).
+pub fn chain_config_id(c: &ChainConfig) -> Hash32 {
+    hash(BRIDGE_CHAIN_ID, &c.to_canonical_bytes())
+}
+
+/// Configuração de rede publicada, aguardando proposta constitucional.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProposedChain {
+    pub config: ChainConfig,
+    pub published_at: u64,
+}
+
+impl Encode for ProposedChain {
+    fn encode(&self, e: &mut Encoder) {
+        e.put(&self.config).u64(self.published_at);
+    }
+}
 pub const MAX_HEADERS_PER_TX: usize = 500;
 pub const MAX_ORIGIN_TX: usize = 100_000;
 pub const MAX_MERKLE_DEPTH: usize = 32;
@@ -1032,6 +1054,8 @@ pub struct BridgeState {
     pub chains: BTreeMap<String, ChainState>,
     pub htlcs: BTreeMap<Hash32, Htlc>,
     pub settled: VecDeque<Settled>,
+    /// Redes publicadas para adoção por governança (`spec/BRIDGE.md §2.1`).
+    pub proposed: BTreeMap<Hash32, ProposedChain>,
 }
 
 impl BridgeState {
@@ -1077,6 +1101,10 @@ impl BridgeState {
         e.u64(self.settled.len() as u64);
         for s in &self.settled {
             e.put(s);
+        }
+        e.u64(self.proposed.len() as u64);
+        for (id, p) in &self.proposed {
+            e.put(id).put(p);
         }
         hash(BRIDGE_ROOT, &e.into_bytes())
     }

@@ -61,6 +61,12 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Redes da ponte adotadas por governança
+
+* `spec/BRIDGE.md` v0.2.0 §2.1 resolve a pendência.
+* `PublishBridgeChain` (tag `0x75`): publica a configuração de uma nova rede de origem, com a mesma validação do Genesis, só em DEVNET e TESTNET, custo queimado. A adoção depende de proposta constitucional com `bridge_add_chain` (tag 36). Na ativação, a rede e o ativo `LightClientBurn` (oferta zero) entram. Configurações não adotadas expiram.
+* Comandos `zero-wallet bridge-chain-new` e `bridge-chain-publish`. THR-BRG-005. Vetores de conformidade regenerados.
+
 ### Adicionado — Validade e renovação de nomes `zero://`
 
 * `spec/NAMING.md` v0.2.0 §4.1 resolve a pendência de renovação.

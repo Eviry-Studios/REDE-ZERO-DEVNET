@@ -1,6 +1,6 @@
 # spec/BRIDGE.md — Ponte para ativos externos
 
-**Versão:** 0.1.0 (DEVNET)
+**Versão:** 0.2.0 (DEVNET)
 **Decisão:** ADR-0019
 **Relacionamento:** `SPECIFICATIONS.md §38–§42`, `ARCHITECTURE.md §30`, REQ-036..039, AC-POOL-004/005, AT-POOL-004, THR-POOL-002, THR-BRG-001..004, ADR-0014
 **Implementação de referência:** `crates/rz-core/src/bridge.rs`, `crates/rz-core/src/state.rs`, `crates/rz-wallet`
@@ -41,7 +41,28 @@ Validação:
 
 Cada rede registra o ativo `AssetId::external(name, asset_ref)` com `Verification::LightClientBurn` e oferta inicial **zero**.
 
-Adicionar redes depois do Genesis exige uma versão nova do software, aprovada pela governança. Uma operação própria para isso fica A DEFINIR.
+### 2.1 Novas redes depois do Genesis
+
+Uma nova rede de origem entra como uma versão do protocolo (ADR-0021): alguém a **publica**, e só a governança a **adota**.
+
+1. `PublishBridgeChain { config: ChainConfig }` (tag `0x75`), por qualquer conta:
+   * a configuração passa pela mesma validação do Genesis (§2);
+   * a rede é DEVNET ou TESTNET;
+   * há vaga (no máximo 16 redes);
+   * nome e ativo não estão em uso;
+   * cabem no máximo 16 configurações publicadas ao mesmo tempo;
+   * o custo, `gov_deposit`, é **queimado**.
+
+   `id = H("rede-zero/bridge-chain/v1", encode(config))`.
+2. Proposta **constitucional** com `bridge_add_chain = id` (tag 36, `spec/GOVERNANCE.md §3`): só é aceita se a configuração está publicada e a rede ainda cabe.
+3. Na ativação, as condições são conferidas de novo e a rede entra:
+   * cliente leve no ponto de partida;
+   * ativo `AssetId::external(name, asset_ref)` com `LightClientBurn` e oferta zero.
+
+   Se outra proposta ocupou o nome ou a vaga, a proposta fica `ActivationFailed`.
+4. Uma configuração não adotada sai do registro após `analysis + voting + constitutional_delay` blocos, salvo se uma proposta pendente ou aprovada a referenciar.
+
+Remover uma rede não existe nesta versão: o ativo já cunhado continuaria representando o que foi queimado na origem.
 
 ## 3. Cliente leve
 
@@ -121,13 +142,14 @@ Os valores retidos entram nas invariantes:
 | `0x70` | `BridgeHeaders { chain, headers: list<fixed[80]> (≤500) }` |
 | `0x71` | `BridgeDeposit { chain, block, tx, path, index }` |
 | `0x72–0x74` | trocas atômicas (§5) |
+| `0x75` | `PublishBridgeChain { config }` (§2.1) |
 
 | Mensagem | Resposta |
 | --- | --- |
 | `GET_BRIDGE chain` (0x2f) | `BRIDGE {height, chain, best?: (bloco, altura), confirmations, asset, claimed}` (0x30) |
 | `GET_HTLC id` (0x31) | `HTLC {height, htlc?, settled?}` (0x32) |
 
-Raiz: `bridge_root = H("rede-zero/bridge-root/v1", redes (configuração, ponta, cabeçalhos, queimas usadas) ‖ HTLCs ‖ liquidações)`. Ela entra na raiz do estado depois de `runtime_root`.
+Raiz: `bridge_root = H("rede-zero/bridge-root/v1", redes (configuração, ponta, cabeçalhos, queimas usadas) ‖ HTLCs ‖ liquidações ‖ configurações publicadas (id ‖ config ‖ altura))`. Ela entra na raiz do estado depois de `runtime_root`.
 
 ## 7. Testes
 
@@ -138,6 +160,7 @@ Raiz: `bridge_root = H("rede-zero/bridge-root/v1", redes (configuração, ponta,
   * saídas de queima, Merkle e extração de `merkleblock` em todas as posições de árvores de 1 a 13 transações.
 * `bridge_tests` (estado):
   * regras do Genesis;
+  * rede adicionada por proposta constitucional (`chain_added_after_genesis_by_constitutional_proposal`) e recusa fora de DEVNET/TESTNET;
   * cunhagem única após confirmações;
   * queima de outra rede e transação de 64 bytes;
   * regras de cabeçalho e reorganização;

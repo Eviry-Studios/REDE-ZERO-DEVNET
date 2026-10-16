@@ -24,7 +24,7 @@ A operação `TxKind::Shield` (tag `0x01`) está descrita em `spec/PRIVACY.md §
 | `0x30–0x33` | Grande Mercado e Pool (`TransferAsset`, `PoolDeposit`, `PlaceOrder`, `CancelOrder`) | `spec/MARKET.md` |
 | `0x40–0x42` | Comunidades (`DeclareCommunity`, `CommunityPosition`, `UpdateCommunity`) | `spec/COMMUNITIES.md` |
 | `0x43–0x45` | nomes `zero://` (`RegisterName`, `UpdateName`, `RenewName`) | `spec/NAMING.md` |
-| `0x70–0x74` | Ponte e trocas atômicas (`BridgeHeaders`, `BridgeDeposit`, `HtlcLock`, `HtlcClaim`, `HtlcRefund`) | `spec/BRIDGE.md` |
+| `0x70–0x75` | Ponte e trocas atômicas (`BridgeHeaders`, `BridgeDeposit`, `HtlcLock`, `HtlcClaim`, `HtlcRefund`, `PublishBridgeChain`) | `spec/BRIDGE.md` |
 | `0x60–0x62` | Exonet Runtime (`PublishModule`, `BindModule`, `CallModule`) | `spec/RUNTIME.md` |
 | `0x80` | Atualizações verificáveis (`PublishRelease`) | `spec/RELEASES.md` |
 | `0x50–0x56` | Defesa da Exonet (`DefenseTransition`, `IncidentUpdate`, `CloseIncident`, `GrantCredential`, `RevokeCredential`, `DefenseAction`, `AttestContribution`) | `spec/DEFENSE.md` |

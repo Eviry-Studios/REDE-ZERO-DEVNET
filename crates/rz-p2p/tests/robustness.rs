@@ -309,6 +309,8 @@ fn corpus() -> Corpus {
                     ParamChange::MinBond(5),
                     ParamChange::WithdrawCommunity(Hash32([3; 32])),
                     ParamChange::RestoreCommunity(Hash32([4; 32])),
+                    ParamChange::NamePeriod(1_000),
+                    ParamChange::AddBridgeChain(Hash32([5; 32])),
                 ],
                 release_id: Some(Hash32([8; 32])),
                 deposit: 1_000,
@@ -888,6 +890,25 @@ fn corpus() -> Corpus {
                 n,
                 TxKind::PublishRelease {
                     release: sample_release(),
+                },
+            ),
+            account_tx(
+                n,
+                TxKind::PublishBridgeChain {
+                    config: rz_core::bridge::ChainConfig {
+                        name: "outra-origem".into(),
+                        asset_ref: "OUT".into(),
+                        decimals: 8,
+                        rules: rz_core::bridge::PowRules {
+                            pow_limit: Hash32([0x7f; 32]),
+                            retarget: false,
+                            interval: 2016,
+                            target_timespan: 1_209_600,
+                        },
+                        checkpoint: [0; 80],
+                        checkpoint_height: 0,
+                        confirmations: 6,
+                    },
                 },
             ),
             account_tx(

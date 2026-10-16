@@ -73,13 +73,13 @@ ParamChange (tag u8): 0 min_fee u64 | 1 max_block_txs u32 | 2 gov_deposit | 3 an
                       | 30 runtime_module_byte_fee | 31 runtime_storage_quota
                       | 32 defense_contribution_points
                       | 33 community_withdraw | 34 community_restore
-                      | 35 name_period_blocks
+                      | 35 name_period_blocks | 36 bridge_add_chain (fixed[32], id da configuração)
                                                                      (u64, exceto tag 1: u32; tags 33 e 34: fixed[32], id da Comunidade)
 
 Tags 0 e 1 são da categoria ordinária; as demais, constitucional. Os parâmetros
 resultantes são validados antes de a proposta ser aceita (tags 10..19:
 spec/CONSENSUS.md §2; tags 20..21: spec/MARKET.md §6; tags 22..23:
-spec/COMMUNITIES.md §8; tags 24..26: spec/DEFENSE.md §6; tags 27..31: spec/RUNTIME.md §6; tag 32: spec/REPUTATION.md §4; tags 33..34: spec/COMMUNITIES.md §6.1, que também exige o estado da Comunidade na submissão e na ativação; tag 35: spec/NAMING.md §4.1).
+spec/COMMUNITIES.md §8; tags 24..26: spec/DEFENSE.md §6; tags 27..31: spec/RUNTIME.md §6; tag 32: spec/REPUTATION.md §4; tags 33..34: spec/COMMUNITIES.md §6.1, que também exige o estado da Comunidade na submissão e na ativação; tag 35: spec/NAMING.md §4.1; tag 36: spec/BRIDGE.md §2.1).
 
 Uma proposta da categoria Comunidade só é aceita se `content_hash` for o id
 de uma declaração de Comunidade pendente (validação técnica, N-7); na

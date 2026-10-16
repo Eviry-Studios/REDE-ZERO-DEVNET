@@ -288,6 +288,9 @@ pub enum ParamChange {
     RestoreCommunity(Hash32),
     /// Validade de nomes `zero://` (`spec/NAMING.md §4.1`); constitucional.
     NamePeriod(u64),
+    /// Adota uma rede de origem publicada (`spec/BRIDGE.md §2.1`);
+    /// constitucional.
+    AddBridgeChain(Hash32),
 }
 
 impl ParamChange {
@@ -336,6 +339,7 @@ impl ParamChange {
             ParamChange::WithdrawCommunity(_) => 33,
             ParamChange::RestoreCommunity(_) => 34,
             ParamChange::NamePeriod(_) => 35,
+            ParamChange::AddBridgeChain(_) => 36,
         }
     }
 
@@ -377,6 +381,7 @@ impl ParamChange {
             ParamChange::WithdrawCommunity(_) => "community_withdraw",
             ParamChange::RestoreCommunity(_) => "community_restore",
             ParamChange::NamePeriod(_) => "name_period_blocks",
+            ParamChange::AddBridgeChain(_) => "bridge_add_chain",
         }
     }
 
@@ -389,6 +394,7 @@ impl ParamChange {
             "community_restore" => {
                 return Hash32::from_hex(value).map(ParamChange::RestoreCommunity)
             }
+            "bridge_add_chain" => return Hash32::from_hex(value).map(ParamChange::AddBridgeChain),
             _ => {}
         }
         let v: u64 = value.parse().ok()?;
@@ -434,7 +440,9 @@ impl ParamChange {
     /// Valor como texto (número ou identificador), para interfaces.
     pub fn value_text(&self) -> String {
         match self {
-            ParamChange::WithdrawCommunity(id) | ParamChange::RestoreCommunity(id) => id.to_hex(),
+            ParamChange::WithdrawCommunity(id)
+            | ParamChange::RestoreCommunity(id)
+            | ParamChange::AddBridgeChain(id) => id.to_hex(),
             _ => self.value().to_string(),
         }
     }
@@ -442,7 +450,9 @@ impl ParamChange {
     /// Valor numérico; 0 para as variantes que levam um identificador.
     pub fn value(&self) -> u64 {
         match *self {
-            ParamChange::WithdrawCommunity(_) | ParamChange::RestoreCommunity(_) => 0,
+            ParamChange::WithdrawCommunity(_)
+            | ParamChange::RestoreCommunity(_)
+            | ParamChange::AddBridgeChain(_) => 0,
             ParamChange::MaxBlockTxs(v) => u64::from(v),
             ParamChange::MinFee(v)
             | ParamChange::GovDeposit(v)
@@ -522,7 +532,9 @@ impl ParamChange {
             ParamChange::NamePeriod(v) => p.communities.name_period_blocks = v,
             // Mudam o registro de Comunidades, não os parâmetros: aplicadas
             // pelo estado na ativação.
-            ParamChange::WithdrawCommunity(_) | ParamChange::RestoreCommunity(_) => {}
+            ParamChange::WithdrawCommunity(_)
+            | ParamChange::RestoreCommunity(_)
+            | ParamChange::AddBridgeChain(_) => {}
         }
     }
 }
@@ -534,7 +546,9 @@ impl Encode for ParamChange {
             ParamChange::MaxBlockTxs(v) => {
                 e.u32(v);
             }
-            ParamChange::WithdrawCommunity(id) | ParamChange::RestoreCommunity(id) => {
+            ParamChange::WithdrawCommunity(id)
+            | ParamChange::RestoreCommunity(id)
+            | ParamChange::AddBridgeChain(id) => {
                 e.put(&id);
             }
             _ => {
@@ -583,6 +597,7 @@ impl Decode for ParamChange {
             33 => ParamChange::WithdrawCommunity(d.get()?),
             34 => ParamChange::RestoreCommunity(d.get()?),
             35 => ParamChange::NamePeriod(d.u64()?),
+            36 => ParamChange::AddBridgeChain(d.get()?),
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }

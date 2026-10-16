@@ -273,6 +273,9 @@ pub enum TxKind {
         path: Vec<Hash32>,
         index: u32,
     },
+    /// Tag `0x75` — publica a configuração de uma nova rede de origem
+    /// (`spec/BRIDGE.md §2.1`). Publicar não adota: só a governança adota.
+    PublishBridgeChain { config: crate::bridge::ChainConfig },
     /// Tag `0x72` — bloqueia ZERO ou um ativo num contrato de troca atômica.
     HtlcLock {
         asset: AssetId,
@@ -569,6 +572,9 @@ impl Encode for TxKind {
             TxKind::HtlcRefund { id } => {
                 e.u8(0x74).put(id);
             }
+            TxKind::PublishBridgeChain { config } => {
+                e.u8(0x75).put(config);
+            }
             TxKind::PublishRelease { release } => {
                 e.u8(0x80).put(release);
             }
@@ -772,6 +778,7 @@ impl Decode for TxKind {
                 preimage: d.bytes(crate::bridge::MAX_PREIMAGE)?,
             }),
             0x74 => Ok(TxKind::HtlcRefund { id: d.get()? }),
+            0x75 => Ok(TxKind::PublishBridgeChain { config: d.get()? }),
             0x80 => Ok(TxKind::PublishRelease { release: d.get()? }),
             0x45 => Ok(TxKind::RenewName {
                 name: d.str(MAX_NAME_LEN)?,
@@ -1037,6 +1044,9 @@ impl AccountTx {
                 }
             }
             TxKind::BindModule { .. } => {}
+            TxKind::PublishBridgeChain { config } => {
+                config.validate().map_err(TxError::Bridge)?;
+            }
             TxKind::BridgeHeaders { headers, .. } => {
                 if headers.is_empty() {
                     return Err(TxError::Bridge("nenhum cabeçalho"));

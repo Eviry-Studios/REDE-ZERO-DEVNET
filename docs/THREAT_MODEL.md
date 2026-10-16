@@ -737,6 +737,14 @@ Ativos de teste continuam só na DEVNET.
 
 **Mitigações:** pré-imagem de exatamente 32 bytes (contratos da origem devem exigir `OP_SIZE 32`); resgate só antes do prazo e devolução só depois; valor sempre para a parte definida no contrato; orientação de prazo menor do lado de quem recebe o segredo (`spec/BRIDGE.md §5`). **Risco residual:** erros de configuração das pessoas.
 
+### THR-BRG-005 — Rede de origem fraca ou falsa adicionada
+
+**Severidade:** ALTA
+**Adversários:** ADV-04, ADV-07
+**Descrição:** uma configuração com prova de trabalho trivial, ou com um ponto de partida num ramo controlado pelo atacante, permitiria cunhar representações sem queima real.
+
+**Mitigações:** só por proposta constitucional (≥ 2/3, quórum de 20%, atraso de ≥ 30 dias), com a configuração publicada na cadeia para análise durante a votação; só DEVNET e TESTNET até a auditoria; a mesma validação do Genesis; o nome do ativo identifica a rede de origem, então a representação de uma rede nova não se confunde com a de outra (`spec/BRIDGE.md §2.1`). **Risco residual:** a governança pode adotar uma rede ruim; o protocolo garante o processo, não a qualidade da rede.
+
 ### THR-BRG-004 — Inchaço do cliente leve
 
 **Severidade:** MÉDIA
@@ -993,6 +1001,7 @@ Antes: Agente Zero (THR-AGT-001..003). O Agente Zero foi retirado do núcleo da 
 | THR-POOL-002 | REQ-039 | SPEC §42, spec/BRIDGE.md | burn_proof_mints_once_after_confirmations, bridge_devnet |
 | THR-BRG-001/002 | SPEC §42 | spec/BRIDGE.md §3, §4 | header_rules_enforced, reorganization_follows_most_work, merkleblock_path_extraction |
 | THR-BRG-003 | — | spec/BRIDGE.md §5 | htlc_claim_and_refund_with_zero_and_external_asset |
+| THR-BRG-005 | SPEC §42 | spec/BRIDGE.md §2.1 | chain_added_after_genesis_by_constitutional_proposal, chain_publication_refused_outside_test_networks |
 | THR-POOL-003 | REQ-039 | SPEC §41, spec/MARKET.md §1 | AT-POOL-004 |
 | THR-MKT-001 | REQ-035 | spec/MARKET.md §4 | block_order_does_not_change_market_outcome |
 | THR-MKT-002 | REQ-035 | spec/MARKET.md §2 | AT-MKT-003, AT-MKT-004 |

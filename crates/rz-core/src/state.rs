@@ -28,7 +28,7 @@ use crate::defense::{
     self, Credential, DefenseActionRecord, DefenseMode, DefenseRecord, DefenseState, Incident,
     IncidentStatus, Quorum,
 };
-use crate::genesis::{Genesis, GenesisError};
+use crate::genesis::{Genesis, GenesisError, NetworkKind};
 use crate::governance::ParamChange;
 use crate::governance::{
     check_proposal_shape, decide, lock_weight, Category, ChamberTally, Contribution, Lock,
@@ -155,6 +155,9 @@ pub struct State {
     releases: ReleaseState,
     /// Chaves autorizadas, de recuperação e recuperações agendadas (ADR-0023).
     keys: KeyState,
+    /// Tipo da rede, do Genesis (já comprometido pelo hash do Genesis; fora
+    /// da raiz).
+    network_kind: NetworkKind,
 }
 
 /// ZERO em período de desvinculação.
@@ -222,6 +225,12 @@ enum BridgeEffect {
         preimage: Vec<u8>,
     },
     Refund(Hash32),
+    /// Configuração de rede publicada; o custo (já debitado) é queimado.
+    Publish {
+        id: Hash32,
+        proposed: crate::bridge::ProposedChain,
+        burn: u64,
+    },
 }
 
 /// Alteração do Exonet Runtime produzida por uma transação. Chamadas são
@@ -435,6 +444,7 @@ impl State {
             reputation: ReputationLog::default(),
             releases: ReleaseState::default(),
             keys: KeyState::default(),
+            network_kind: genesis.kind,
         })
     }
 
@@ -887,6 +897,7 @@ impl State {
             .retain(|_, c| c.status != CommunityStatus::Declared || c.expires_at > height);
         self.expire_releases(height);
         self.expire_names(height);
+        self.expire_proposed_chains(height);
         self.apply_recoveries(height);
 
         // Consenso: o conjunto que validou este bloco; nova época recalcula.
@@ -963,7 +974,7 @@ impl State {
                 })
             });
             // Retiradas e restaurações continuam coerentes com o registro.
-            let communities_ok = self.check_community_changes(&params).is_ok();
+            let communities_ok = self.check_state_changes(&params).is_ok();
             let ok = next.validate().is_ok() && release_ok && communities_ok;
             let p = self.proposals.get_mut(&id).ok_or(StateError::Overflow)?;
             if !ok {
@@ -987,7 +998,7 @@ impl State {
                     }
                 }
             }
-            self.apply_community_changes(&params);
+            self.apply_state_changes(&params);
             self.params = next;
         }
         Ok(())
@@ -1008,11 +1019,20 @@ impl State {
 
     /// Retirada e restauração de reconhecimento (`spec/COMMUNITIES.md §6.1`):
     /// a Comunidade precisa estar no estado de partida.
-    fn check_community_changes(&self, params: &[ParamChange]) -> Result<(), TxError> {
+    fn check_state_changes(&self, params: &[ParamChange]) -> Result<(), TxError> {
         for p in params {
             let (id, want) = match p {
                 ParamChange::WithdrawCommunity(id) => (id, CommunityStatus::Recognized),
                 ParamChange::RestoreCommunity(id) => (id, CommunityStatus::Withdrawn),
+                ParamChange::AddBridgeChain(id) => {
+                    let pc = self
+                        .bridge
+                        .proposed
+                        .get(id)
+                        .ok_or(TxError::Bridge("configuração de rede não publicada"))?;
+                    self.check_chain_addable(&pc.config)?;
+                    continue;
+                }
                 _ => continue,
             };
             if self.communities.communities.get(id).map(|c| c.status) != Some(want) {
@@ -1027,8 +1047,43 @@ impl State {
         Ok(())
     }
 
+    /// A rede pode entrar: há vaga, o nome não está em uso e o ativo não
+    /// existe (nem como ativo de teste, nem por outra rede).
+    fn check_chain_addable(&self, c: &crate::bridge::ChainConfig) -> Result<(), TxError> {
+        if self.bridge.chains.len() >= crate::bridge::MAX_CHAINS {
+            return Err(TxError::Bridge("redes de origem demais"));
+        }
+        if self.bridge.chains.contains_key(&c.name) || self.market.assets.contains_key(&c.asset()) {
+            return Err(TxError::Bridge("rede ou ativo já existe"));
+        }
+        Ok(())
+    }
+
+    /// Configurações de rede não adotadas saem do registro como versões não
+    /// adotadas (`spec/BRIDGE.md §2.1`).
+    fn expire_proposed_chains(&mut self, height: u64) {
+        let g = &self.params.governance;
+        let ttl = g
+            .analysis_blocks
+            .saturating_add(g.voting_blocks)
+            .saturating_add(g.constitutional_delay_blocks);
+        let referenced: BTreeSet<Hash32> = self
+            .proposals
+            .values()
+            .filter(|p| matches!(p.status, ProposalStatus::Pending | ProposalStatus::Approved))
+            .flat_map(|p| p.params.iter())
+            .filter_map(|c| match c {
+                ParamChange::AddBridgeChain(id) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        self.bridge
+            .proposed
+            .retain(|id, p| referenced.contains(id) || p.published_at.saturating_add(ttl) > height);
+    }
+
     /// Aplica retiradas e restaurações de uma proposta ativada.
-    fn apply_community_changes(&mut self, params: &[ParamChange]) {
+    fn apply_state_changes(&mut self, params: &[ParamChange]) {
         for p in params {
             match p {
                 ParamChange::WithdrawCommunity(id) => {
@@ -1042,6 +1097,24 @@ impl State {
                         c.status = CommunityStatus::Recognized;
                     }
                     self.approved_communities.insert(*id);
+                }
+                ParamChange::AddBridgeChain(id) => {
+                    if let Some(pc) = self.bridge.proposed.remove(id) {
+                        let c = pc.config;
+                        self.market.assets.insert(
+                            c.asset(),
+                            crate::market::AssetInfo {
+                                network: c.name.clone(),
+                                asset_ref: c.asset_ref.clone(),
+                                decimals: c.decimals,
+                                verification: crate::market::Verification::LightClientBurn,
+                                supply: 0,
+                            },
+                        );
+                        self.bridge
+                            .chains
+                            .insert(c.name.clone(), ChainState::new(c));
+                    }
                 }
                 _ => {}
             }
@@ -1263,7 +1336,9 @@ impl State {
                 .checked_mul(self.params.runtime.module_byte_fee)
                 .ok_or(TxError::Overflow)?,
             TxKind::BindModule { .. } | TxKind::CallModule { .. } => 0,
-            TxKind::PublishRelease { .. } => self.params.governance.deposit,
+            TxKind::PublishRelease { .. } | TxKind::PublishBridgeChain { .. } => {
+                self.params.governance.deposit
+            }
             TxKind::RotateKey { .. }
             | TxKind::SetRecovery { .. }
             | TxKind::RecoverAccount { .. } => 0,
@@ -1402,7 +1477,7 @@ impl State {
                 }
                 check_proposal_shape(*category, params, &self.params)
                     .map_err(TxError::Governance)?;
-                self.check_community_changes(params)?;
+                self.check_state_changes(params)?;
                 if let Some(rid) = release_id {
                     self.check_release_proposal(rid, *category)?;
                 }
@@ -1726,6 +1801,34 @@ impl State {
                     name: name.clone(),
                     expires_at,
                     fee: self.params.communities.name_fee,
+                });
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::PublishBridgeChain { config } => {
+                // Ponte sem auditoria: só DEVNET e TESTNET (`spec/BRIDGE.md §2`).
+                if !matches!(
+                    self.network_kind,
+                    NetworkKind::Devnet | NetworkKind::Testnet
+                ) {
+                    return Err(TxError::Bridge(
+                        "ponte ainda sem auditoria: só DEVNET e TESTNET",
+                    ));
+                }
+                let id = crate::bridge::chain_config_id(config);
+                if self.bridge.proposed.contains_key(&id) {
+                    return Err(TxError::Bridge("configuração já publicada"));
+                }
+                if self.bridge.proposed.len() >= crate::bridge::MAX_PROPOSED_CHAINS {
+                    return Err(TxError::Bridge("registro de redes propostas cheio"));
+                }
+                self.check_chain_addable(config)?;
+                effect.bridge = Some(BridgeEffect::Publish {
+                    id,
+                    proposed: crate::bridge::ProposedChain {
+                        config: config.clone(),
+                        published_at: p.height,
+                    },
+                    burn: amount,
                 });
                 effect.accounts.push((sender, sender_acc));
             }
@@ -2909,6 +3012,13 @@ impl State {
                         height,
                     });
                 }
+            }
+            BridgeEffect::Publish { id, proposed, burn } => {
+                self.total_supply = self
+                    .total_supply
+                    .checked_sub(burn)
+                    .ok_or(StateError::Overflow)?;
+                self.bridge.proposed.insert(id, proposed);
             }
         }
         Ok(())

@@ -108,7 +108,10 @@ struct Sim {
 
 impl Sim {
     fn new() -> Self {
-        let g = genesis();
+        Self::with(genesis())
+    }
+
+    fn with(g: Genesis) -> Self {
         let state = State::from_genesis(&g).unwrap();
         let parent = BlockId(g.hash());
         let tip = checkpoint();
@@ -491,4 +494,121 @@ fn htlc_claim_and_refund_with_zero_and_external_asset() {
         },
     );
     assert!(sim.check(&late).is_err());
+}
+
+// spec/BRIDGE.md §2.1 — nova rede de origem depois do Genesis: publicada por
+// qualquer conta, adotada só por proposta constitucional.
+#[test]
+fn chain_added_after_genesis_by_constitutional_proposal() {
+    use crate::governance::{Category, Choice, ParamChange, ProposalStatus};
+    let mut sim = Sim::with(sample());
+    assert!(sim.state.bridge().chains.is_empty());
+    let cfg = config();
+    let id = crate::bridge::chain_config_id(&cfg);
+
+    // Proposta antes da publicação: recusada.
+    let propose = |sim: &Sim, category| {
+        sim.tx(
+            &rich(),
+            TxKind::Propose {
+                category,
+                content_hash: Hash32([4; 32]),
+                params: vec![ParamChange::AddBridgeChain(id)],
+                release_id: None,
+                deposit: sim.state.params().governance.deposit,
+            },
+        )
+    };
+    assert!(matches!(
+        sim.check(&propose(&sim, Category::Constitutional)),
+        Err(TxError::Bridge(_))
+    ));
+    let supply = sim.state.total_supply();
+    sim.apply(TxKind::PublishBridgeChain {
+        config: cfg.clone(),
+    });
+    assert_eq!(
+        sim.state.total_supply(),
+        supply - sim.state.params().governance.deposit,
+        "custo de publicação queimado"
+    );
+    assert!(sim.state.bridge().chains.is_empty(), "publicar não adota");
+    let again = sim.tx(
+        &rich(),
+        TxKind::PublishBridgeChain {
+            config: cfg.clone(),
+        },
+    );
+    assert!(matches!(sim.check(&again), Err(TxError::Bridge(_))));
+    // Só constitucional.
+    assert!(matches!(
+        sim.check(&propose(&sim, Category::Ordinary)),
+        Err(TxError::Governance(_))
+    ));
+
+    sim.apply(TxKind::LockStake {
+        amount: 100_000,
+        unlock_height: sim.height + 101,
+    });
+    let tx = propose(&sim, Category::Constitutional);
+    let pid = tx.id().0;
+    sim.check(&tx).unwrap();
+    sim.block(vec![tx]);
+    let p = sim.state.proposal(&pid).unwrap().clone();
+    while sim.height + 1 < p.voting_start {
+        sim.block(vec![]);
+    }
+    let votes = vec![
+        sim.tx(
+            &rich(),
+            TxKind::Vote {
+                proposal: pid,
+                choice: Choice::Yes,
+            },
+        ),
+        sim.tx(
+            &validator(),
+            TxKind::Vote {
+                proposal: pid,
+                choice: Choice::Yes,
+            },
+        ),
+    ];
+    sim.block(votes);
+    while sim.height < p.activation_height {
+        sim.block(vec![]);
+    }
+    assert_eq!(
+        sim.state.proposal(&pid).unwrap().status,
+        ProposalStatus::Activated
+    );
+    assert!(sim.state.bridge().chains.contains_key(CHAIN));
+    assert!(sim.state.bridge().proposed.is_empty());
+    let asset = AssetId::external(CHAIN, "BTC");
+    assert_eq!(sim.state.market().assets[&asset].supply, 0);
+    // A rede adotada funciona: cabeçalhos são aceitos.
+    let hs = sim.extend(1, None);
+    sim.apply(TxKind::BridgeHeaders {
+        chain: CHAIN.into(),
+        headers: hs.iter().map(Header::serialize).collect(),
+    });
+    // Republicar a mesma rede agora é recusado (já existe).
+    let dup = sim.tx(&rich(), TxKind::PublishBridgeChain { config: cfg });
+    assert!(matches!(sim.check(&dup), Err(TxError::Bridge(_))));
+}
+
+// Fora de DEVNET e TESTNET a ponte não cresce, nem por governança.
+#[test]
+fn chain_publication_refused_outside_test_networks() {
+    let mut g = sample();
+    g.kind = NetworkKind::Staging;
+    g.network_id = "rede-zero-staging-teste".into();
+    let sim = Sim::with(g);
+    let tx = sim.tx(&rich(), TxKind::PublishBridgeChain { config: config() });
+    assert_eq!(
+        sim.check(&tx),
+        Err(TxError::Bridge(
+            "ponte ainda sem auditoria: só DEVNET e TESTNET"
+        ))
+    );
 }

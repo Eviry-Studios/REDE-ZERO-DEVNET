@@ -139,6 +139,12 @@ Ponte para ativos externos (ADR-0019) — sem custodiante:
                       um cabeçalho de 80 bytes em hex por linha (ex.: getblockheader HASH false)
   zero-wallet bridge-deposit --genesis FILE --node ADDR --key FILE --chain REDE
                       --tx HEX (sem testemunhas) --merkleblock HEX (gettxoutproof)
+  zero-wallet bridge-chain-new --name REDE --asset ATIVO --decimals N --pow-limit HEX
+                      --retarget (sim|nao) --interval N --timespan SEGUNDOS --checkpoint HEX80
+                      --checkpoint-height N --confirmations N --out ARQUIVO
+  zero-wallet bridge-chain-publish --genesis FILE --node ADDR --key FILE --file ARQUIVO
+                      publica a nova rede (queima o depósito de proposta); só a governança adota:
+                      propose --category constitucional --params bridge_add_chain=ID
 Trocas atômicas (HTLC, SHA-256, prazo em altura):
   zero-wallet htlc-secret                                   gera segredo e hash
   zero-wallet htlc-lock  --genesis FILE --node ADDR --key FILE --asset (ZERO|ATIVO) --amount QTD
@@ -285,6 +291,8 @@ fn main() -> ExitCode {
         "bridge" => cmd_bridge(&args),
         "bridge-burn-script" => cmd_bridge_burn_script(&args),
         "bridge-headers" => cmd_bridge_headers(&args),
+        "bridge-chain-new" => cmd_bridge_chain_new(&args),
+        "bridge-chain-publish" => cmd_bridge_chain_publish(&args),
         "bridge-deposit" => cmd_bridge_deposit(&args),
         "htlc-secret" => cmd_htlc_secret(),
         "htlc-lock" => cmd_htlc_lock(&args),
@@ -1782,6 +1790,72 @@ fn cmd_bridge_burn_script(args: &Args) -> Result<(), String> {
          A Rede Zero cunha a representação para {to} na rede {}.",
         genesis.network_id
     );
+    Ok(())
+}
+
+fn cmd_bridge_chain_new(args: &Args) -> Result<(), String> {
+    use rz_core::bridge::{chain_config_id, ChainConfig, PowRules};
+    let num = |name: &str| -> Result<u64, String> {
+        args.req(name)?
+            .parse()
+            .map_err(|_| format!("--{name}: número inválido"))
+    };
+    let checkpoint = rz_crypto::hex::decode_array::<80>(args.req("checkpoint")?)
+        .ok_or("--checkpoint: cabeçalho de 80 bytes em hex")?;
+    let config = ChainConfig {
+        name: args.req("name")?.to_string(),
+        asset_ref: args.req("asset")?.to_string(),
+        decimals: u8::try_from(num("decimals")?).map_err(|_| "--decimals")?,
+        rules: PowRules {
+            pow_limit: Hash32::from_hex(args.req("pow-limit")?).ok_or("--pow-limit: hex")?,
+            retarget: match args.req("retarget")? {
+                "sim" => true,
+                "nao" | "não" => false,
+                _ => return Err("--retarget: sim ou nao".into()),
+            },
+            interval: u32::try_from(num("interval")?).map_err(|_| "--interval")?,
+            target_timespan: u32::try_from(num("timespan")?).map_err(|_| "--timespan")?,
+        },
+        checkpoint,
+        checkpoint_height: num("checkpoint-height")?,
+        confirmations: u32::try_from(num("confirmations")?).map_err(|_| "--confirmations")?,
+    };
+    config.validate()?;
+    let out = args.req("out")?;
+    fs::write(out, config.to_canonical_bytes()).map_err(|e| format!("{out}: {e}"))?;
+    println!(
+        "rede {} ({}) — id {}",
+        config.name,
+        config.asset_ref,
+        chain_config_id(&config)
+    );
+    println!("configuração gravada em {out}");
+    Ok(())
+}
+
+fn cmd_bridge_chain_publish(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let path = args.req("file")?;
+    let bytes = fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    let config = rz_core::bridge::ChainConfig::from_canonical_bytes(&bytes)
+        .map_err(|e| format!("{path}: configuração inválida: {e}"))?;
+    let id = rz_core::bridge::chain_config_id(&config);
+    let (mut client, genesis) = open(args)?;
+    let cost = governance(&mut client, None)?.params.governance.deposit;
+    let fee = fee(args, &genesis)?;
+    let tx = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::PublishBridgeChain { config },
+        fee,
+    )?;
+    println!(
+        "publicação {tx} enviada — {} ZERO queimados",
+        format_zero(cost)
+    );
+    println!("id da configuração: {id}");
+    println!("para adotá-la: propose --category constitucional --params bridge_add_chain={id}");
     Ok(())
 }
 
