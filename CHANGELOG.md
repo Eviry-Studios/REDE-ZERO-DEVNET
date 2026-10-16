@@ -61,6 +61,17 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Testes de arquitetura: eclipse, Sybil e corrupção
+
+* ADR-0024 e `spec/P2P.md §7.1–§7.2` (THR-P2P-001, `ACCEPTANCE_TESTS.md §74, §77, §79`).
+* Livro de endereços com faixas de rede: 32 endereços por `/16` (`/32` em IPv6), 64 por faixa de origem e despejo aleatório da faixa mais cheia. Antes, guardava os primeiros 1 024 para sempre.
+* Conexões de saída ao acaso, no máximo uma por faixa, com os pares de partida primeiro. Antes, eram escolhidas na ordem do conjunto.
+* Entradas limitadas também por faixa (16).
+* Detecção de estagnação: sem blocos novos pela janela, um par de saída é trocado e fica em espera.
+* Disco: o arquivo de blocos é cortado no primeiro registro ilegível ou bloco que não verifica, e a cadeia é reconstruída pelos pares. As gravações usam `fsync` e o registro informa o que foi descartado.
+* Testes `crates/rz-node/tests/architecture.rs`: inundação de endereços sem eclipse, troca de par parado, conexões Sybil limitadas, disco corrompido cortado e reconstruído. Testes unitários do livro de endereços.
+* `THREAT_MODEL.md` v0.15.0, `AUDIT.md` v0.12.0, `spec/P2P.md` v0.13.0.
+
 ### Adicionado — Chaves cifradas, rotação e recuperação
 
 * ADR-0023 e `spec/KEYS.md` (SPEC-ID-001, SPEC-ID-005, REQ-012).

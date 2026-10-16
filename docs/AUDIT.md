@@ -1,8 +1,8 @@
 # AUDIT.md — Preparação para auditoria independente
 
-**Versão:** 0.11.0
+**Versão:** 0.12.0
 **Estado:** pronto para auditoria da DEVNET; nenhuma auditoria externa foi realizada
-**Relacionamento:** `THREAT_MODEL.md §11` (aceitações temporárias), ADR-0009, ADR-0011, ADR-0012, ADR-0014..0016, ADR-0021..0023, `SECURITY.md`
+**Relacionamento:** `THREAT_MODEL.md §11` (aceitações temporárias), ADR-0009, ADR-0011, ADR-0012, ADR-0014..0016, ADR-0021..0024, `SECURITY.md`
 
 ---
 
@@ -29,7 +29,7 @@ A revisão interna (§7) **não substitui** a auditoria externa.
 | 3 | Transição de estado e ZERO | `crates/rz-core/src/state.rs`, `tx.rs`, `block.rs`, `governance.rs` | ~4 000 | invariante monetária, aritmética, nonce/repetição, determinismo, raiz do estado |
 | 4 | Canal cifrado e proteção de IP | `crates/rz-p2p/src/secure.rs`, `socks.rs`, `client.rs` | ~700 | handshake (X25519, assinatura do respondedor), derivação de chaves, nonces, preenchimento, SOCKS5 com DNS remoto |
 | 5 | Codificação canônica | `crates/rz-codec`, `Decode` de todos os tipos | ~400 | unicidade de codificação, limites antes de alocar |
-| 6 | Superfície de negação de serviço do Node | `crates/rz-node/src/node.rs`, `rz-p2p/src/ratelimit.rs`, `score.rs`, `rz-chain/src/mempool.rs` | ~2 300 | limites de fila, mempool, Dandelion++, sincronização |
+| 6 | Superfície de negação de serviço e eclipse do Node | `crates/rz-node/src/node.rs`, `addrbook.rs`, `store.rs`, `rz-p2p/src/ratelimit.rs`, `score.rs`, `rz-chain/src/mempool.rs` | ~2 700 | limites de fila, mempool, Dandelion++, sincronização, livro de endereços (faixas, origem, despejo), escolha de saída, estagnação, corte do disco corrompido |
 | 7 | Grande Mercado e Pool | `crates/rz-core/src/market.rs`, partes de mercado em `state.rs` | ~1 300 | leilão (preço, prioridade, arredondamento, poeira), reservas e reembolsos, conservação por ativo, Pool monotônico, limites do livro |
 | 8 | Comunidades e nomes | `crates/rz-core/src/community.rs`, partes em `state.rs` | ~900 | verificação de aprovações por limiar, reconhecimento via governança, isolamento, esqueletos de nomes |
 | 9 | Defesa da Exonet | `crates/rz-core/src/defense.rs`, partes em `state.rs`, isolamento em `rz-node/src/node.rs` | ~1 300 | soma de poder das atestações (repetição, não validador, `seq`), limiares de subida e descida, vencimento dos modos, escopos e validade das credenciais, isolamento de saída |

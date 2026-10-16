@@ -40,6 +40,7 @@ Uma decisão com escopo `DEVNET` **não** vale automaticamente para outros ambie
 | [0021](0021-atualizacoes-verificaveis.md) | Atualizações verificáveis adotadas pela governança | DEVNET → TESTNET | Aceita |
 | [0022](0022-suite-de-conformidade.md) | Suíte de conformidade em vetores de texto | DEVNET → TESTNET | Aceita |
 | [0023](0023-chaves-cifradas-e-rotacao.md) | Chaves cifradas em disco, rotação e recuperação de conta | DEVNET → TESTNET | Aceita |
+| [0024](0024-resistencia-a-eclipse-e-corrupcao.md) | Resistência a eclipse e a corrupção local no Node | DEVNET → TESTNET | Aceita |
 
 ## Modelo
 

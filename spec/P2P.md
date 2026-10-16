@@ -1,6 +1,6 @@
 # spec/P2P.md — Protocolo P2P da DEVNET
 
-**Versão:** 0.12.0 (DEVNET), `P2P_VERSION = 12`
+**Versão:** 0.13.0 (DEVNET), `P2P_VERSION = 12`
 **Relacionamento:** `SPECIFICATIONS.md §23–§30`, ADR-0007, ADR-0010, ADR-0011, THR-P2P-001..006, THR-PRIV-002..004
 **Implementação de referência:** `crates/rz-p2p` (mensagens) e `crates/rz-node` (orquestração)
 
@@ -177,8 +177,8 @@ Um par que envia blocos inválidos é penalizado (seção 6) — nenhum estado �
 | Pedidos de pedaços de conteúdo por conexão | balde de 32, recarga de 8/s; excedente respondido sem dados |
 | Downloads de conteúdo | 4 simultâneos, 1 por conexão, 15 s sem progresso ou 120 s no total (`spec/CONTENT.md §5`) |
 | Consultas ao Exonet Runtime por conexão | balde de 16, recarga de 4/s; excedente respondido com erro, sem execução |
-| Conexões de entrada | 32 |
-| Conexões de saída | 8 |
+| Conexões de entrada | 32 (no máximo 8 por IP e 16 por faixa de rede) |
+| Conexões de saída | 8 (no máximo 1 por faixa de rede) |
 | Quarentena após banimento | 10 minutos |
 
 Pontuação local (não é reputação global):
@@ -204,6 +204,25 @@ Rejeições que podem ocorrer com pares honestos (transação duplicada, nonce j
 * Pares com `listen_port = 0` (Wallets e Nodes privados) nunca são anunciados.
 * Sem proxy, endereços `.onion` não são discados.
 
+### 7.1 Diversidade e resistência a eclipse (ADR-0024, THR-P2P-001)
+
+A **faixa de rede** de um endereço é o `/16` em IPv4 e o `/32` em IPv6. Endereços de loopback, de redes privadas, onion ou nomes formam uma faixa por endereço.
+
+* **Livro de endereços:** guarda no máximo 1 024 endereços, 32 por faixa e 64 aprendidos de uma mesma faixa de origem (o IP de quem os anunciou). Endereços discados com sucesso pelo próprio Node não contam para nenhuma origem. Com o livro cheio, uma entrada da faixa mais cheia sai, escolhida ao acaso. Quem chega primeiro não fica para sempre, e novidades continuam entrando.
+* **Conexões de saída:** os pares de partida (escolha do operador) vêm primeiro, depois o livro. A escolha é sempre ao acaso, e nunca há duas conexões de saída na mesma faixa.
+* **Conexões de entrada:** limitadas por IP e por faixa (§6).
+* **Estagnação:** sem blocos novos por `max(30 × intervalo de bloco, 30 s)`, o Node troca um par de saída, ao acaso, por outro candidato. O par trocado só volta a ser discado depois de quatro janelas. O registro avisa sobre um possível isolamento. Se não há outro candidato, nada muda.
+* **Validação completa:** nada disso substitui a verificação de cada bloco e certificado (§5). Um eclipse consegue esconder blocos, mas não consegue fazer o Node aceitar blocos falsos.
+
+### 7.2 Armazenamento local
+
+Os blocos finalizados ficam em `blocks.log` (`u32 comprimento ‖ enc(CommittedBlock)`), gravados com `fsync`. Na inicialização, cada bloco é reverificado desde o Genesis (`ACCEPTANCE_TESTS.md §77, §79`):
+
+* um registro ilegível (final truncado, corrupção) encerra a leitura, e o arquivo é cortado ali;
+* um bloco legível, mas que não verifica, é rejeitado. O arquivo é cortado no início dele, porque os seguintes dependem dele.
+
+O que foi descartado vem de novo dos pares, verificado, e o registro informa quantos blocos e bytes foram descartados.
+
 ## 8. Privacidade e registros
 
 * Registros locais **nunca** contêm endereços de clientes; endereços de pares Node aparecem apenas em modo detalhado.
@@ -213,3 +232,10 @@ Rejeições que podem ocorrer com pares honestos (transação duplicada, nonce j
 ## 9. Testes de aceitação cobertos
 
 AT-P2P-001..005, AT-SYNC-001..003 e o teste de haste/embargo do Dandelion++ (em `crates/rz-node/tests`).
+
+Arquitetura (`crates/rz-node/tests/architecture.rs`, `crates/rz-node/src/addrbook.rs`):
+
+* inundação de endereços sem eclipse;
+* troca de par parado;
+* conexões Sybil limitadas por endereço;
+* disco corrompido cortado e reconstruído (`ACCEPTANCE_TESTS.md §74, §77, §79`).

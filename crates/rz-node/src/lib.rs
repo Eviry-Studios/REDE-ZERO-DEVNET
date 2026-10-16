@@ -4,6 +4,7 @@
 //! A Wallet é um programa separado (`rz-wallet`) e nunca entrega chaves ao
 //! Node (`SPEC-WAL-001`, `SPEC-WAL-003`).
 
+pub mod addrbook;
 mod content;
 mod node;
 mod store;

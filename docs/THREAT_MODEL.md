@@ -2,8 +2,8 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.14.0
-**Status:** Modelo de ameaças — fase de definição (0.14.0: chaves cifradas, rotação e recuperação; 0.13.0: suíte de conformidade; 0.12.0: atualizações verificáveis; 0.11.0: reputação; 0.10.0: retirada do Agente Zero; 0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
+**Versão:** 0.15.0
+**Status:** Modelo de ameaças — fase de definição (0.15.0: resistência a eclipse e corrupção local; 0.14.0: chaves cifradas, rotação e recuperação; 0.13.0: suíte de conformidade; 0.12.0: atualizações verificáveis; 0.11.0: reputação; 0.10.0: retirada do Agente Zero; 0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
 
@@ -526,12 +526,15 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 **Mitigações:**
 
-* diversidade de pares (limites por faixa de endereço e por origem);
+* diversidade de pares: livro limitado a 32 endereços por faixa (`/16`, `/32` em IPv6) e 64 por faixa de origem, com despejo aleatório da faixa mais cheia (ADR-0024);
 * múltiplas fontes de descoberta;
-* conexões de saída escolhidas pelo próprio Node;
+* conexões de saída escolhidas pelo próprio Node, ao acaso, no máximo uma por faixa, com os pares de partida primeiro;
+* entradas limitadas por IP (8) e por faixa (16);
 * validação completa do estado recebido;
-* detecção de estagnação (ausência de novos blocos válidos);
-* estratégia final **A DEFINIR** após testes (`SPEC §29`).
+* detecção de estagnação: sem blocos novos por 30 intervalos (mínimo de 30 s), um par de saída é trocado;
+* testes `crates/rz-node/tests/architecture.rs` (inundação de endereços, par parado, conexões Sybil).
+
+**Risco residual:** endereços onion são baratos e cada um forma a própria faixa; um atacante que controle os pares de partida e muitas faixas ainda pode isolar um Node novo. Buckets com hash secreto ficam como evolução (`SPEC §29`).
 
 ### THR-P2P-002 — Negação de serviço por flooding
 
@@ -636,7 +639,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 **Severidade:** ALTA
 **Adversários:** ADV-03
-**Mitigações:** o voto não pode assumir `1 Node = 1 pessoa` (`SPEC §47`); mecanismo anti-Sybil **A DEFINIR** (`REQ-044`).
+**Mitigações:** o voto não pode assumir `1 Node = 1 pessoa` (`SPEC §47`). Nenhuma identidade pesa só por existir: a câmara econômica é linear no ZERO bloqueado, e dividir um bloqueio entre N contas não muda o peso (GOV-INV-4); a câmara de contribuição usa pontos ganhos só por eventos verificáveis (ADR-0020). No consenso, o poder é o ZERO vinculado. Na rede, conexões são limitadas por IP e por faixa (ADR-0024). Testes: `economic_weight_is_sybil_neutral`, `sybil_connections_limited_per_address` (`REQ-044`).
 
 ### THR-GOV-002 — Captura por concentração econômica
 
@@ -966,7 +969,8 @@ Antes: Agente Zero (THR-AGT-001..003). O Agente Zero foi retirado do núcleo da 
 | THR-CON-002 | REQ-005, REQ-015 | SPEC §19, §20, spec/CONSENSUS.md | AT-CON-*, rz-chain bft_tests |
 | THR-CON-007 | REQ-015 | SPEC §22, spec/CONSENSUS.md §1 | rz-chain partition_halts_then_recovers, randomized_adversarial_* |
 | THR-CON-001 | REQ-016 | spec/CONSENSUS.md §9 | rz-chain checkpoint_rejects_alternative_history |
-| THR-P2P-001 | REQ-017 | SPEC §29 | — (a definir) |
+| THR-P2P-001 | REQ-017 | SPEC §29, spec/P2P.md §7.1 | addrbook::tests, address_flood_does_not_eclipse, stalled_peer_is_rotated, sybil_connections_limited_per_address |
+| AT §77/§79 (corrupção) | REQ-016 | SPEC §28, spec/P2P.md §7.2 | corrupted_block_log_is_cut_and_rebuilt |
 | THR-P2P-002 | REQ-053 | SPEC §26 | AT-P2P-004/005, rz-chain bft_tests (limites) |
 | THR-P2P-003 | REQ-053 | SPEC §8, spec/ENCODING.md | AT-P2P-003, rz-p2p robustness |
 | THR-P2P-004 | REQ-016 | SPEC §28 | AT-SYNC-* |

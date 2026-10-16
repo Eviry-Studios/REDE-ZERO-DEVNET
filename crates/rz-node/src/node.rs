@@ -103,6 +103,11 @@ pub struct NodeConfig {
     pub max_inbound: usize,
     pub max_outbound: usize,
     pub max_inbound_per_ip: usize,
+    /// Conexões de entrada por faixa de rede (`/16` IPv4, `/32` IPv6).
+    pub max_inbound_per_group: usize,
+    /// Janela mínima sem blocos novos antes de trocar um par de saída
+    /// (detecção de estagnação, THR-P2P-001).
+    pub stall_window: Duration,
     pub mempool_capacity: usize,
     pub log: LogLevel,
     /// Pontos de verificação (altura, bloco) obtidos pelo operador de fontes
@@ -126,6 +131,8 @@ impl NodeConfig {
             max_inbound: 32,
             max_outbound: 8,
             max_inbound_per_ip: 8,
+            max_inbound_per_group: 16,
+            stall_window: MIN_STALL_WINDOW,
             mempool_capacity: 10_000,
             log: LogLevel::Info,
             checkpoints: Vec::new(),
@@ -182,7 +189,11 @@ enum ConsensusEvent {
     ChainAdvanced,
 }
 
-/// Identificadores de mensagens de consenso já vistas (evita reenvio em laço).
+/// Blocos sem progresso antes de trocar um par de saída.
+const STALL_BLOCKS: u64 = 30;
+/// Janela mínima de estagnação, qualquer que seja o intervalo de bloco.
+const MIN_STALL_WINDOW: Duration = Duration::from_secs(30);
+
 /// Instante daqui a `ms` milissegundos, sem estouro: valores acima de
 /// `MAX_TIME_PARAM_MS` são limitados (defesa em profundidade além de
 /// `ConsensusParams::validate`).
@@ -242,8 +253,10 @@ struct Peers {
     conns: HashMap<u64, Peer>,
     next_id: u64,
     banned: HashMap<IpAddr, Instant>,
-    known: BTreeSet<PeerAddr>,
+    known: crate::addrbook::AddrBook,
     dialing: HashSet<PeerAddr>,
+    /// Pares trocados por estagnação: não são discados de novo até o prazo.
+    cooldown: HashMap<PeerAddr, Instant>,
 }
 
 struct Shared {
@@ -258,6 +271,8 @@ struct Shared {
     max_inbound: usize,
     max_outbound: usize,
     max_inbound_per_ip: usize,
+    max_inbound_per_group: usize,
+    stall_window: Duration,
     log_level: LogLevel,
     core: Mutex<Core>,
     peers: Mutex<Peers>,
@@ -311,14 +326,25 @@ impl Node {
 
         // Reprocessa blocos persistidos, verificando cada certificado e cada
         // transição de estado: o disco também é fonte não confiável.
-        let (store, blocks) = BlockStore::open(&cfg.data_dir)?;
+        let (mut store, blocks, unreadable) = BlockStore::open(&cfg.data_dir)?;
         let content = ContentStore::open(&cfg.data_dir.join("content"), cfg.content_quota)?;
         let total = blocks.len();
         let mut rejected = 0usize;
-        for cb in blocks {
-            if chain.commit(cb).is_err() {
+        let mut corrupted_at = None;
+        for (cb, offset) in blocks {
+            if corrupted_at.is_some() {
                 rejected += 1;
+                continue;
             }
+            if chain.commit(cb).is_err() {
+                // Um bloco que não verifica invalida os seguintes: o arquivo
+                // é cortado aqui e o resto vem dos pares (AT §77).
+                rejected += 1;
+                corrupted_at = Some(offset);
+            }
+        }
+        if let Some(offset) = corrupted_at {
+            store.truncate(offset)?;
         }
 
         let node_key = match cfg.node_key {
@@ -354,6 +380,8 @@ impl Node {
             max_inbound: cfg.max_inbound,
             max_outbound: cfg.max_outbound,
             max_inbound_per_ip: cfg.max_inbound_per_ip,
+            max_inbound_per_group: cfg.max_inbound_per_group,
+            stall_window: cfg.stall_window,
             log_level: cfg.log,
             core: Mutex::new(Core {
                 chain,
@@ -386,6 +414,11 @@ impl Node {
             rejected,
             lock(&shared.core).chain.height()
         ));
+        if rejected > 0 || unreadable > 0 {
+            shared.info(format!(
+                "dados locais inconsistentes: {rejected} bloco(s) inválido(s) e {unreadable} byte(s) ilegíveis descartados; o restante da cadeia virá dos pares, verificado"
+            ));
+        }
         shared.info(format!(
             "identidade do node {}",
             shared.node_key.public_key().node_id()
@@ -458,6 +491,20 @@ impl Node {
 
     pub fn block_at(&self, height: u64) -> Option<Block> {
         lock(&self.shared.core).chain.block_at(height).cloned()
+    }
+
+    /// Endereços no livro (diagnóstico e testes).
+    pub fn known_addresses(&self) -> Vec<PeerAddr> {
+        lock(&self.shared.peers).known.iter().cloned().collect()
+    }
+
+    /// Destinos das conexões de saída atuais.
+    pub fn outbound_targets(&self) -> Vec<PeerAddr> {
+        lock(&self.shared.peers)
+            .conns
+            .values()
+            .filter_map(|c| c.outbound_target.clone())
+            .collect()
     }
 
     pub fn is_banned(&self, ip: IpAddr) -> bool {
@@ -895,46 +942,119 @@ impl Shared {
             .iter()
             .filter(|c| c.stream.peer_addr().map(|a| a.ip()).ok() == Some(ip))
             .count();
-        inbound.len() < self.max_inbound && same_ip < self.max_inbound_per_ip
+        // Faixa de rede (THR-P2P-001): um atacante com muitos IPs vizinhos
+        // não ocupa todas as entradas.
+        let group = crate::addrbook::ip_group(&ip);
+        let same_group = inbound
+            .iter()
+            .filter(|c| {
+                c.stream
+                    .peer_addr()
+                    .ok()
+                    .map(|a| crate::addrbook::ip_group(&a.ip()))
+                    == Some(group.clone())
+            })
+            .count();
+        inbound.len() < self.max_inbound
+            && same_ip < self.max_inbound_per_ip
+            && same_group < self.max_inbound_per_group
     }
 
     fn dial_loop(self: Arc<Self>) {
+        use crate::addrbook::{netgroup, select_diverse, shuffle, NetGroup};
+        // Detecção de estagnação (THR-P2P-001): sem blocos novos por tempo
+        // demais, um par de saída é trocado por outro do livro.
+        let mut last_height = lock(&self.core).chain.height();
+        let mut last_progress = Instant::now();
+        let mut last_rotation = Instant::now();
         while self.running() {
             self.check_embargo();
+            let (height, interval) = {
+                let c = lock(&self.core);
+                (
+                    c.chain.height(),
+                    c.chain.state().params().consensus.block_interval_ms,
+                )
+            };
+            let now = Instant::now();
+            if height != last_height {
+                last_height = height;
+                last_progress = now;
+            }
+            let window =
+                Duration::from_millis(interval.saturating_mul(STALL_BLOCKS)).max(self.stall_window);
             let candidates: Vec<PeerAddr> = {
                 let mut p = lock(&self.peers);
-                let now = Instant::now();
                 p.banned.retain(|_, until| *until > now);
+                p.cooldown.retain(|_, until| *until > now);
                 let connected: HashSet<PeerAddr> = p
                     .conns
                     .values()
                     .flat_map(|c| [c.outbound_target.clone(), c.listen.clone()])
                     .flatten()
                     .collect();
-                let outbound = p
+                let outbound_ids: Vec<u64> = p
+                    .conns
+                    .iter()
+                    .filter(|(_, c)| c.outbound_target.is_some())
+                    .map(|(id, _)| *id)
+                    .collect();
+                let mut used: BTreeSet<NetGroup> = p
                     .conns
                     .values()
-                    .filter(|c| c.outbound_target.is_some())
-                    .count()
-                    + p.dialing.len();
-                let slots = self.max_outbound.saturating_sub(outbound);
-                let pool: Vec<PeerAddr> = self
+                    .filter_map(|c| c.outbound_target.as_ref())
+                    .chain(p.dialing.iter())
+                    .map(netgroup)
+                    .collect();
+                let eligible = |a: &PeerAddr| {
+                    !self.is_self(a)
+                        && !connected.contains(a)
+                        && !p.dialing.contains(a)
+                        && !p.cooldown.contains_key(a)
+                        && !matches!(a, PeerAddr::Ip(ip) if p.banned.contains_key(&ip.ip()))
+                        // Endereços onion só são alcançáveis via proxy Tor.
+                        && (self.proxy.is_some() || !a.is_onion())
+                };
+                let anchors: Vec<PeerAddr> = self
                     .bootstrap
                     .iter()
-                    .chain(p.known.iter())
-                    .filter(|a| {
-                        !self.is_self(a)
-                            && !connected.contains(*a)
-                            && !p.dialing.contains(*a)
-                            && !matches!(a, PeerAddr::Ip(ip) if p.banned.contains_key(&ip.ip()))
-                            // Endereços onion só são alcançáveis via proxy Tor.
-                            && (self.proxy.is_some() || !a.is_onion())
-                    })
+                    .filter(|a| eligible(a))
                     .cloned()
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .take(slots)
                     .collect();
+                let others: Vec<PeerAddr> = p
+                    .known
+                    .iter()
+                    .filter(|a| eligible(a) && !self.bootstrap.contains(a))
+                    .cloned()
+                    .collect();
+                if now.duration_since(last_progress) > window
+                    && now.duration_since(last_rotation) > window
+                    && !outbound_ids.is_empty()
+                    && (!anchors.is_empty() || !others.is_empty())
+                {
+                    let mut ids = outbound_ids.clone();
+                    shuffle(&mut ids);
+                    let dropped = p.conns.get(&ids[0]).and_then(|c| {
+                        let _ = c.stream.shutdown(Shutdown::Both);
+                        c.outbound_target.clone()
+                    });
+                    if let Some(t) = dropped {
+                        p.cooldown.insert(t, now + window.saturating_mul(4));
+                    }
+                    last_rotation = now;
+                    self.info(format!(
+                        "sem blocos novos há {}s: trocando um par de saída (possível isolamento)",
+                        now.duration_since(last_progress).as_secs()
+                    ));
+                }
+                let outbound = outbound_ids.len() + p.dialing.len();
+                let slots = self.max_outbound.saturating_sub(outbound);
+                // Pares de partida primeiro (âncoras escolhidas pelo
+                // operador), depois o livro; sempre ao acaso e no máximo
+                // uma conexão por faixa de rede.
+                let mut pool = select_diverse(anchors, &used, slots);
+                used.extend(pool.iter().map(netgroup));
+                pool.extend(select_diverse(others, &used, slots - pool.len()));
                 for a in &pool {
                     p.dialing.insert(a.clone());
                 }
@@ -1070,7 +1190,16 @@ impl Shared {
             );
             if let Some(l) = listen {
                 if !self.is_self(&l) {
-                    p.known.insert(l);
+                    // Endereço que nós mesmos discamos está confirmado; o
+                    // anunciado por quem conectou conta para a faixa dele.
+                    let source = match &outbound {
+                        Some(_) => None,
+                        None => stream
+                            .peer_addr()
+                            .ok()
+                            .map(|a| crate::addrbook::ip_group(&a.ip())),
+                    };
+                    p.known.insert(l, source);
                 }
             }
             id
@@ -1225,9 +1354,14 @@ impl Shared {
             }
             Message::Peers(list) => {
                 let mut p = lock(&self.peers);
+                let source = p
+                    .conns
+                    .get(&ctx.id)
+                    .and_then(|c| c.stream.peer_addr().ok())
+                    .map(|a| crate::addrbook::ip_group(&a.ip()));
                 for a in list {
-                    if a.port() != 0 && !self.is_self(&a) && p.known.len() < 1024 {
-                        p.known.insert(a);
+                    if a.port() != 0 && !self.is_self(&a) {
+                        p.known.insert(a, source.clone());
                     }
                 }
                 Flow::Continue

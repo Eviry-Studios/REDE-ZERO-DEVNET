@@ -3,6 +3,11 @@
 //! Formato: sequência de `u32 comprimento ‖ enc(CommittedBlock)`. Na inicialização o
 //! Node reprocessa todos os blocos desde o Genesis, verificando cada um
 //! (`SPEC §28`): o disco também é tratado como fonte não confiável.
+//!
+//! Corrupção (`ACCEPTANCE_TESTS.md §77, §79`): um registro ilegível encerra
+//! a leitura e o arquivo é cortado ali; um bloco legível mas inválido é
+//! rejeitado pela cadeia e o Node corta o arquivo nele ([`BlockStore::truncate`]).
+//! O que foi descartado é obtido de novo dos pares, verificado.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, Read, Write};
@@ -19,12 +24,15 @@ pub struct BlockStore {
 }
 
 impl BlockStore {
-    /// Abre (ou cria) o arquivo e retorna os blocos já gravados. Um final
-    /// truncado ou corrompido (ex.: queda de energia) é descartado.
-    pub fn open(dir: &Path) -> io::Result<(Self, Vec<CommittedBlock>)> {
+    /// Abre (ou cria) o arquivo e retorna os blocos já gravados, cada um com
+    /// a posição em que começa, e quantos bytes ilegíveis foram descartados
+    /// (final truncado por queda de energia, ou corrupção).
+    #[allow(clippy::type_complexity)]
+    pub fn open(dir: &Path) -> io::Result<(Self, Vec<(CommittedBlock, u64)>, u64)> {
         fs::create_dir_all(dir)?;
         let path = dir.join("blocks.log");
         let (blocks, valid_len) = Self::read_all(&path)?;
+        let total_len = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
         let file = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -34,7 +42,14 @@ impl BlockStore {
         file.set_len(valid_len)?;
         let mut store = Self { path, file };
         store.seek_end()?;
-        Ok((store, blocks))
+        Ok((store, blocks, total_len.saturating_sub(valid_len)))
+    }
+
+    /// Descarta tudo a partir de `offset` (início de um bloco rejeitado).
+    pub fn truncate(&mut self, offset: u64) -> io::Result<()> {
+        self.file.set_len(offset)?;
+        self.file.sync_all()?;
+        self.seek_end()
     }
 
     fn seek_end(&mut self) -> io::Result<()> {
@@ -43,7 +58,7 @@ impl BlockStore {
         Ok(())
     }
 
-    fn read_all(path: &Path) -> io::Result<(Vec<CommittedBlock>, u64)> {
+    fn read_all(path: &Path) -> io::Result<(Vec<(CommittedBlock, u64)>, u64)> {
         let f = match File::open(path) {
             Ok(f) => f,
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok((Vec::new(), 0)),
@@ -66,7 +81,7 @@ impl BlockStore {
                 break;
             }
             match CommittedBlock::from_canonical_bytes(&body) {
-                Ok(b) => blocks.push(b),
+                Ok(b) => blocks.push((b, offset)),
                 Err(_) => break,
             }
             offset += 4 + u64::from(len);
@@ -82,7 +97,7 @@ impl BlockStore {
         buf.extend_from_slice(&len.to_be_bytes());
         buf.extend_from_slice(&body);
         self.file.write_all(&buf)?;
-        self.file.flush()
+        self.file.sync_data()
     }
 
     pub fn path(&self) -> &Path {
