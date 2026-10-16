@@ -323,6 +323,11 @@ pub enum CommunityStatus {
     Declared = 0,
     /// Reconhecida por proposta aprovada da categoria Comunidade (N-7).
     Recognized = 1,
+    /// Reconhecimento retirado por proposta constitucional
+    /// (`spec/COMMUNITIES.md §6.1`). O registro e o nome ficam, para que
+    /// ninguém se passe por ela; nenhuma operação de Comunidade reconhecida
+    /// vale para ela.
+    Withdrawn = 2,
 }
 
 impl Encode for CommunityStatus {
@@ -336,6 +341,7 @@ impl Decode for CommunityStatus {
         match d.u8()? {
             0 => Ok(CommunityStatus::Declared),
             1 => Ok(CommunityStatus::Recognized),
+            2 => Ok(CommunityStatus::Withdrawn),
             t => Err(DecodeError::InvalidTag(t)),
         }
     }

@@ -61,6 +61,13 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Retirada e restauração de Comunidade por governança
+
+* `spec/COMMUNITIES.md` v0.2.0 §6.1 (REQ-074, THR-COM-003).
+* Alterações de governança `community_withdraw` (tag 33) e `community_restore` (tag 34), só em propostas constitucionais. A Comunidade precisa estar no estado de partida tanto na submissão quanto na ativação.
+* Novo estado `retirada`. O registro, o nome e o armazenamento ficam, e o nome não pode ser redeclarado. O `.comunidade` deixa de resolver, e posição, vinculação e chamada de módulo (transação e consulta) são recusadas. A restauração devolve tudo.
+* `CallModule` e a consulta ao Runtime passam a exigir Comunidade reconhecida.
+
 ### Adicionado — Testes de arquitetura: eclipse, Sybil e corrupção
 
 * ADR-0024 e `spec/P2P.md §7.1–§7.2` (THR-P2P-001, `ACCEPTANCE_TESTS.md §74, §77, §79`).

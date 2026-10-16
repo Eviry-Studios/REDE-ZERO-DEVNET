@@ -683,7 +683,7 @@ fn cmd_governance(args: &Args) -> Result<(), String> {
         };
         println!("  {} [{}] {}", p.id, p.category.name(), phase);
         for c in &p.params {
-            println!("      {} = {}", c.name(), c.value());
+            println!("      {} = {}", c.name(), c.value_text());
         }
         println!(
             "      conteúdo {} | ativação na altura {}",
@@ -1106,6 +1106,9 @@ fn cmd_community(args: &Args) -> Result<(), String> {
             rz_core::community::CommunityStatus::Declared =>
                 format!("declarada (aguardando reconhecimento até {})", c.expires_at),
             rz_core::community::CommunityStatus::Recognized => "reconhecida".into(),
+            rz_core::community::CommunityStatus::Withdrawn => {
+                "reconhecimento RETIRADO pela governança".into()
+            }
         }
     );
     println!("  manifesto:   {} (versão {})", c.manifest_hash, c.version);

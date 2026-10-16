@@ -476,6 +476,9 @@ fn community(nav: &Navegador, name: &str) -> (String, String) {
                     "Estado",
                     match c.status {
                         CommunityStatus::Recognized => "reconhecida".into(),
+                        CommunityStatus::Withdrawn => {
+                            "reconhecimento retirado pela governança".into()
+                        }
                         CommunityStatus::Declared => {
                             format!("declarada (até a altura {})", c.expires_at)
                         }

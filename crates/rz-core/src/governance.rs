@@ -281,6 +281,11 @@ pub enum ParamChange {
     StorageQuota(u64),
     // Reputação (ADR-0020); constitucional.
     DefenseContributionPoints(u64),
+    // Comunidades (REQ-074, `spec/COMMUNITIES.md §6.1`); constitucionais.
+    /// Retira o reconhecimento de uma Comunidade reconhecida.
+    WithdrawCommunity(Hash32),
+    /// Devolve o reconhecimento a uma Comunidade retirada.
+    RestoreCommunity(Hash32),
 }
 
 impl ParamChange {
@@ -326,6 +331,8 @@ impl ParamChange {
             ParamChange::ModuleByteFee(_) => 30,
             ParamChange::StorageQuota(_) => 31,
             ParamChange::DefenseContributionPoints(_) => 32,
+            ParamChange::WithdrawCommunity(_) => 33,
+            ParamChange::RestoreCommunity(_) => 34,
         }
     }
 
@@ -364,11 +371,22 @@ impl ParamChange {
             ParamChange::ModuleByteFee(_) => "runtime_module_byte_fee",
             ParamChange::StorageQuota(_) => "runtime_storage_quota",
             ParamChange::DefenseContributionPoints(_) => "defense_contribution_points",
+            ParamChange::WithdrawCommunity(_) => "community_withdraw",
+            ParamChange::RestoreCommunity(_) => "community_restore",
         }
     }
 
     /// Interpreta `nome=valor` (usado por interfaces).
     pub fn parse(name: &str, value: &str) -> Option<Self> {
+        match name {
+            "community_withdraw" => {
+                return Hash32::from_hex(value).map(ParamChange::WithdrawCommunity)
+            }
+            "community_restore" => {
+                return Hash32::from_hex(value).map(ParamChange::RestoreCommunity)
+            }
+            _ => {}
+        }
         let v: u64 = value.parse().ok()?;
         Some(match name {
             "min_fee" => ParamChange::MinFee(v),
@@ -408,8 +426,18 @@ impl ParamChange {
         })
     }
 
+    /// Valor como texto (número ou identificador), para interfaces.
+    pub fn value_text(&self) -> String {
+        match self {
+            ParamChange::WithdrawCommunity(id) | ParamChange::RestoreCommunity(id) => id.to_hex(),
+            _ => self.value().to_string(),
+        }
+    }
+
+    /// Valor numérico; 0 para as variantes que levam um identificador.
     pub fn value(&self) -> u64 {
         match *self {
+            ParamChange::WithdrawCommunity(_) | ParamChange::RestoreCommunity(_) => 0,
             ParamChange::MaxBlockTxs(v) => u64::from(v),
             ParamChange::MinFee(v)
             | ParamChange::GovDeposit(v)
@@ -485,6 +513,9 @@ impl ParamChange {
             ParamChange::ModuleByteFee(v) => p.runtime.module_byte_fee = v,
             ParamChange::StorageQuota(v) => p.runtime.storage_quota = v,
             ParamChange::DefenseContributionPoints(v) => p.defense.contribution_points = v,
+            // Mudam o registro de Comunidades, não os parâmetros: aplicadas
+            // pelo estado na ativação.
+            ParamChange::WithdrawCommunity(_) | ParamChange::RestoreCommunity(_) => {}
         }
     }
 }
@@ -495,6 +526,9 @@ impl Encode for ParamChange {
         match *self {
             ParamChange::MaxBlockTxs(v) => {
                 e.u32(v);
+            }
+            ParamChange::WithdrawCommunity(id) | ParamChange::RestoreCommunity(id) => {
+                e.put(&id);
             }
             _ => {
                 e.u64(self.value());
@@ -539,6 +573,8 @@ impl Decode for ParamChange {
             30 => ParamChange::ModuleByteFee(d.u64()?),
             31 => ParamChange::StorageQuota(d.u64()?),
             32 => ParamChange::DefenseContributionPoints(d.u64()?),
+            33 => ParamChange::WithdrawCommunity(d.get()?),
+            34 => ParamChange::RestoreCommunity(d.get()?),
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }

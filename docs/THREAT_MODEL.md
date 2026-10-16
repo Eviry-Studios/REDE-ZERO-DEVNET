@@ -768,7 +768,9 @@ Ativos de teste continuam só na DEVNET.
 
 **Severidade:** MÉDIA
 **Adversários:** ADV-12, maiorias de governança
-**Mitigações:** aprovação apenas por regras objetivas (`REQ-073`): a validação técnica é verificada pelo protocolo e o reconhecimento é pela governança bicameral; conteúdo controverso não é violação técnica (`REQ-074`); não existe operação unilateral de remoção; aplicações privadas não dependem de aprovação.
+**Mitigações:** aprovação apenas por regras objetivas (`REQ-073`): a validação técnica é verificada pelo protocolo e o reconhecimento é pela governança bicameral; conteúdo controverso não é violação técnica (`REQ-074`); não existe operação unilateral de remoção; a retirada do reconhecimento só ocorre por proposta **constitucional** (≥ 2/3 nas duas câmaras, quórum de 20%, atraso de ≥ 30 dias), mais exigente que o reconhecimento, preserva registro, nome e armazenamento e pode ser revertida pelo mesmo processo (`spec/COMMUNITIES.md §6.1`); aplicações privadas não dependem de aprovação.
+
+**Risco residual:** uma maioria qualificada nas duas câmaras pode retirar uma Comunidade; o protocolo garante o processo, não o mérito da decisão.
 
 ### THR-BRW-001 — Interface maliciosa ou falsificada
 

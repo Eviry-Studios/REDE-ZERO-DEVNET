@@ -1954,3 +1954,167 @@ fn bonded_key_cannot_rotate() {
         ))
     );
 }
+
+// ---------------------- remoção de Comunidade por governança (REQ-074)
+
+fn propose_params(
+    sim: &mut Sim,
+    category: Category,
+    params: Vec<ParamChange>,
+) -> Result<Hash32, TxError> {
+    let tx = sim.tx(
+        &rich(),
+        TxKind::Propose {
+            category,
+            content_hash: Hash32([9; 32]),
+            params,
+            release_id: None,
+            deposit: sim.state.params().governance.deposit,
+        },
+    );
+    sim.check(&tx)?;
+    let id = tx.id().0;
+    sim.block(vec![tx]);
+    Ok(id)
+}
+
+// Só uma proposta constitucional retira o reconhecimento; o registro e o
+// nome ficam (ninguém se passa pela Comunidade) e nada de Comunidade
+// reconhecida vale para ela até a restauração.
+#[test]
+fn community_withdrawn_and_restored_only_by_constitutional_proposal() {
+    use crate::community::{CommunityStatus, NameKind};
+    let mut sim = Sim::new();
+    let ks = controllers();
+    let id = recognize(&mut sim, "retiravel", &ks);
+    assert_eq!(
+        sim.state
+            .communities()
+            .resolve("retiravel", NameKind::Community),
+        Some(id)
+    );
+    let module = publish(&mut sim, &crate::runtime::tests::contador());
+    bind(&mut sim, id, Some(module), &ks[..2]);
+    sim.check(&sim.call(&rich(), id, "incrementar", 500_000))
+        .unwrap();
+
+    // Categoria errada e alvo errado: recusados.
+    assert!(matches!(
+        propose_params(
+            &mut sim,
+            Category::Ordinary,
+            vec![ParamChange::WithdrawCommunity(id)]
+        ),
+        Err(TxError::Governance(_))
+    ));
+    assert!(matches!(
+        propose_params(
+            &mut sim,
+            Category::Constitutional,
+            vec![ParamChange::WithdrawCommunity(Hash32([0xee; 32]))]
+        ),
+        Err(TxError::Community(_))
+    ));
+    assert!(matches!(
+        propose_params(
+            &mut sim,
+            Category::Constitutional,
+            vec![ParamChange::RestoreCommunity(id)]
+        ),
+        Err(TxError::Community(_))
+    ));
+
+    let pid = propose_params(
+        &mut sim,
+        Category::Constitutional,
+        vec![ParamChange::WithdrawCommunity(id)],
+    )
+    .unwrap();
+    approve(&mut sim, pid);
+    assert_eq!(
+        sim.state.proposal(&pid).unwrap().status,
+        ProposalStatus::Activated
+    );
+    let c = &sim.state.communities().communities[&id];
+    assert_eq!(c.status, CommunityStatus::Withdrawn);
+    assert!(sim
+        .state
+        .communities()
+        .resolve("retiravel", NameKind::Community)
+        .is_none());
+    assert!(!sim.state.approved_communities().any(|x| *x == id));
+    // O módulo dela não executa, nem em transação nem em consulta.
+    assert!(matches!(
+        sim.check(&sim.call(&rich(), id, "incrementar", 500_000)),
+        Err(TxError::Community(_))
+    ));
+    assert!(sim
+        .state
+        .query_module(
+            &id,
+            "ler",
+            &[],
+            rich().public_key().address(),
+            sim.height,
+            100_000
+        )
+        .is_err());
+
+    // O nome continua ocupado: ninguém declara outra com ele.
+    let again = sim.tx(
+        &poor(),
+        TxKind::DeclareCommunity {
+            name: "retiravel".into(),
+            manifest_hash: Hash32([1; 32]),
+            rule: rule_of(&ks, 2),
+        },
+    );
+    assert!(sim.check(&again).is_err());
+    // Posições de Comunidade retirada não valem.
+    let prop = propose_params(&mut sim, Category::Ordinary, vec![ParamChange::MinFee(3)]).unwrap();
+    let p = sim.state.proposal(&prop).unwrap().clone();
+    sim.advance_to(p.voting_start);
+    let payload = crate::community::position_payload(&id, &prop, Choice::Yes);
+    let approvals = ks[..2]
+        .iter()
+        .map(|k| crate::community::approve(k, &sim.g.network_id, &payload))
+        .collect();
+    let pos = sim.tx(
+        &poor(),
+        TxKind::CommunityPosition {
+            community: id,
+            proposal: prop,
+            choice: Choice::Yes,
+            approvals,
+        },
+    );
+    assert!(matches!(sim.check(&pos), Err(TxError::Community(_))));
+    // O registro não expira (diferente de uma declaração).
+    let far = sim.height
+        + sim
+            .state
+            .params()
+            .communities
+            .declaration_ttl_blocks
+            .min(50)
+        + 1;
+    sim.advance_to(far);
+    assert!(sim.state.communities().communities.contains_key(&id));
+
+    // Restauração: também constitucional.
+    let rid = propose_params(
+        &mut sim,
+        Category::Constitutional,
+        vec![ParamChange::RestoreCommunity(id)],
+    )
+    .unwrap();
+    approve(&mut sim, rid);
+    assert_eq!(
+        sim.state
+            .communities()
+            .resolve("retiravel", NameKind::Community),
+        Some(id)
+    );
+    sim.check(&sim.call(&rich(), id, "incrementar", 500_000))
+        .unwrap();
+}

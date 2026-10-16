@@ -1,6 +1,6 @@
 # spec/COMMUNITIES.md — Comunidades
 
-**Versão:** 0.1.0 (DEVNET)
+**Versão:** 0.2.0 (DEVNET)
 **Decisão:** ADR-0015
 **Relacionamento:** `SPECIFICATIONS.md §60–§62`, REQ-068..074, `docs/DEMOCRACIA_ORGANICA.md` N-1, N-5, N-6, N-7, AT-COM-001..004, THR-COM-001..003, INV-007
 **Implementação de referência:** `crates/rz-core/src/community.rs`, `crates/rz-core/src/state.rs`
@@ -73,7 +73,27 @@ As operações desta especificação só alteram:
 * `positions`;
 * nomes (`spec/NAMING.md`), cuja taxa vai para o Pool.
 
-Não existe operação de Comunidade sobre consenso, parâmetros, saldos de terceiros, regras monetárias ou outras Comunidades (AT-COM-003, INV-007). Remoção unilateral não existe (REQ-074); a remoção por governança está A DEFINIR.
+Não existe operação de Comunidade sobre consenso, parâmetros, saldos de terceiros, regras monetárias ou outras Comunidades (AT-COM-003, INV-007). Remoção unilateral não existe (REQ-074); a retirada do reconhecimento só acontece por governança (§6.1).
+
+### 6.1 Retirada e restauração do reconhecimento (REQ-074, ARCH §26)
+
+Nenhuma pessoa, validador ou Comunidade remove outra. A retirada é uma decisão da governança, pelo mesmo processo verificável do reconhecimento, mas com exigência maior: retirar é mais grave que reconhecer, e a exigência protege Comunidades minoritárias contra maiorias eventuais (THR-COM-003).
+
+| Alteração | Tag | Categoria | Exige |
+| --- | --- | --- | --- |
+| `community_withdraw = id` | 33 | constitucional (≥ 2/3, quórum de 20%, atraso de ≥ 30 dias) | Comunidade reconhecida, na submissão e na ativação |
+| `community_restore = id` | 34 | constitucional | Comunidade retirada, na submissão e na ativação |
+
+As alterações vão na lista `params` de uma proposta constitucional (`spec/GOVERNANCE.md §3`). O motivo fica no texto da proposta (`content_hash`). Conteúdo controverso não é violação técnica (REQ-074): a retirada responde a decisões da governança, não a um teste automático.
+
+Efeitos da retirada (`status = retirada`):
+
+* o registro, o histórico e o nome **permanecem**, para que ninguém se passe pela Comunidade; o nome continua indisponível para novas declarações;
+* `zero://nome.comunidade` deixa de resolver e o id sai de `approved_communities`;
+* nada que exige Comunidade reconhecida vale: posição (`CommunityPosition`), vinculação e chamada de módulo (transação e consulta);
+* o armazenamento do Runtime da Comunidade é preservado e volta a valer com a restauração.
+
+A restauração devolve o estado `reconhecida`, com o mesmo id, nome, regra e armazenamento.
 
 ## 7. Execução (fora do escopo desta versão)
 
@@ -104,4 +124,4 @@ Entra na raiz do estado depois de `market_root` (`spec/STATE.md §3`).
 
 ## 11. Testes de aceitação cobertos
 
-AT-COM-001..003 (`crates/rz-core/src/governance_tests.rs`), AT-COM-004 e o fluxo completo com Nodes reais (`crates/rz-wallet/tests/community_devnet.rs`), regras (`community::tests`), robustez (`crates/rz-p2p/tests/robustness.rs`).
+AT-COM-001..003 e retirada/restauração (`community_withdrawn_and_restored_only_by_constitutional_proposal`) em `crates/rz-core/src/governance_tests.rs`, AT-COM-004 e o fluxo completo com Nodes reais (`crates/rz-wallet/tests/community_devnet.rs`), regras (`community::tests`), robustez (`crates/rz-p2p/tests/robustness.rs`).

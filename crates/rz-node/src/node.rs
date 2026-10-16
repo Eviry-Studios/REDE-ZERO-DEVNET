@@ -1666,7 +1666,19 @@ impl Shared {
                         let rt = state.runtime();
                         let quota = state.params().runtime.storage_quota;
                         let fuel = QUERY_FUEL.min(state.params().runtime.max_call_fuel);
+                        let recognized = state
+                            .communities()
+                            .communities
+                            .get(&community)
+                            .is_some_and(|c| {
+                                c.status == rz_core::community::CommunityStatus::Recognized
+                            });
                         let found = rz_core::runtime::check_method(&method)
+                            .and(if recognized {
+                                Ok(())
+                            } else {
+                                Err("Comunidade não reconhecida")
+                            })
                             .and_then(|_| {
                                 rt.module_of(&community)
                                     .ok_or("Comunidade sem módulo vinculado")

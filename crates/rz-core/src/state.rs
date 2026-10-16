@@ -29,6 +29,7 @@ use crate::defense::{
     IncidentStatus, Quorum,
 };
 use crate::genesis::{Genesis, GenesisError};
+use crate::governance::ParamChange;
 use crate::governance::{
     check_proposal_shape, decide, lock_weight, Category, ChamberTally, Contribution, Lock,
     Proposal, ProposalStatus, ProtocolParams, Tally, Vote, SCALE,
@@ -877,7 +878,7 @@ impl State {
         // Declarações de Comunidade vencidas sem reconhecimento liberam o nome.
         self.communities
             .communities
-            .retain(|_, c| c.status == CommunityStatus::Recognized || c.expires_at > height);
+            .retain(|_, c| c.status != CommunityStatus::Declared || c.expires_at > height);
         self.expire_releases(height);
         self.apply_recoveries(height);
 
@@ -939,42 +940,92 @@ impl State {
             .map(|p| p.id)
             .collect();
         for id in activating {
-            let p = self.proposals.get_mut(&id).ok_or(StateError::Overflow)?;
+            let (params, release_id, category, content_hash) = {
+                let p = self.proposals.get(&id).ok_or(StateError::Overflow)?;
+                (p.params.clone(), p.release_id, p.category, p.content_hash)
+            };
             let mut next = self.params.clone();
-            for change in &p.params {
+            for change in &params {
                 change.apply(&mut next);
             }
             // A versão referenciada precisa continuar adotável: outra
             // proposta pode ter adotado uma versão depois da submissão.
-            let release_ok = p.release_id.is_none_or(|rid| {
+            let release_ok = release_id.is_none_or(|rid| {
                 self.releases.releases.get(&rid).is_some_and(|r| {
                     r.adopted_at.is_none() && r.release.previous == self.releases.current
                 })
             });
-            if next.validate().is_ok() && release_ok {
-                p.status = ProposalStatus::Activated;
-                if let Some(rid) = p.release_id {
-                    if let Some(r) = self.releases.releases.get_mut(&rid) {
-                        r.adopted_at = Some(height);
-                    }
-                    self.releases.current = Some(rid);
-                }
-                if p.category == Category::Community {
-                    self.approved_communities.insert(p.content_hash);
-                    // Reconhecimento (N-7): a declaração passa a Comunidade
-                    // reconhecida, com nome `.comunidade`.
-                    if let Some(c) = self.communities.communities.get_mut(&p.content_hash) {
-                        if c.status == CommunityStatus::Declared {
-                            c.status = CommunityStatus::Recognized;
-                        }
-                    }
-                }
-                self.params = next;
-            } else {
+            // Retiradas e restaurações continuam coerentes com o registro.
+            let communities_ok = self.check_community_changes(&params).is_ok();
+            let ok = next.validate().is_ok() && release_ok && communities_ok;
+            let p = self.proposals.get_mut(&id).ok_or(StateError::Overflow)?;
+            if !ok {
                 p.status = ProposalStatus::ActivationFailed;
+                continue;
+            }
+            p.status = ProposalStatus::Activated;
+            if let Some(rid) = release_id {
+                if let Some(r) = self.releases.releases.get_mut(&rid) {
+                    r.adopted_at = Some(height);
+                }
+                self.releases.current = Some(rid);
+            }
+            if category == Category::Community {
+                self.approved_communities.insert(content_hash);
+                // Reconhecimento (N-7): a declaração passa a Comunidade
+                // reconhecida, com nome `.comunidade`.
+                if let Some(c) = self.communities.communities.get_mut(&content_hash) {
+                    if c.status == CommunityStatus::Declared {
+                        c.status = CommunityStatus::Recognized;
+                    }
+                }
+            }
+            self.apply_community_changes(&params);
+            self.params = next;
+        }
+        Ok(())
+    }
+
+    /// Retirada e restauração de reconhecimento (`spec/COMMUNITIES.md §6.1`):
+    /// a Comunidade precisa estar no estado de partida.
+    fn check_community_changes(&self, params: &[ParamChange]) -> Result<(), TxError> {
+        for p in params {
+            let (id, want) = match p {
+                ParamChange::WithdrawCommunity(id) => (id, CommunityStatus::Recognized),
+                ParamChange::RestoreCommunity(id) => (id, CommunityStatus::Withdrawn),
+                _ => continue,
+            };
+            if self.communities.communities.get(id).map(|c| c.status) != Some(want) {
+                return Err(TxError::Community(match want {
+                    CommunityStatus::Recognized => {
+                        "só se retira o reconhecimento de Comunidade reconhecida"
+                    }
+                    _ => "só se restaura Comunidade retirada",
+                }));
             }
         }
         Ok(())
+    }
+
+    /// Aplica retiradas e restaurações de uma proposta ativada.
+    fn apply_community_changes(&mut self, params: &[ParamChange]) {
+        for p in params {
+            match p {
+                ParamChange::WithdrawCommunity(id) => {
+                    if let Some(c) = self.communities.communities.get_mut(id) {
+                        c.status = CommunityStatus::Withdrawn;
+                    }
+                    self.approved_communities.remove(id);
+                }
+                ParamChange::RestoreCommunity(id) => {
+                    if let Some(c) = self.communities.communities.get_mut(id) {
+                        c.status = CommunityStatus::Recognized;
+                    }
+                    self.approved_communities.insert(*id);
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Regras da nova chave de uma conta (`spec/KEYS.md §3`): prova de posse
@@ -1329,6 +1380,7 @@ impl State {
                 }
                 check_proposal_shape(*category, params, &self.params)
                     .map_err(TxError::Governance)?;
+                self.check_community_changes(params)?;
                 if let Some(rid) = release_id {
                     self.check_release_proposal(rid, *category)?;
                 }
@@ -1838,6 +1890,9 @@ impl State {
                         min: needed,
                     });
                 }
+                // Comunidade retirada pela governança não executa
+                // (`spec/COMMUNITIES.md §6.1`).
+                self.recognized(community)?;
                 let module = self
                     .runtime
                     .module_of(community)
@@ -2807,6 +2862,8 @@ impl State {
         fuel: u64,
     ) -> Result<runtime::Outcome, &'static str> {
         runtime::check_method(method)?;
+        self.recognized(community)
+            .map_err(|_| "Comunidade não reconhecida")?;
         let module = self
             .runtime
             .module_of(community)

@@ -304,7 +304,12 @@ fn corpus() -> Corpus {
             TxKind::Propose {
                 category: Category::Constitutional,
                 content_hash: Hash32([7; 32]),
-                params: vec![ParamChange::SlashBps(100), ParamChange::MinBond(5)],
+                params: vec![
+                    ParamChange::SlashBps(100),
+                    ParamChange::MinBond(5),
+                    ParamChange::WithdrawCommunity(Hash32([3; 32])),
+                    ParamChange::RestoreCommunity(Hash32([4; 32])),
+                ],
                 release_id: Some(Hash32([8; 32])),
                 deposit: 1_000,
             },
