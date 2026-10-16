@@ -370,9 +370,11 @@ fn sim_proposal() -> crate::governance::Proposal {
         submitted_at: 0,
         voting_start: 0,
         voting_end: 0,
+        reveal_end: 0,
         activation_height: 0,
         status: ProposalStatus::Pending,
         votes: Default::default(),
+        commits: Default::default(),
         tally: None,
     }
 }
@@ -2224,4 +2226,122 @@ fn names_expire_renew_and_free_after_grace() {
         },
     );
     sim.check(&steal).unwrap();
+}
+
+// ---------------------- voto secreto por compromisso (GOVERNANCE §3.2)
+
+fn commit_tx(
+    sim: &Sim,
+    k: &SecretKey,
+    proposal: Hash32,
+    choice: Choice,
+    salt: [u8; 32],
+) -> Transaction {
+    let voter = k.public_key().address();
+    sim.tx(
+        k,
+        TxKind::CommitVote {
+            proposal,
+            commitment: crate::governance::vote_commitment(&proposal, &voter, choice, &salt),
+        },
+    )
+}
+
+#[test]
+fn secret_vote_commit_reveal_and_tally_after_reveal() {
+    let mut sim = Sim::new();
+    sim.lock(&rich(), 100_000, 100);
+    // Desligado: compromissos recusados.
+    let off = sim.propose(Category::Ordinary, vec![ParamChange::MinFee(5)]);
+    let p = sim.state.proposal(&off).unwrap().clone();
+    assert_eq!(p.reveal_end, p.voting_end);
+    sim.advance_to(p.voting_start - 1);
+    assert!(matches!(
+        sim.check(&commit_tx(&sim, &rich(), off, Choice::Yes, [1; 32])),
+        Err(TxError::Governance(_))
+    ));
+
+    // Ligado (a própria governança decide, parâmetro constitucional).
+    sim.state.params_mut().vote_reveal_blocks = 3;
+    let id = sim.propose(Category::Ordinary, vec![ParamChange::MinFee(7)]);
+    let p = sim.state.proposal(&id).unwrap().clone();
+    assert_eq!(p.reveal_end, p.voting_end + 3);
+    sim.advance_to(p.voting_start - 1);
+    let (s1, s2) = ([0x11; 32], [0x22; 32]);
+    let c1 = commit_tx(&sim, &rich(), id, Choice::Yes, s1);
+    let c2 = commit_tx(&sim, &validator(), id, Choice::Yes, s2);
+    sim.block(vec![c1, c2]);
+    let p = sim.state.proposal(&id).unwrap().clone();
+    assert!(
+        p.votes.is_empty(),
+        "durante a votação, nada revela a escolha"
+    );
+    assert_eq!(p.commits.len(), 2);
+
+    // Revelar antes do fim da votação: recusado.
+    let reveal = |sim: &Sim, k: &SecretKey, choice, salt| {
+        sim.tx(
+            k,
+            TxKind::RevealVote {
+                proposal: id,
+                choice,
+                salt,
+            },
+        )
+    };
+    assert!(matches!(
+        sim.check(&reveal(&sim, &rich(), Choice::Yes, s1)),
+        Err(TxError::Governance(_))
+    ));
+    sim.advance_to(p.voting_end - 1);
+    // Revelação que não confere: recusada; a correta entra.
+    assert!(matches!(
+        sim.check(&reveal(&sim, &rich(), Choice::No, s1)),
+        Err(TxError::Governance(_))
+    ));
+    let r1 = reveal(&sim, &rich(), Choice::Yes, s1);
+    let r2 = reveal(&sim, &validator(), Choice::Yes, s2);
+    sim.block(vec![r1, r2]);
+    let p = sim.state.proposal(&id).unwrap().clone();
+    assert_eq!(p.votes.len(), 2, "revelados ficam públicos e auditáveis");
+    assert!(p.commits.is_empty());
+    assert_eq!(
+        p.status,
+        ProposalStatus::Pending,
+        "apuração só no fim da revelação"
+    );
+    sim.advance_to(p.reveal_end);
+    assert_eq!(
+        sim.state.proposal(&id).unwrap().status,
+        ProposalStatus::Approved
+    );
+}
+
+// Compromisso não revelado não conta; voto público substitui o secreto e
+// vice-versa (vale o último).
+#[test]
+fn unrevealed_commit_does_not_count_and_last_vote_wins() {
+    let mut sim = Sim::new();
+    sim.lock(&rich(), 100_000, 100);
+    sim.state.params_mut().vote_reveal_blocks = 2;
+    let id = sim.propose(Category::Ordinary, vec![ParamChange::MinFee(7)]);
+    let p = sim.state.proposal(&id).unwrap().clone();
+    sim.advance_to(p.voting_start - 1);
+    // Rico: secreto e depois público (fica o público).
+    let c = commit_tx(&sim, &rich(), id, Choice::No, [5; 32]);
+    sim.block(vec![c]);
+    let v = sim.vote(&rich(), id, Choice::Yes);
+    sim.block(vec![v]);
+    let p2 = sim.state.proposal(&id).unwrap();
+    assert!(p2.commits.is_empty() && p2.votes.len() == 1);
+    // Validador: só compromisso, nunca revelado.
+    let c = commit_tx(&sim, &validator(), id, Choice::Yes, [6; 32]);
+    sim.block(vec![c]);
+    sim.advance_to(p.reveal_end);
+    let t = sim.state.proposal(&id).unwrap().tally.unwrap();
+    assert_eq!(
+        t.contribution.yes + t.contribution.no + t.contribution.abstain,
+        0
+    );
+    assert!(t.economic.yes > 0);
 }

@@ -668,7 +668,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 ### THR-GOV-006 — Compra de votos e coerção de votantes
 
 **Severidade:** MÉDIA
-**Mitigações:** parcialmente mitigável; voto secreto ou mecanismos resistentes a coerção são **A DEFINIR** e possuem trade-off com auditabilidade.
+**Mitigações:** parcialmente mitigável. O voto secreto por compromisso e revelação existe, desligado por padrão, e a governança decide ligá-lo (`vote_reveal_blocks`, `spec/GOVERNANCE.md §3.2`). Ele esconde as escolhas durante a votação e mantém a auditabilidade depois da revelação (`SPEC §45`). **Risco residual:** não é resistente a coerção (o votante pode provar o voto revelando o sal); mecanismos resistentes a coerção (estilo MACI) ficam como evolução, com o trade-off de exigirem um coordenador ou provas de conhecimento zero.
 
 ---
 

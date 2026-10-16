@@ -80,6 +80,19 @@ pub enum TxKind {
     },
     /// Tag `0x13` — registra ou substitui o voto do remetente.
     Vote { proposal: Hash32, choice: Choice },
+    /// Tag `0x18` — voto secreto: compromisso com a escolha
+    /// (`spec/GOVERNANCE.md §3.2`), durante a votação.
+    CommitVote {
+        proposal: Hash32,
+        commitment: Hash32,
+    },
+    /// Tag `0x19` — revela o voto secreto, depois da votação e antes da
+    /// apuração.
+    RevealVote {
+        proposal: Hash32,
+        choice: Choice,
+        salt: [u8; 32],
+    },
     /// Tag `0x14` — denuncia equivocação: dois cabeçalhos distintos assinados
     /// pelo mesmo proponente para a mesma altura e rodada (`SPEC §49`, THR-CON-004).
     ReportEquivocation {
@@ -340,6 +353,19 @@ impl Encode for TxKind {
             }
             TxKind::RotateKey { new_key, proof } => {
                 e.u8(0x15).put(new_key).put(proof);
+            }
+            TxKind::CommitVote {
+                proposal,
+                commitment,
+            } => {
+                e.u8(0x18).put(proposal).put(commitment);
+            }
+            TxKind::RevealVote {
+                proposal,
+                choice,
+                salt,
+            } => {
+                e.u8(0x19).put(proposal).put(choice).fixed(salt);
             }
             TxKind::SetRecovery { recovery } => {
                 e.u8(0x16).option(recovery);
@@ -612,6 +638,15 @@ impl Decode for TxKind {
             0x13 => Ok(TxKind::Vote {
                 proposal: d.get()?,
                 choice: d.get()?,
+            }),
+            0x18 => Ok(TxKind::CommitVote {
+                proposal: d.get()?,
+                commitment: d.get()?,
+            }),
+            0x19 => Ok(TxKind::RevealVote {
+                proposal: d.get()?,
+                choice: d.get()?,
+                salt: d.fixed()?,
             }),
             0x14 => Ok(TxKind::ReportEquivocation {
                 first: Box::new(d.get()?),
@@ -1063,6 +1098,7 @@ impl AccountTx {
                 return Err(TxError::Key("a nova chave é a atual"));
             }
             TxKind::RotateKey { .. } | TxKind::RecoverAccount { .. } => {}
+            TxKind::CommitVote { .. } | TxKind::RevealVote { .. } => {}
             TxKind::RenewName { name, kind } => {
                 crate::community::check_name(name).map_err(TxError::Community)?;
                 if *kind == NameKind::Community {

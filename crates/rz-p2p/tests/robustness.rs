@@ -311,6 +311,7 @@ fn corpus() -> Corpus {
                     ParamChange::RestoreCommunity(Hash32([4; 32])),
                     ParamChange::NamePeriod(1_000),
                     ParamChange::AddBridgeChain(Hash32([5; 32])),
+                    ParamChange::VoteRevealBlocks(10),
                 ],
                 release_id: Some(Hash32([8; 32])),
                 deposit: 1_000,
@@ -916,6 +917,21 @@ fn corpus() -> Corpus {
                 TxKind::RotateKey {
                     new_key: rich().public_key(),
                     proof: rich().sign(rz_core::rotation::KEY_ROTATION, "x", b"y"),
+                },
+            ),
+            account_tx(
+                n,
+                TxKind::CommitVote {
+                    proposal: Hash32([8; 32]),
+                    commitment: Hash32([9; 32]),
+                },
+            ),
+            account_tx(
+                n,
+                TxKind::RevealVote {
+                    proposal: Hash32([8; 32]),
+                    choice: rz_core::governance::Choice::No,
+                    salt: [7; 32],
                 },
             ),
             account_tx(

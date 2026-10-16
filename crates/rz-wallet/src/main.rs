@@ -56,6 +56,9 @@ Governança (ADR-0008) — operações transparentes, por natureza públicas:
   zero-wallet propose --genesis FILE --node ADDR --key FILE --category (ordinaria|comunidade|constitucional)
                       (--content ARQUIVO | --content-hash HEX) [--params nome=valor,…] [--release HEX]
   zero-wallet vote    --genesis FILE --node ADDR --key FILE --proposal HEX --choice (sim|nao|abstencao)
+                      [--secret [--salt-out ARQUIVO]]   voto secreto, se a governança o ligou
+  zero-wallet vote-reveal --genesis FILE --node ADDR --key FILE --proposal HEX
+                      --choice (sim|nao|abstencao) (--salt HEX | --salt-file ARQUIVO)
 
 Validadores votam na câmara de contribuição usando a própria chave de validador.
 
@@ -197,7 +200,7 @@ AVISO: DEVNET — o ZERO desta rede não possui valor econômico.
 struct Args(HashMap<String, String>);
 
 /// Opções sem valor.
-const SWITCHES: &[&str] = &["direct", "permanente", "plaintext", "remove"];
+const SWITCHES: &[&str] = &["direct", "permanente", "plaintext", "remove", "secret"];
 
 impl Args {
     fn parse(raw: &[String]) -> Result<Self, String> {
@@ -306,6 +309,7 @@ fn main() -> ExitCode {
         "unbond" => cmd_bond(&args, false),
         "propose" => cmd_propose(&args),
         "vote" => cmd_vote(&args),
+        "vote-reveal" => cmd_vote_reveal(&args),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             Ok(())
@@ -2410,6 +2414,34 @@ fn cmd_vote(args: &Args) -> Result<(), String> {
     let choice = Choice::parse(args.req("choice")?).ok_or("--choice: use sim, nao ou abstencao")?;
     let (mut client, genesis) = open(args)?;
     let fee = fee(args, &genesis)?;
+    if args.get("secret").is_some() {
+        // Sal aleatório de 32 bytes (a semente de uma chave descartável).
+        let salt = SecretKey::generate().seed();
+        let voter = rz_wallet::account_address(&mut client, &keys)?;
+        let commitment = rz_core::governance::vote_commitment(&proposal, &voter, choice, &salt);
+        let id = send_account(
+            &mut client,
+            &genesis,
+            &keys,
+            TxKind::CommitVote {
+                proposal,
+                commitment,
+            },
+            fee,
+        )?;
+        let salt_hex = rz_crypto::hex::encode(&salt);
+        if let Some(out) = args.get("salt-out") {
+            fs::write(out, format!("{salt_hex}\n")).map_err(|e| format!("{out}: {e}"))?;
+            println!("sal gravado em {out}");
+        }
+        println!("voto secreto registrado: {id}");
+        println!("GUARDE para revelar depois da votação (sem revelar, o voto não conta):");
+        println!(
+            "  zero-wallet vote-reveal --proposal {proposal} --choice {} --salt {salt_hex}",
+            args.req("choice")?
+        );
+        return Ok(());
+    }
     let id = send_account(
         &mut client,
         &genesis,
@@ -2417,7 +2449,36 @@ fn cmd_vote(args: &Args) -> Result<(), String> {
         TxKind::Vote { proposal, choice },
         fee,
     )?;
-    eprintln!("aviso: votos são públicos nesta versão (ADR-0008)");
+    eprintln!(
+        "aviso: este voto é público; use --secret quando a governança tiver ligado o voto secreto"
+    );
     println!("voto registrado: {id} — aguardando inclusão em bloco");
+    Ok(())
+}
+
+fn cmd_vote_reveal(args: &Args) -> Result<(), String> {
+    let keys = load_keys(args)?;
+    let proposal = Hash32::from_hex(args.req("proposal")?).ok_or("--proposal: id inválido")?;
+    let choice = Choice::parse(args.req("choice")?).ok_or("--choice: use sim, nao ou abstencao")?;
+    let salt_text = match (args.get("salt"), args.get("salt-file")) {
+        (Some(s), _) => s.to_string(),
+        (None, Some(f)) => fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?,
+        (None, None) => return Err("informe --salt HEX ou --salt-file ARQUIVO".into()),
+    };
+    let salt = rz_crypto::hex::decode_array::<32>(salt_text.trim()).ok_or("sal inválido")?;
+    let (mut client, genesis) = open(args)?;
+    let fee = fee(args, &genesis)?;
+    let id = send_account(
+        &mut client,
+        &genesis,
+        &keys,
+        TxKind::RevealVote {
+            proposal,
+            choice,
+            salt,
+        },
+        fee,
+    )?;
+    println!("voto revelado: {id} — agora público e contado na apuração");
     Ok(())
 }

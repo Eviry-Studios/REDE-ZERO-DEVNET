@@ -61,6 +61,14 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Voto secreto por compromisso e revelação
+
+* `spec/GOVERNANCE.md` v0.4.0 §3.2 (THR-GOV-006, `SPEC §45`).
+* `CommitVote` (tag `0x18`) durante a votação e `RevealVote` (tag `0x19`) no período de revelação. A apuração ocorre no fim da revelação, e compromissos não revelados não contam. Vale o último voto, público ou secreto.
+* O modo vem desligado (`vote_reveal_blocks = 0`); quem decide ligá-lo é a governança, por parâmetro constitucional (tag 37). O período vigente na submissão vale para a proposta inteira.
+* Comandos `zero-wallet vote --secret [--salt-out]` e `vote-reveal`. Vetores de conformidade regenerados.
+* Não é resistente a coerção (o votante pode provar o voto); isso está documentado.
+
 ### Adicionado — Envios privados pelo Navegador Zero
 
 * A página `/carteira` mostra o saldo privado, com as notas varridas localmente, e passa a oferecer envio privado (RingCT) para `zs…`, envio transparente para hexadecimal e blindagem.

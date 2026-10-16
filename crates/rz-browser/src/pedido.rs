@@ -193,7 +193,10 @@ impl Operation {
                     }
                     .into(),
                 ),
-                l("Privacidade", "votos são públicos nesta versão".into()),
+                l(
+                    "Privacidade",
+                    "este voto é público; o voto secreto (compromisso e revelação) é feito pela zero-wallet vote --secret".into(),
+                ),
             ],
             Operation::Call {
                 community,

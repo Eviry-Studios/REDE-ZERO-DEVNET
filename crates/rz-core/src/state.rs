@@ -174,6 +174,8 @@ enum GovEffect {
     Unlock(u64),
     Propose(Box<Proposal>),
     Vote(Hash32, Address, Vote),
+    Commit(Hash32, Address, crate::governance::VoteCommit),
+    Reveal(Hash32, Address, Vote),
     /// Punição de validador por evidência verificável.
     Slash(rz_crypto::PublicKey, Hash32),
     Bond(rz_crypto::PublicKey, u64),
@@ -391,6 +393,7 @@ impl State {
                 communities: community::CommunityParams::default(),
                 defense: defense::DefenseParams::default(),
                 runtime: runtime::RuntimeParams::default(),
+                vote_reveal_blocks: 0,
             },
             locks: BTreeMap::new(),
             next_lock_id: 0,
@@ -801,7 +804,22 @@ impl State {
                 self.proposals.insert(p.id, *p);
             }
             Some(GovEffect::Vote(id, voter, vote)) => {
+                // Vale o último: um voto público substitui um secreto.
                 if let Some(p) = self.proposals.get_mut(&id) {
+                    p.commits.remove(&voter);
+                    p.votes.insert(voter, vote);
+                }
+            }
+            Some(GovEffect::Commit(id, voter, c)) => {
+                // E um secreto substitui um público.
+                if let Some(p) = self.proposals.get_mut(&id) {
+                    p.votes.remove(&voter);
+                    p.commits.insert(voter, c);
+                }
+            }
+            Some(GovEffect::Reveal(id, voter, vote)) => {
+                if let Some(p) = self.proposals.get_mut(&id) {
+                    p.commits.remove(&voter);
                     p.votes.insert(voter, vote);
                 }
             }
@@ -930,7 +948,7 @@ impl State {
         let closing: Vec<Hash32> = self
             .proposals
             .values()
-            .filter(|p| p.status == ProposalStatus::Pending && p.voting_end == height)
+            .filter(|p| p.status == ProposalStatus::Pending && p.reveal_end == height)
             .map(|p| p.id)
             .collect();
         for id in closing {
@@ -1350,6 +1368,8 @@ impl State {
             | TxKind::BridgeDeposit { .. } => 0,
             TxKind::Unlock { .. }
             | TxKind::Vote { .. }
+            | TxKind::CommitVote { .. }
+            | TxKind::RevealVote { .. }
             | TxKind::ReportEquivocation { .. }
             | TxKind::Unbond { .. }
             | TxKind::ReportDoubleVote { .. }
@@ -1501,6 +1521,9 @@ impl State {
                 }
                 let voting_start = p.height.saturating_add(g.analysis_blocks);
                 let voting_end = voting_start.saturating_add(g.voting_blocks);
+                // O período de revelação vigente na submissão vale para a
+                // proposta inteira, mesmo que o parâmetro mude depois.
+                let reveal_end = voting_end.saturating_add(self.params.vote_reveal_blocks);
                 let delay = match category {
                     Category::Ordinary => g.ordinary_delay_blocks,
                     Category::Community => 0,
@@ -1517,9 +1540,11 @@ impl State {
                     submitted_at: p.height,
                     voting_start,
                     voting_end,
-                    activation_height: voting_end.saturating_add(delay),
+                    reveal_end,
+                    activation_height: reveal_end.saturating_add(delay),
                     status: ProposalStatus::Pending,
                     votes: BTreeMap::new(),
+                    commits: BTreeMap::new(),
                     tally: None,
                 })));
                 effect.accounts.push((sender, sender_acc));
@@ -1540,6 +1565,71 @@ impl State {
                     sender,
                     Vote {
                         key: tx.body.sender,
+                        choice: *choice,
+                    },
+                ));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::CommitVote {
+                proposal,
+                commitment,
+            } => {
+                let prop = self
+                    .proposals
+                    .get(proposal)
+                    .ok_or(TxError::Governance("proposta inexistente"))?;
+                if prop.reveal_end == prop.voting_end {
+                    return Err(TxError::Governance(
+                        "voto secreto desligado para esta proposta",
+                    ));
+                }
+                if prop.status != ProposalStatus::Pending
+                    || p.height < prop.voting_start
+                    || p.height >= prop.voting_end
+                {
+                    return Err(TxError::Governance("fora do período de votação"));
+                }
+                effect.gov = Some(GovEffect::Commit(
+                    *proposal,
+                    sender,
+                    crate::governance::VoteCommit {
+                        key: tx.body.sender,
+                        commitment: *commitment,
+                    },
+                ));
+                effect.accounts.push((sender, sender_acc));
+            }
+            TxKind::RevealVote {
+                proposal,
+                choice,
+                salt,
+            } => {
+                let prop = self
+                    .proposals
+                    .get(proposal)
+                    .ok_or(TxError::Governance("proposta inexistente"))?;
+                if prop.status != ProposalStatus::Pending
+                    || p.height < prop.voting_end
+                    || p.height >= prop.reveal_end
+                {
+                    return Err(TxError::Governance("fora do período de revelação"));
+                }
+                let c = prop
+                    .commits
+                    .get(&sender)
+                    .ok_or(TxError::Governance("sem voto secreto desta conta"))?;
+                if crate::governance::vote_commitment(proposal, &sender, *choice, salt)
+                    != c.commitment
+                {
+                    return Err(TxError::Governance(
+                        "revelação não confere com o compromisso",
+                    ));
+                }
+                effect.gov = Some(GovEffect::Reveal(
+                    *proposal,
+                    sender,
+                    Vote {
+                        key: c.key,
                         choice: *choice,
                     },
                 ));

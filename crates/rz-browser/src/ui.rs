@@ -472,7 +472,7 @@ fn governance(nav: &Navegador) -> (String, String) {
                     vote
                 ));
             }
-            b.push_str("</table><p>Votar exige ZERO bloqueado (<code>zero-wallet lock</code>). Votos são públicos nesta versão.</p>");
+            b.push_str("</table><p>Votar exige ZERO bloqueado (<code>zero-wallet lock</code>). Votos pelo Navegador são públicos; o voto secreto, quando a governança o liga, é feito pela <code>zero-wallet vote --secret</code>.</p>");
         }
         Err(e) => b.push_str(&err_box(&e)),
     }

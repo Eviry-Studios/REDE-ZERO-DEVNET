@@ -1,6 +1,6 @@
 # spec/GOVERNANCE.md — Governança
 
-**Versão:** 0.3.0 (DEVNET) — aprovada e implementada
+**Versão:** 0.4.0 (DEVNET) — aprovada e implementada
 **Relacionamento:** ADR-0008, REQ-040..045, `ARCHITECTURE.md §31–32`, `SPECIFICATIONS.md §43–47`, THR-GOV-001..006
 
 ---
@@ -47,6 +47,8 @@ Durações são expressas em **blocos**, nunca em tempo de relógio (THR-CON-006
 | `0x11` | `Unlock` | `lock_id` | devolve após `unlock_height` |
 | `0x12` | `Propose` | `category, content_hash, params, release_id?` | cria proposta e debita depósito |
 | `0x13` | `Vote` | `proposal_id, choice ∈ {SIM, NÃO, ABSTENÇÃO}` | registra/substitui o voto da conta |
+| `0x18` | `CommitVote` | `proposal_id, commitment` | voto secreto: registra o compromisso (§3.2) |
+| `0x19` | `RevealVote` | `proposal_id, choice, salt` | revela o voto secreto depois da votação (§3.2) |
 | `0x14` | `ReportEquivocation` | `first, second: (BlockHeader, assinatura)` | pune o proponente que assinou dois cabeçalhos distintos para a mesma altura e rodada (`spec/CONSENSUS.md §6.2`) |
 
 Formatos exatos:
@@ -74,12 +76,13 @@ ParamChange (tag u8): 0 min_fee u64 | 1 max_block_txs u32 | 2 gov_deposit | 3 an
                       | 32 defense_contribution_points
                       | 33 community_withdraw | 34 community_restore
                       | 35 name_period_blocks | 36 bridge_add_chain (fixed[32], id da configuração)
+                      | 37 vote_reveal_blocks
                                                                      (u64, exceto tag 1: u32; tags 33 e 34: fixed[32], id da Comunidade)
 
 Tags 0 e 1 são da categoria ordinária; as demais, constitucional. Os parâmetros
 resultantes são validados antes de a proposta ser aceita (tags 10..19:
 spec/CONSENSUS.md §2; tags 20..21: spec/MARKET.md §6; tags 22..23:
-spec/COMMUNITIES.md §8; tags 24..26: spec/DEFENSE.md §6; tags 27..31: spec/RUNTIME.md §6; tag 32: spec/REPUTATION.md §4; tags 33..34: spec/COMMUNITIES.md §6.1, que também exige o estado da Comunidade na submissão e na ativação; tag 35: spec/NAMING.md §4.1; tag 36: spec/BRIDGE.md §2.1).
+spec/COMMUNITIES.md §8; tags 24..26: spec/DEFENSE.md §6; tags 27..31: spec/RUNTIME.md §6; tag 32: spec/REPUTATION.md §4; tags 33..34: spec/COMMUNITIES.md §6.1, que também exige o estado da Comunidade na submissão e na ativação; tag 35: spec/NAMING.md §4.1; tag 36: spec/BRIDGE.md §2.1; tag 37: §3.2, no máximo 10 000 000).
 
 Uma proposta da categoria Comunidade só é aceita se `content_hash` for o id
 de uma declaração de Comunidade pendente (validação técnica, N-7); na
@@ -88,12 +91,34 @@ ativação, a Comunidade passa a reconhecida (`spec/COMMUNITIES.md §4`).
 
 `h` é a altura do bloco em que a transação é incluída. O identificador da proposta é o `TxId` da transação `Propose`.
 
+## 3.2 Voto secreto por compromisso e revelação
+
+`vote_reveal_blocks` (padrão **0**, constitucional, tag 37) liga o modo secreto. O valor vigente na submissão vale para a proposta inteira:
+
+```text
+reveal_end        = voting_end + vote_reveal_blocks
+activation_height = reveal_end + atraso da categoria
+commitment        = H("rede-zero/vote-commit/v1", proposta ‖ conta ‖ u8(escolha) ‖ sal[32])
+```
+
+* **Durante a votação** (`voting_start ≤ h < voting_end`), a conta pode votar em público (`Vote`) ou registrar só o compromisso (`CommitVote`), que esconde a escolha. Vale o último: um voto público substitui um compromisso, e o compromisso substitui o voto público. Com o modo desligado (`reveal_end = voting_end`), `CommitVote` é recusado.
+* **Revelação** (`voting_end ≤ h < reveal_end`): `RevealVote` com a escolha e o sal. Se confere com o compromisso, entra em `votes`, pesado pela chave que fez o compromisso, e fica público e auditável (`SPEC §45`).
+* **Apuração** em `reveal_end` (§3.1), em vez de `voting_end`. Compromisso não revelado **não conta**, nem para o quórum.
+
+O que o modo resolve e o que não resolve (THR-GOV-006):
+
+* esconde as escolhas durante a votação, o que reduz o efeito manada e a manipulação de última hora;
+* **não** impede a compra de votos nem a coerção: quem quiser pode mostrar o próprio sal a terceiros;
+* custa um período a mais e uma segunda transação por votante.
+
+Ligar ou não o modo é decisão da governança.
+
 ## 3.1 Fim de bloco
 
 Após as transações e a distribuição de taxas, em ordem:
 
 1. o produtor do bloco recebe 1 ponto de contribuição (escala 10⁶), após aplicar o decaimento acumulado;
-2. propostas pendentes com `voting_end = h` são apuradas (seção 5); o depósito é devolvido ao proponente se houver quórum nas duas câmaras, ou **queimado** (reduz a oferta total) caso contrário;
+2. propostas pendentes com `reveal_end = h` (igual a `voting_end` sem voto secreto, §3.2) são apuradas (seção 5); o depósito é devolvido ao proponente se houver quórum nas duas câmaras, ou **queimado** (reduz a oferta total) caso contrário;
 3. propostas aprovadas com `activation_height = h` são ativadas: as alterações são aplicadas a uma cópia dos parâmetros, que é validada; se inválida — ou se a versão referenciada por `release_id` deixou de suceder a vigente —, a proposta fica `ActivationFailed` e nada muda.
 
 Propostas são processadas em ordem crescente de identificador.

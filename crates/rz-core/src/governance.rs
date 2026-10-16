@@ -120,6 +120,39 @@ pub struct ProtocolParams {
     pub defense: crate::defense::DefenseParams,
     /// Exonet Runtime (ADR-0018).
     pub runtime: crate::runtime::RuntimeParams,
+    /// Blocos de revelação depois da votação; 0 desliga o voto secreto por
+    /// compromisso (`spec/GOVERNANCE.md §3.2`).
+    pub vote_reveal_blocks: u64,
+}
+
+/// Limite do período de revelação.
+pub const MAX_REVEAL_BLOCKS: u64 = 10_000_000;
+/// Contexto do compromisso de um voto secreto.
+pub const VOTE_COMMIT: &str = "rede-zero/vote-commit/v1";
+
+/// `H(VOTE_COMMIT, proposta ‖ conta ‖ escolha ‖ sal)`.
+pub fn vote_commitment(
+    proposal: &Hash32,
+    voter: &Address,
+    choice: Choice,
+    salt: &[u8; 32],
+) -> Hash32 {
+    let mut e = Encoder::new();
+    e.put(proposal).put(voter).put(&choice).fixed(salt);
+    rz_crypto::hash(VOTE_COMMIT, &e.into_bytes())
+}
+
+/// Compromisso de voto secreto: a chave que votará e o hash da escolha.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VoteCommit {
+    pub key: PublicKey,
+    pub commitment: Hash32,
+}
+
+impl Encode for VoteCommit {
+    fn encode(&self, e: &mut Encoder) {
+        e.put(&self.key).put(&self.commitment);
+    }
 }
 
 impl ProtocolParams {
@@ -132,6 +165,9 @@ impl ProtocolParams {
         self.communities.validate()?;
         self.defense.validate()?;
         self.runtime.validate()?;
+        if self.vote_reveal_blocks > MAX_REVEAL_BLOCKS {
+            return Err("período de revelação longo demais");
+        }
         self.governance.validate()
     }
 }
@@ -145,7 +181,8 @@ impl Encode for ProtocolParams {
             .put(&self.market)
             .put(&self.communities)
             .put(&self.defense)
-            .put(&self.runtime);
+            .put(&self.runtime)
+            .u64(self.vote_reveal_blocks);
     }
 }
 
@@ -160,6 +197,7 @@ impl Decode for ProtocolParams {
             communities: d.get()?,
             defense: d.get()?,
             runtime: d.get()?,
+            vote_reveal_blocks: d.u64()?,
         })
     }
 }
@@ -291,6 +329,9 @@ pub enum ParamChange {
     /// Adota uma rede de origem publicada (`spec/BRIDGE.md §2.1`);
     /// constitucional.
     AddBridgeChain(Hash32),
+    /// Período de revelação do voto secreto (`spec/GOVERNANCE.md §3.2`);
+    /// constitucional.
+    VoteRevealBlocks(u64),
 }
 
 impl ParamChange {
@@ -340,6 +381,7 @@ impl ParamChange {
             ParamChange::RestoreCommunity(_) => 34,
             ParamChange::NamePeriod(_) => 35,
             ParamChange::AddBridgeChain(_) => 36,
+            ParamChange::VoteRevealBlocks(_) => 37,
         }
     }
 
@@ -382,6 +424,7 @@ impl ParamChange {
             ParamChange::RestoreCommunity(_) => "community_restore",
             ParamChange::NamePeriod(_) => "name_period_blocks",
             ParamChange::AddBridgeChain(_) => "bridge_add_chain",
+            ParamChange::VoteRevealBlocks(_) => "vote_reveal_blocks",
         }
     }
 
@@ -433,6 +476,7 @@ impl ParamChange {
             "runtime_storage_quota" => ParamChange::StorageQuota(v),
             "defense_contribution_points" => ParamChange::DefenseContributionPoints(v),
             "name_period_blocks" => ParamChange::NamePeriod(v),
+            "vote_reveal_blocks" => ParamChange::VoteRevealBlocks(v),
             _ => return None,
         })
     }
@@ -486,7 +530,8 @@ impl ParamChange {
             | ParamChange::ModuleByteFee(v)
             | ParamChange::StorageQuota(v)
             | ParamChange::DefenseContributionPoints(v)
-            | ParamChange::NamePeriod(v) => v,
+            | ParamChange::NamePeriod(v)
+            | ParamChange::VoteRevealBlocks(v) => v,
         }
     }
 
@@ -530,6 +575,7 @@ impl ParamChange {
             ParamChange::StorageQuota(v) => p.runtime.storage_quota = v,
             ParamChange::DefenseContributionPoints(v) => p.defense.contribution_points = v,
             ParamChange::NamePeriod(v) => p.communities.name_period_blocks = v,
+            ParamChange::VoteRevealBlocks(v) => p.vote_reveal_blocks = v,
             // Mudam o registro de Comunidades, não os parâmetros: aplicadas
             // pelo estado na ativação.
             ParamChange::WithdrawCommunity(_)
@@ -598,6 +644,7 @@ impl Decode for ParamChange {
             34 => ParamChange::RestoreCommunity(d.get()?),
             35 => ParamChange::NamePeriod(d.u64()?),
             36 => ParamChange::AddBridgeChain(d.get()?),
+            37 => ParamChange::VoteRevealBlocks(d.u64()?),
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }
@@ -981,9 +1028,14 @@ pub struct Proposal {
     pub submitted_at: u64,
     pub voting_start: u64,
     pub voting_end: u64,
+    /// Fim da revelação dos votos secretos e altura da apuração
+    /// (`= voting_end` sem voto secreto).
+    pub reveal_end: u64,
     pub activation_height: u64,
     pub status: ProposalStatus,
     pub votes: BTreeMap<Address, Vote>,
+    /// Votos secretos ainda não revelados.
+    pub commits: BTreeMap<Address, VoteCommit>,
     pub tally: Option<Tally>,
 }
 
@@ -1000,6 +1052,7 @@ impl Proposal {
             .u64(self.submitted_at)
             .u64(self.voting_start)
             .u64(self.voting_end)
+            .u64(self.reveal_end)
             .u64(self.activation_height)
             .put(&self.status)
             .option(&self.tally);
@@ -1012,6 +1065,10 @@ impl Encode for Proposal {
         e.u32(u32::try_from(self.votes.len()).unwrap_or(u32::MAX));
         for (addr, v) in &self.votes {
             e.put(addr).put(v);
+        }
+        e.u32(u32::try_from(self.commits.len()).unwrap_or(u32::MAX));
+        for (addr, c) in &self.commits {
+            e.put(addr).put(c);
         }
     }
 }
@@ -1040,9 +1097,11 @@ impl Decode for ProposalSummary {
             submitted_at: d.u64()?,
             voting_start: d.u64()?,
             voting_end: d.u64()?,
+            reveal_end: d.u64()?,
             activation_height: d.u64()?,
             status: d.get()?,
             votes: BTreeMap::new(),
+            commits: BTreeMap::new(),
             tally: d.option()?,
         };
         let _vote_count = d.u32()?;
@@ -1187,6 +1246,7 @@ mod tests {
             communities: crate::community::CommunityParams::default(),
             defense: crate::defense::DefenseParams::default(),
             runtime: crate::runtime::RuntimeParams::default(),
+            vote_reveal_blocks: 0,
         };
         assert!(check_proposal_shape(Category::Ordinary, &[ParamChange::MinFee(5)], &cur).is_ok());
         // Parâmetro constitucional com categoria ordinária: inválido.
