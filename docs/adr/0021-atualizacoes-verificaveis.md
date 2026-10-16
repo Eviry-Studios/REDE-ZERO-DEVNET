@@ -46,10 +46,10 @@ A governança já aceitava `release_id` em propostas, sem nada que o ligasse a u
 
 * Quem baixa um binário confere contra a cadeia, não contra o site ou o repositório. Comprometer a distribuição não basta para enganar quem verifica (`ACCEPTANCE_TESTS.md §75`).
 * Adotar uma versão leva o tempo de uma proposta constitucional (análise, votação e pelo menos 30 dias de atraso). Correções de segurança urgentes ainda dependem de operadores atualizarem por conta própria antes da adoção formal. A adoção registra o que foi aceito, não impede que alguém rode outro código.
-* A garantia para artefatos depende de builds reproduzíveis (THR-DEV-003), ainda pendentes.
+* A garantia para artefatos depende de builds reproduzíveis (THR-DEV-003): `scripts/build-reproduzivel.sh`, com o compilador fixado, verificado na CI em Linux x86_64.
 
 ## Condições de revisão
 
-* Builds reproduzíveis com verificação independente dos artefatos.
+* Verificação de reprodutibilidade em outras plataformas e por compiladores independentes.
 * Processo de emergência para correções de segurança, sem criar autoridade única.
 * Ativação de regras novas coordenada pela altura de adoção.

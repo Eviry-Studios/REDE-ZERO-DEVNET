@@ -121,7 +121,7 @@ releases_root = H("rede-zero/releases-root/v1",
 
 ## 10. Limitações
 
-* **Builds reproduzíveis** (THR-DEV-003): o hash de um artefato só vale como verificação para quem não compila se outras pessoas reproduzirem o mesmo binário a partir de `implementation`. Na DEVNET, os builds ainda não são garantidamente reproduzíveis. Até lá, a verificação forte é compilar do código conferido.
+* **Builds reproduzíveis** (THR-DEV-003, REQ-004): `scripts/build-reproduzivel.sh` produz os binários com o compilador fixado em `rust-toolchain.toml`, o `Cargo.lock` e os caminhos locais substituídos por prefixos fixos. Com o mesmo commit, qualquer pessoa obtém os mesmos bytes, em qualquer diretório. A CI compila duas vezes em caminhos diferentes e compara (job "build reproduzível"). Assim, o hash de artefato do manifesto pode ser conferido por terceiros que compilam, e quem não compila confia em quem compilou e conferiu. Ainda não há verificação entre sistemas operacionais e arquiteturas diferentes de Linux x86_64.
 * A adoção não troca regras automaticamente. A coordenação de ativação de regras novas fica no código de cada versão.
 
 ## 11. Testes

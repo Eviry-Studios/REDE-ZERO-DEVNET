@@ -109,12 +109,13 @@ Cada invariante lista onde é aplicada e os testes que a exercitam. Uma violaç�
 ## 5. Como reproduzir
 
 ```bash
-# Tudo o que a CI roda (Rust estável; a CI usa a versão estável mais recente)
+# Tudo o que a CI roda (compilador fixado em rust-toolchain.toml)
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo run --locked -p rz-crypto --example vectors     # vetores publicados
 cargo run --locked -p rz-conformance --bin zero-conformidade -- verificar conformance   # suíte de conformidade
+scripts/build-reproduzivel.sh /tmp/a   # binários e hashes; repita em outro diretório e compare
 
 # Robustez por mutação com mais iterações e outras sementes
 RZ_FUZZ_ITERS=20000 RZ_FUZZ_SEED=7 cargo test --release -p rz-p2p --test robustness

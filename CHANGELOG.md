@@ -61,6 +61,12 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Builds reproduzíveis
+
+* `rust-toolchain.toml` fixa o compilador (1.98.1). `scripts/build-reproduzivel.sh` compila os quatro binários com caminhos locais substituídos e grava o SHA-256 de cada um.
+* Novo job de CI, "build reproduzível": dois builds em diretórios diferentes precisam gerar bytes idênticos (REQ-004, THR-DEV-003). Verificado em Linux x86_64.
+* A CI passa a usar o compilador fixado em vez do estável mais recente.
+
 ### Alterado — Senha sem eco
 
 * A senha das chaves cifradas é lida do terminal sem eco (`rpassword`). Sem terminal, vale a entrada padrão; arquivo de senha e `RZ_KEY_PASSPHRASE` continuam valendo.

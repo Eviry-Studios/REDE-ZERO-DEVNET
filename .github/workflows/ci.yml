@@ -18,10 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Toolchain estável
-        run: |
-          rustup toolchain install stable --profile minimal --component rustfmt,clippy
-          rustup default stable
+      - name: Toolchain fixada (rust-toolchain.toml)
+        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
       - uses: actions/cache@v4
         with:
           path: |
@@ -39,6 +37,25 @@ jobs:
         run: cargo run --locked -p rz-crypto --example vectors
       - name: Suíte de conformidade (SPEC §68–69)
         run: cargo run --locked -p rz-conformance --bin zero-conformidade -- verificar conformance
+
+  reproducible:
+    name: build reproduzível
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain fixada (rust-toolchain.toml)
+        run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy
+      - name: Dois builds em diretórios diferentes
+        env:
+          RUSTFLAGS: ""
+        run: |
+          cp -a "$GITHUB_WORKSPACE" /tmp/outro-caminho
+          scripts/build-reproduzivel.sh /tmp/saida-a
+          /tmp/outro-caminho/scripts/build-reproduzivel.sh /tmp/saida-b
+      - name: Binários idênticos byte a byte (REQ-004, THR-DEV-003)
+        run: |
+          diff /tmp/saida-a/artefatos.txt /tmp/saida-b/artefatos.txt
+          cat /tmp/saida-a/artefatos.txt >> "$GITHUB_STEP_SUMMARY"
 
   secrets:
     name: varredura de chaves no repositório

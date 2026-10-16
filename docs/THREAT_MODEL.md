@@ -916,7 +916,7 @@ Antes: Agente Zero (THR-AGT-001..003). O Agente Zero foi retirado do núcleo da 
 ### THR-DEV-003 — Release não reprodutível
 
 **Severidade:** ALTA
-**Mitigações:** builds reprodutíveis (`REQ-004`, **pendente**); binários verificáveis contra o código-fonte; o manifesto adotado fixa o hash de árvore do código, da especificação e dos testes, e quem não confia no binário compila do código conferido (`spec/RELEASES.md §7`, §10).
+**Mitigações:** builds reprodutíveis (`REQ-004`): compilador fixado (`rust-toolchain.toml`), `Cargo.lock`, caminhos locais substituídos e `scripts/build-reproduzivel.sh`; a CI compila duas vezes em caminhos diferentes e exige bytes idênticos (Linux x86_64; outras plataformas pendentes); binários verificáveis contra o código-fonte; o manifesto adotado fixa o hash de árvore do código, da especificação e dos testes, e quem não confia no binário compila do código conferido (`spec/RELEASES.md §7`, §10).
 
 ### THR-DEV-004 — Dependência de plataforma única
 
