@@ -91,6 +91,21 @@ ativação, a Comunidade passa a reconhecida (`spec/COMMUNITIES.md §4`).
 
 `h` é a altura do bloco em que a transação é incluída. O identificador da proposta é o `TxId` da transação `Propose`.
 
+## 3.1 Fim de bloco
+
+Após as transações e a distribuição de taxas, em ordem:
+
+1. o produtor do bloco recebe 1 ponto de contribuição (escala 10⁶), após aplicar o decaimento acumulado;
+2. propostas pendentes com `reveal_end = h` (igual a `voting_end` sem voto secreto, §3.2) são apuradas (seção 5); o depósito é devolvido ao proponente se houver quórum nas duas câmaras, ou **queimado** (reduz a oferta total) caso contrário;
+3. propostas aprovadas com `activation_height = h` são ativadas: as alterações são aplicadas a uma cópia dos parâmetros, que é validada; se inválida — ou se a versão referenciada por `release_id` deixou de suceder a vigente —, a proposta fica `ActivationFailed` e nada muda.
+
+Propostas são processadas em ordem crescente de identificador.
+
+* `content_hash` referencia o texto completo, armazenado fora da cadeia (Manifesto §6: a cadeia não é depósito de dados).
+* Propostas constitucionais de protocolo **devem** incluir `release_id` que identifique versão, especificação, implementação e testes (`SPEC §63`). Uma proposta com `release_id` só é aceita se for constitucional e apontar para um manifesto publicado (`PublishRelease`, tag `0x80`), ainda não adotado, que suceda a versão vigente sem reduzir a versão de protocolo. Na ativação, a versão passa a ser a adotada (`spec/RELEASES.md §4`).
+* Um voto pode ser substituído até o fim do período; vale o último.
+* O peso de câmara de contribuição é atribuído à identidade de Node; o Node assina seu voto com a chave de Node, separada da Wallet.
+
 ## 3.2 Voto secreto por compromisso e revelação
 
 `vote_reveal_blocks` (padrão **0**, constitucional, tag 37) liga o modo secreto. O valor vigente na submissão vale para a proposta inteira:
@@ -112,21 +127,6 @@ O que o modo resolve e o que não resolve (THR-GOV-006):
 * custa um período a mais e uma segunda transação por votante.
 
 Ligar ou não o modo é decisão da governança.
-
-## 3.1 Fim de bloco
-
-Após as transações e a distribuição de taxas, em ordem:
-
-1. o produtor do bloco recebe 1 ponto de contribuição (escala 10⁶), após aplicar o decaimento acumulado;
-2. propostas pendentes com `reveal_end = h` (igual a `voting_end` sem voto secreto, §3.2) são apuradas (seção 5); o depósito é devolvido ao proponente se houver quórum nas duas câmaras, ou **queimado** (reduz a oferta total) caso contrário;
-3. propostas aprovadas com `activation_height = h` são ativadas: as alterações são aplicadas a uma cópia dos parâmetros, que é validada; se inválida — ou se a versão referenciada por `release_id` deixou de suceder a vigente —, a proposta fica `ActivationFailed` e nada muda.
-
-Propostas são processadas em ordem crescente de identificador.
-
-* `content_hash` referencia o texto completo, armazenado fora da cadeia (Manifesto §6: a cadeia não é depósito de dados).
-* Propostas constitucionais de protocolo **devem** incluir `release_id` que identifique versão, especificação, implementação e testes (`SPEC §63`). Uma proposta com `release_id` só é aceita se for constitucional e apontar para um manifesto publicado (`PublishRelease`, tag `0x80`), ainda não adotado, que suceda a versão vigente sem reduzir a versão de protocolo. Na ativação, a versão passa a ser a adotada (`spec/RELEASES.md §4`).
-* Um voto pode ser substituído até o fim do período; vale o último.
-* O peso de câmara de contribuição é atribuído à identidade de Node; o Node assina seu voto com a chave de Node, separada da Wallet.
 
 ## 4. Pesos
 
