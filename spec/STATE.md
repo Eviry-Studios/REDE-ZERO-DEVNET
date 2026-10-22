@@ -59,7 +59,7 @@ Política monetária da ADR-0025: emissão **constante por bloco, sem teto**.
 * `block_reward` vem do Genesis (`spec/BLOCKS.md §5`) e só muda por proposta constitucional (tag 38, `spec/GOVERNANCE.md`), com teto `MAX_BLOCK_REWARD = 100 ZERO`.
 * O valor é por altura: o protocolo não tem relógio (`spec/BLOCKS.md §1`).
 * Valores da TESTNET: `block_reward = 0,1 ZERO` e Genesis de 100 000 000 ZERO, cerca de 1 % ao ano no primeiro ano com blocos de 2 s. A inflação percentual cai com o tempo, porque o valor absoluto é fixo.
-* Não há alocação a fundadores: o Genesis cobre o vínculo dos validadores iniciais e a distribuição inicial, e o resto da oferta nasce pela emissão.
+* Não há alocação a fundadores. Na TESTNET, o Genesis cobre o vínculo dos validadores e o faucet; na MAINNET, a distribuição inicial é por depósito permanente no Pool (ADR-0026).
 
 Um Genesis com `block_reward = 0` mantém a regra anterior, sem emissão.
 

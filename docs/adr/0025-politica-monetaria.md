@@ -85,9 +85,10 @@ O protocolo cria `block_reward` unidades a cada bloco finalizado.
    * Com pouco uso, a emissão paga os validadores e mantém a rede segura enquanto as taxas ainda são pequenas.
    * Com muito uso, a queima compensa a emissão: a oferta líquida se estabiliza ou cai, e o valor do ZERO fica ligado ao uso real.
    * O proponente fica com metade, então continua incentivado a incluir transações. Encher o próprio bloco com transações próprias passa a custar metade das taxas.
-4. **Distribuição do Genesis:** um Genesis pequeno, e o resto da oferta nasce pela emissão, para quem valida.
-   * O Genesis tem o vínculo dos validadores iniciais, mais o mínimo necessário para taxas.
-   * **Sem alocação a fundadores ou à equipe.** Não é contradição literal, mas vai contra o Manifesto §13 (concentração), REQ-099 (continuidade sem fundador) e THR-CON-001.
+4. **Distribuição inicial:** **sem alocação a fundadores ou à equipe.**
+   * Na TESTNET, o Genesis tem o vínculo dos validadores e o faucet.
+   * Na MAINNET, a distribuição é por depósito permanente no Pool (ADR-0026).
+   * Uma alocação a fundadores não seria contradição literal, mas iria contra o Manifesto §13 (concentração), REQ-099 (continuidade sem fundador) e THR-CON-001.
 5. **Conservação:** a invariante passa a ser verificada após cada bloco.
 
    ```text

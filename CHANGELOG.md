@@ -61,6 +61,11 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Plano da TESTNET e distribuição da MAINNET
+
+* `docs/TESTNET.md`: fases do lançamento, com ao menos 10 validadores independentes, Genesis de 100 000 000 ZERO e faucet que não vincula nem vota.
+* ADR-0026: na MAINNET, o vínculo de arranque dos validadores é queimado ao fim de um período de distribuição. Nesse período, os 100 000 000 ZERO são divididos na proporção do BTC queimado e depositado no Pool permanente. Ninguém recebe ZERO de outra forma, e a emissão começa depois do período.
+
 ### Adicionado — Política monetária
 
 * ADR-0025 **aceita**. Emissão constante por bloco, sem teto: `block_reward` vai ao proponente junto com as taxas. Metade das taxas é queimada (`fee_burn_bps`). O Genesis não tem alocação a fundadores.
