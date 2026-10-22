@@ -1,0 +1,19 @@
+[package]
+name = "rz-p2p"
+description = "Mensagens e transporte P2P da Rede Zero (DEVNET, ADR-0007)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+rz-codec.workspace = true
+rz-crypto.workspace = true
+rz-core.workspace = true
+rz-privacy.workspace = true
+x25519-dalek.workspace = true
+chacha20poly1305.workspace = true
+rand_core.workspace = true
+
+[lints]
+workspace = true

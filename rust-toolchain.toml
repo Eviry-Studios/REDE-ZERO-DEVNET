@@ -1,0 +1,7 @@
+# Versão fixa do compilador: parte da reprodutibilidade dos builds
+# (REQ-004, THR-DEV-003, scripts/build-reproduzivel.sh). Mudar esta versão é
+# mudar os binários; faça-o numa versão nova (ADR-0021).
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

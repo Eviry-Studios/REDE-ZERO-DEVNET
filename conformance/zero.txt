@@ -1,0 +1,110 @@
+# Rede Zero — vetores de conformidade v1 — ZERO: leitura e escrita de valores
+# Gerado por `zero-conformidade gerar`; formato em spec/CONFORMANCE.md.
+
+[caso ler-0]
+operacao = ler
+texto = "0"
+resultado = ok
+unidades = 0
+
+[caso ler-1]
+operacao = ler
+texto = "1"
+resultado = ok
+unidades = 100000000
+
+[caso ler-2]
+operacao = ler
+texto = "1.5"
+resultado = ok
+unidades = 150000000
+
+[caso ler-3]
+operacao = ler
+texto = "0.00000001"
+resultado = ok
+unidades = 1
+
+[caso ler-4]
+operacao = ler
+texto = "21000000"
+resultado = ok
+unidades = 2100000000000000
+
+[caso ler-5]
+operacao = ler
+texto = "184467440737.09551615"
+resultado = ok
+unidades = 18446744073709551615
+
+[caso ler-6]
+operacao = ler
+texto = ""
+resultado = rejeitado
+
+[caso ler-7]
+operacao = ler
+texto = "1.000000001"
+resultado = rejeitado
+
+[caso ler-8]
+operacao = ler
+texto = "-1"
+resultado = rejeitado
+
+[caso ler-9]
+operacao = ler
+texto = "1,5"
+resultado = rejeitado
+
+[caso ler-10]
+operacao = ler
+texto = "184467440737.09551616"
+resultado = rejeitado
+
+[caso ler-11]
+operacao = ler
+texto = " 1"
+resultado = rejeitado
+
+[caso ler-12]
+operacao = ler
+texto = ".5"
+resultado = ok
+unidades = 50000000
+
+[caso ler-13]
+operacao = ler
+texto = "1."
+resultado = ok
+unidades = 100000000
+
+[caso escrever-0]
+operacao = escrever
+unidades = 0
+texto = "0.00000000"
+
+[caso escrever-1]
+operacao = escrever
+unidades = 1
+texto = "0.00000001"
+
+[caso escrever-2]
+operacao = escrever
+unidades = 100000000
+texto = "1.00000000"
+
+[caso escrever-3]
+operacao = escrever
+unidades = 150000000
+texto = "1.50000000"
+
+[caso escrever-4]
+operacao = escrever
+unidades = 123456789
+texto = "1.23456789"
+
+[caso escrever-5]
+operacao = escrever
+unidades = 18446744073709551615
+texto = "184467440737.09551615"
