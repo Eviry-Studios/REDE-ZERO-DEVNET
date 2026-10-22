@@ -14,20 +14,21 @@ A TESTNET é a primeira rede pública da Rede Zero. O ZERO dela **não tem valor
 | Política monetária | ADR-0025: `block_reward = 0,1 ZERO`, `fee_burn_bps = 5 000` |
 | Genesis | 100 000 000 ZERO: 10 000 vinculados por validador e o resto no faucet |
 | Faucet | operado pela pessoa que coordena o lançamento; **não vincula ZERO e não vota** (regra pública, conferível na cadeia) |
-| Ponte | uma rede de teste do Bitcoin (signet ou testnet4), com ponto de partida no Genesis |
+| Ponte | uma rede de teste do Bitcoin (signet ou testnet4), adotada **depois do lançamento** por proposta constitucional (`PublishBridgeChain`), o que também exercita a governança |
 
 ## Fase 0 — Código e documentação
 
-1. `rede-zero-node genesis` monta o Genesis a partir de chaves públicas. Cada operador gera a chave na própria máquina e envia só a chave pública.
+1. ✅ `rede-zero-node genesis-testnet` monta o Genesis a partir de chaves públicas (um arquivo com uma chave por linha e a chave pública do faucet). Cada operador gera a chave na própria máquina e envia só a chave pública, que `zero-wallet new` e `zero-wallet address` mostram.
+   * Os temporizadores do consenso são maiores que os da DEVNET, para a latência da Internet e do Tor (`ConsensusParams::testnet`: proposta 3 s, votos 1 s, época de 1 000 blocos).
 2. Faucet público: um limite por endereço e uma prova de trabalho contra abuso. Nenhum endereço IP é guardado.
-3. Node e Wallet mostram o ambiente correto, com o aviso de que o ZERO da TESTNET não tem valor.
+3. ✅ Node e Wallet mostram o ambiente correto, com o aviso de que o ZERO da TESTNET não tem valor.
 4. `testnet/` publica `genesis.bin`, o hash dele e a lista de Nodes iniciais.
 5. Guia do operador (`docs/OPERACAO.md`).
 6. Versão `v0.1.0-testnet` com binários reproduzíveis e manifesto de versão (ADR-0021).
 
 ## Fase 1 — Cerimônia do Genesis
 
-1. Cada operador gera a chave do validador cifrada (`zero-wallet key-new`) e envia a chave pública e o endereço público do seu Node.
+1. Cada operador gera a chave do validador cifrada (`zero-wallet new --key validador.key`) e envia a chave pública e o endereço público do seu Node.
 2. A coordenação monta o Genesis, publica `genesis.bin` e o hash, e abre um prazo de conferência.
 3. Cada operador recompila a versão pelo build reproduzível, confere o hash do binário e o do Genesis, e confirma publicamente.
 4. Todos iniciam o Node. Os blocos começam quando mais de 2/3 do poder de voto está no ar.

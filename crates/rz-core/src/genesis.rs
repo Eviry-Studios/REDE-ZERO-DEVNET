@@ -451,6 +451,26 @@ pub(crate) mod tests {
         assert_ne!(other.hash(), sample().hash());
     }
 
+    // Genesis da TESTNET (docs/TESTNET.md): parâmetros públicos, sem ativos
+    // de teste, com a política monetária da ADR-0025.
+    #[test]
+    fn testnet_genesis() {
+        let mut g = sample();
+        g.kind = NetworkKind::Testnet;
+        g.network_id = "rede-zero-testnet-1".into();
+        g.consensus = ConsensusParams::testnet(2_000);
+        g.validators[0].stake = g.consensus.min_bond;
+        g.monetary = crate::monetary::MonetaryParams::TESTNET;
+        assert_eq!(g.validate(), Ok(()));
+        g.assets.push(GenesisAsset {
+            network: "x".into(),
+            asset_ref: "y".into(),
+            decimals: 8,
+            allocations: vec![],
+        });
+        assert!(g.validate().is_err());
+    }
+
     #[test]
     fn network_kind_must_match_name() {
         let mut g = sample();

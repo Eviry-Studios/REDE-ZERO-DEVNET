@@ -61,6 +61,12 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Genesis da TESTNET
+
+* `rede-zero-node genesis-testnet` monta o Genesis só com chaves públicas: os validadores, cada um com o vínculo, e o faucet, com o resto da oferta. O faucet não pode ser validador.
+* `ConsensusParams::testnet`, com temporizadores para latência de Internet e Tor.
+* `zero-wallet new` e `address` mostram a chave pública. Node e Wallet avisam o ambiente (DEVNET ou TESTNET).
+
 ### Adicionado — Plano da TESTNET e distribuição da MAINNET
 
 * `docs/TESTNET.md`: fases do lançamento, com ao menos 10 validadores independentes, Genesis de 100 000 000 ZERO e faucet que não vincula nem vota.

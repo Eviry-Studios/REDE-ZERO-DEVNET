@@ -1,4 +1,4 @@
-//! `rede-zero-node` — executável do Node da DEVNET.
+//! `rede-zero-node` — executável do Node da Rede Zero (DEVNET e TESTNET).
 //!
 //! ```text
 //! rede-zero-node init-devnet --out DIR [--validators N] [--network-id ID]
@@ -27,7 +27,7 @@ use rz_crypto::{keyfile, SecretKey};
 use rz_node::{LogLevel, Node, NodeConfig};
 
 const USAGE: &str = "\
-rede-zero-node — Node da DEVNET da Rede Zero
+rede-zero-node — Node da Rede Zero (DEVNET e TESTNET)
 
 USO:
   rede-zero-node init-devnet --out DIR [opções]
@@ -42,6 +42,18 @@ USO:
       --block-reward ZERO emissão por bloco, ao proponente (padrão 0.1; ADR-0025)
       --fee-burn-bps N    parte das taxas queimada, em pontos-base (padrão 5000)
       --base-port P       porta do primeiro node (padrão 7100)
+
+  rede-zero-node genesis-testnet --out FILE --validators FILE --faucet HEX [opções]
+      --validators FILE   uma chave pública de validador (hex) por linha; # comenta
+      --faucet HEX        chave pública do faucet; recebe a oferta menos os vínculos
+      --network-id ID     identificador da rede (padrão rede-zero-testnet-1)
+      --supply ZERO       oferta do Genesis (padrão 100000000; ADR-0025)
+      --stake ZERO        ZERO vinculado por validador (padrão 10000)
+      --block-ms MS       intervalo alvo entre blocos em ms (padrão 2000)
+      --min-fee ZERO      taxa mínima (padrão 0.00001)
+      --block-reward ZERO emissão por bloco (padrão 0.1)
+      --fee-burn-bps N    parte das taxas queimada (padrão 5000)
+    Nenhuma chave privada é lida nem gerada (docs/TESTNET.md, Fase 1).
 
   rede-zero-node run --genesis FILE --data DIR [opções]
       --listen ADDR       endereço de escuta (padrão 127.0.0.1:7100)
@@ -63,7 +75,7 @@ USO:
 
   rede-zero-node genesis-info --genesis FILE
 
-AVISO: DEVNET. O ZERO desta rede não possui valor econômico.
+AVISO: DEVNET e TESTNET. O ZERO destas redes não possui valor econômico.
 ";
 
 struct Args {
@@ -129,6 +141,7 @@ fn main() -> ExitCode {
     };
     let result = Args::parse(rest).and_then(|args| match cmd.as_str() {
         "init-devnet" => init_devnet(&args),
+        "genesis-testnet" => genesis_testnet(&args),
         "run" => run(&args),
         "genesis-info" => genesis_info(&args),
         "help" | "--help" | "-h" => {
@@ -170,15 +183,7 @@ fn init_devnet(args: &Args) -> Result<(), String> {
         parse_zero(args.get("faucet").unwrap_or("1000000")).ok_or("--faucet: valor inválido")?;
     let min_fee =
         parse_zero(args.get("min-fee").unwrap_or("0.00001")).ok_or("--min-fee: valor inválido")?;
-    let monetary = rz_core::monetary::MonetaryParams {
-        block_reward: parse_zero(args.get("block-reward").unwrap_or("0.1"))
-            .ok_or("--block-reward: valor inválido")?,
-        fee_burn_bps: args
-            .get("fee-burn-bps")
-            .unwrap_or("5000")
-            .parse()
-            .map_err(|_| "--fee-burn-bps: valor inválido")?,
-    };
+    let monetary = monetary_args(args)?;
     let base_port: u16 = args.num("base-port", 7100)?;
 
     if out.join("genesis.bin").exists() {
@@ -267,6 +272,89 @@ fn init_devnet(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
+/// Política monetária pela linha de comando; padrão ADR-0025.
+fn monetary_args(args: &Args) -> Result<rz_core::monetary::MonetaryParams, String> {
+    Ok(rz_core::monetary::MonetaryParams {
+        block_reward: parse_zero(args.get("block-reward").unwrap_or("0.1"))
+            .ok_or("--block-reward: valor inválido")?,
+        fee_burn_bps: args.num("fee-burn-bps", 5_000)?,
+    })
+}
+
+/// Lê uma chave pública hexadecimal por linha; linhas vazias e `#` são
+/// ignoradas.
+fn read_public_keys(path: &Path) -> Result<Vec<rz_crypto::PublicKey>, String> {
+    let text = fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    text.lines()
+        .enumerate()
+        .map(|(i, l)| (i, l.split('#').next().unwrap_or("").trim()))
+        .filter(|(_, l)| !l.is_empty())
+        .map(|(i, l)| {
+            rz_crypto::PublicKey::from_hex(l)
+                .map_err(|_| format!("{}:{}: chave pública inválida", path.display(), i + 1))
+        })
+        .collect()
+}
+
+/// Genesis da TESTNET a partir das chaves públicas dos operadores
+/// (`docs/TESTNET.md`). Nenhuma chave privada passa por aqui.
+fn genesis_testnet(args: &Args) -> Result<(), String> {
+    let out = PathBuf::from(args.req("out")?);
+    if out.exists() {
+        return Err(format!("{} já existe", out.display()));
+    }
+    let keys = read_public_keys(Path::new(args.req("validators")?))?;
+    let faucet = rz_crypto::PublicKey::from_hex(args.req("faucet")?)
+        .map_err(|_| "--faucet: chave pública inválida")?;
+    if keys.contains(&faucet) {
+        return Err("o faucet não pode ser validador (docs/TESTNET.md)".into());
+    }
+    let network_id = args
+        .get("network-id")
+        .unwrap_or("rede-zero-testnet-1")
+        .to_string();
+    let block_ms: u64 = args.num("block-ms", 2_000)?;
+    let supply =
+        parse_zero(args.get("supply").unwrap_or("100000000")).ok_or("--supply: valor inválido")?;
+    let stake =
+        parse_zero(args.get("stake").unwrap_or("10000")).ok_or("--stake: valor inválido")?;
+    let min_fee =
+        parse_zero(args.get("min-fee").unwrap_or("0.00001")).ok_or("--min-fee: valor inválido")?;
+    let bonded = stake
+        .checked_mul(keys.len() as u64)
+        .ok_or("oferta excede u64")?;
+    let faucet_amount = supply
+        .checked_sub(bonded)
+        .filter(|a| *a > 0)
+        .ok_or("--supply menor que a soma dos vínculos")?;
+    let genesis = Genesis {
+        protocol_version: PROTOCOL_VERSION,
+        kind: NetworkKind::Testnet,
+        network_id,
+        consensus: ConsensusParams::testnet(block_ms),
+        min_fee,
+        max_block_txs: 1_000,
+        validators: keys
+            .iter()
+            .map(|k| GenesisValidator::new(*k, stake))
+            .collect(),
+        allocations: vec![Allocation {
+            address: faucet.address(),
+            amount: faucet_amount,
+        }],
+        governance: rz_core::GovernanceParams::for_block_ms(block_ms),
+        assets: vec![],
+        bridges: vec![],
+        monetary: monetary_args(args)?,
+    };
+    genesis.validate().map_err(|e| e.to_string())?;
+    fs::write(&out, genesis.to_canonical_bytes()).map_err(|e| e.to_string())?;
+    println!("TESTNET gravada em {}", out.display());
+    print_genesis(&genesis);
+    println!("\nPublique o arquivo e o hash; cada operador confere com genesis-info.");
+    Ok(())
+}
+
 fn print_genesis(g: &Genesis) {
     println!("  rede:            {} ({:?})", g.network_id, g.kind);
     println!("  genesis:         {}", g.hash());
@@ -312,6 +400,7 @@ fn genesis_info(args: &Args) -> Result<(), String> {
 
 fn run(args: &Args) -> Result<(), String> {
     let genesis = load_genesis(Path::new(args.req("genesis")?))?;
+    let kind = genesis.kind;
     let data = PathBuf::from(args.req("data")?);
     let listen: SocketAddr = args
         .get("listen")
@@ -378,7 +467,12 @@ fn run(args: &Args) -> Result<(), String> {
         return Err("pares .onion exigem --proxy (Tor)".into());
     }
     let node = Node::start(cfg).map_err(|e| format!("falha ao iniciar: {e}"))?;
-    eprintln!("AVISO: DEVNET — o ZERO desta rede não possui valor econômico.");
+    if kind != NetworkKind::Mainnet {
+        eprintln!(
+            "AVISO: {} — o ZERO desta rede não possui valor econômico.",
+            format!("{kind:?}").to_uppercase()
+        );
+    }
 
     let stop = Arc::new(AtomicBool::new(false));
     // Sem dependências para sinais: em terminal interativo, encerra com

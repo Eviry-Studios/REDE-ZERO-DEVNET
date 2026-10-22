@@ -1,4 +1,4 @@
-//! `zero-wallet` — Wallet de linha de comando da DEVNET.
+//! `zero-wallet` — Wallet de linha de comando da Rede Zero (DEVNET e TESTNET).
 //!
 //! A chave privada nunca sai deste processo: transações são assinadas
 //! localmente e apenas a transação assinada é enviada ao Node
@@ -26,7 +26,7 @@ use rz_wallet::{
 };
 
 const USAGE: &str = "\
-zero-wallet — Wallet da DEVNET da Rede Zero
+zero-wallet — Wallet da Rede Zero (DEVNET e TESTNET)
 
 USO:
   zero-wallet new     --key FILE [--plaintext]       cifrada com senha, salvo --plaintext (só DEVNET)
@@ -197,7 +197,7 @@ Rede (ADR-0011) — válido para todos os comandos que usam --node:
 Por padrão, sem --proxy só são aceitos nodes locais (127.0.0.1).
 
 A privacidade é probabilística e não constitui anonimato absoluto.
-AVISO: DEVNET — o ZERO desta rede não possui valor econômico.
+AVISO: DEVNET e TESTNET — o ZERO destas redes não possui valor econômico.
 ";
 
 struct Args(HashMap<String, String>);
@@ -393,6 +393,7 @@ fn new(args: &Args) -> Result<(), String> {
     println!("chave criada em {path} (não compartilhe nem versione este arquivo)");
     println!("endereço privado:      {}", keys.shielded_address());
     println!("endereço transparente: {}", keys.address());
+    println!("chave pública:         {}", keys.transparent.public_key());
     Ok(())
 }
 
@@ -622,6 +623,7 @@ fn address(args: &Args) -> Result<(), String> {
     let keys = load_keys(args)?;
     println!("privado:      {}", keys.shielded_address());
     println!("transparente: {}", keys.address());
+    println!("chave pública: {}", keys.transparent.public_key());
     Ok(())
 }
 

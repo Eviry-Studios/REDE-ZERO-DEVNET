@@ -67,6 +67,19 @@ impl ConsensusParams {
         }
     }
 
+    /// TESTNET pública: como a DEVNET, com temporizadores para latência de
+    /// Internet e Tor e épocas mais longas (`docs/TESTNET.md`).
+    pub fn testnet(block_interval_ms: u64) -> Self {
+        Self {
+            epoch_blocks: 1_000,
+            timeout_propose_ms: 3_000,
+            timeout_prevote_ms: 1_000,
+            timeout_precommit_ms: 1_000,
+            timeout_delta_ms: 1_000,
+            ..Self::devnet(block_interval_ms)
+        }
+    }
+
     /// Parâmetros curtos para testes e redes locais rápidas.
     pub fn fast(block_interval_ms: u64) -> Self {
         Self {
