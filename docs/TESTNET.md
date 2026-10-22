@@ -20,7 +20,12 @@ A TESTNET é a primeira rede pública da Rede Zero. O ZERO dela **não tem valor
 
 1. ✅ `rede-zero-node genesis-testnet` monta o Genesis a partir de chaves públicas (um arquivo com uma chave por linha e a chave pública do faucet). Cada operador gera a chave na própria máquina e envia só a chave pública, que `zero-wallet new` e `zero-wallet address` mostram.
    * Os temporizadores do consenso são maiores que os da DEVNET, para a latência da Internet e do Tor (`ConsensusParams::testnet`: proposta 3 s, votos 1 s, época de 1 000 blocos).
-2. Faucet público: um limite por endereço e uma prova de trabalho contra abuso. Nenhum endereço IP é guardado.
+2. ✅ Faucet público (`zero-wallet faucet-serve`; quem pede usa `zero-wallet faucet`).
+   * Cada conexão recebe um desafio novo de prova de trabalho, de 22 bits por padrão.
+   * Cada endereço recebe 1 000 ZERO a cada 24 h, e há um teto de 120 pagamentos por hora.
+   * O limite usa só o endereço transparente, que é público: **nenhum endereço IP é guardado**.
+   * Pode ficar atrás de um serviço onion; o pedido sai pela Wallet com `--proxy`.
+   * 1 000 ZERO é o vínculo mínimo, então um pedido basta para virar validador.
 3. ✅ Node e Wallet mostram o ambiente correto, com o aviso de que o ZERO da TESTNET não tem valor.
 4. `testnet/` publica `genesis.bin`, o hash dele e a lista de Nodes iniciais.
 5. Guia do operador (`docs/OPERACAO.md`).

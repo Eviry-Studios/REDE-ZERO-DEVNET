@@ -61,6 +61,11 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — Faucet da TESTNET
+
+* `zero-wallet faucet-serve` e `zero-wallet faucet` (`crates/rz-wallet/src/faucet.rs`): protocolo de texto com desafio de prova de trabalho por conexão, limite por endereço e por hora, e nenhum registro de IP. Pedidos simultâneos são pagos um por bloco.
+* Testes da prova de trabalho e dos limites, e teste com Nodes reais (`faucet_devnet`).
+
 ### Adicionado — Genesis da TESTNET
 
 * `rede-zero-node genesis-testnet` monta o Genesis só com chaves públicas: os validadores, cada um com o vínculo, e o faucet, com o resto da oferta. O faucet não pode ser validador.

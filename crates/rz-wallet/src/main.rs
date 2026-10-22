@@ -46,6 +46,11 @@ Rotação e recuperação (ADR-0023) — o endereço da conta não muda:
   Pontos de contribuição e vínculos de validador ficam com a chave antiga (não migram).
   Notas privadas pertencem à chave: envie-as ao endereço zs… da nova chave.
   zero-wallet address --key FILE
+Faucet da TESTNET (docs/TESTNET.md) — prova de trabalho, limite por endereço, sem registro de IP:
+  zero-wallet faucet --genesis FILE --faucet ADDR (--address HEX | --key FILE) [--proxy ADDR | --direct]
+  zero-wallet faucet-serve --genesis FILE --node ADDR --key FILE [--listen 127.0.0.1:7200]
+                      [--amount ZERO (1000)] [--cooldown-hours H (24)] [--bits B (22)]
+                      [--max-per-hour N (120)] [--fee ZERO]
   zero-wallet balance --genesis FILE --node ADDR (--key FILE | --address HEX)
   zero-wallet shield  --genesis FILE --node ADDR --key FILE --amount ZERO [--to zs…] [--fee ZERO]
   zero-wallet send    --genesis FILE --node ADDR --key FILE --to (zs…|HEX) --amount ZERO [--fee ZERO]
@@ -254,6 +259,8 @@ fn main() -> ExitCode {
         "recover" => cmd_recover(&args),
         "recovery-approve" => cmd_recovery_approve(&args),
         "address" => address(&args),
+        "faucet" => cmd_faucet(&args),
+        "faucet-serve" => cmd_faucet_serve(&args),
         "balance" => balance(&args),
         "shield" => cmd_shield(&args),
         "send" => send(&args),
@@ -625,6 +632,68 @@ fn address(args: &Args) -> Result<(), String> {
     println!("transparente: {}", keys.address());
     println!("chave pública: {}", keys.transparent.public_key());
     Ok(())
+}
+
+fn cmd_faucet(args: &Args) -> Result<(), String> {
+    let genesis = load_genesis(args)?;
+    let to = match args.get("address") {
+        Some(h) => Address::from_hex(h).ok_or("--address: endereço transparente inválido")?,
+        None => load_keys(args)?.address(),
+    };
+    let target: PeerAddr = args
+        .req("faucet")?
+        .parse()
+        .map_err(|e| format!("--faucet: {e}"))?;
+    let proxy = match args.get("proxy") {
+        Some(p) => Some(
+            p.parse::<SocketAddr>()
+                .map_err(|_| "--proxy: endereço inválido")?,
+        ),
+        None => None,
+    };
+    if proxy.is_none() && !target.is_loopback() && args.get("direct").is_none() {
+        return Err(rz_wallet::DIRECT_REFUSED.into());
+    }
+    let stream = rz_p2p::socks::connect(&target, proxy, std::time::Duration::from_secs(30))
+        .map_err(|e| format!("--faucet: {e}"))?;
+    println!("resolvendo a prova de trabalho…");
+    let id = rz_wallet::faucet::request(stream, &genesis.network_id, &to)?;
+    println!("transação {id} enviada para {to}");
+    Ok(())
+}
+
+fn cmd_faucet_serve(args: &Args) -> Result<(), String> {
+    let (client, genesis) = open(args)?;
+    let keys = load_keys(args)?;
+    let num = |name: &str, default: u64| -> Result<u64, String> {
+        args.get(name).map_or(Ok(default), |v| {
+            v.parse().map_err(|_| format!("--{name}: valor inválido"))
+        })
+    };
+    let cfg = rz_wallet::faucet::FaucetConfig {
+        amount: match args.get("amount") {
+            Some(_) => args.amount("amount")?,
+            None => 1_000 * rz_core::UNITS_PER_ZERO,
+        },
+        cooldown: std::time::Duration::from_secs(num("cooldown-hours", 24)?.saturating_mul(3_600)),
+        bits: u32::try_from(num("bits", 22)?)
+            .ok()
+            .filter(|b| *b <= 32)
+            .ok_or("--bits: de 0 a 32")?,
+        max_per_hour: usize::try_from(num("max-per-hour", 120)?).unwrap_or(usize::MAX),
+        fee: fee(args, &genesis)?,
+    };
+    let listen = args.get("listen").unwrap_or("127.0.0.1:7200");
+    let listener = std::net::TcpListener::bind(listen).map_err(|e| format!("--listen: {e}"))?;
+    println!(
+        "faucet de {} em {listen}: {} ZERO por endereço a cada {} h; prova de {} bits",
+        keys.address(),
+        format_zero(cfg.amount),
+        cfg.cooldown.as_secs() / 3_600,
+        cfg.bits
+    );
+    println!("nenhum endereço IP é registrado; para Tor, aponte um serviço onion para {listen}");
+    rz_wallet::faucet::serve(listener, genesis, keys, client, cfg).map_err(|e| e.to_string())
 }
 
 fn balance(args: &Args) -> Result<(), String> {

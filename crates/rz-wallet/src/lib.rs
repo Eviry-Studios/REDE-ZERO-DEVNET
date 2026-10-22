@@ -20,6 +20,8 @@ use rz_p2p::{
 use rz_privacy::keys::{ShieldedAddress, ShieldedSecret};
 use rz_privacy::note::{scan_output, OutputData};
 
+pub mod faucet;
+
 /// Chaves da Wallet: uma única semente gera a chave transparente (Ed25519)
 /// e as chaves privadas (visualização e gasto), em domínios separados.
 pub struct Keys {

@@ -16,3 +16,11 @@ mod keys;
 
 pub use hash::{hash, Hash32};
 pub use keys::{signing_message, Address, CryptoError, NodeId, PublicKey, SecretKey, Signature};
+
+/// 32 bytes da entropia do sistema operacional.
+pub fn random_bytes() -> [u8; 32] {
+    use rand_core::{OsRng, RngCore};
+    let mut b = [0u8; 32];
+    OsRng.fill_bytes(&mut b);
+    b
+}
