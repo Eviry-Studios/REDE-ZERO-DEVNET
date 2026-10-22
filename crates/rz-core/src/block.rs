@@ -266,7 +266,8 @@ fn execute(
     state
         .end_block(proposer, height, parent_state.validators().clone())
         .map_err(BlockError::State)?;
-    // Defesa em profundidade: nenhum bloco pode alterar a oferta (INV-003).
+    // Defesa em profundidade: a oferta só muda pela emissão, pela queima de
+    // taxas e pelas queimas previstas no protocolo (INV-003, ADR-0025).
     state.check_supply().map_err(BlockError::State)?;
     Ok(state)
 }
@@ -412,6 +413,37 @@ mod tests {
             4
         );
         applied.check_supply().unwrap();
+    }
+
+    // ADR-0025 — emissão por bloco e queima de parte das taxas.
+    #[test]
+    fn block_reward_and_fee_burn() {
+        let mut g = sample();
+        g.monetary = crate::monetary::MonetaryParams {
+            block_reward: 1_000,
+            fee_burn_bps: 5_000,
+        };
+        let s = State::from_genesis(&g).unwrap();
+        let gid = BlockId(g.hash());
+        let supply = s.total_supply();
+        let (b, s2) =
+            Block::build(&g, gid, 0, &s, 1, vec![tx(0, 10), tx(1, 20)], &validator()).unwrap();
+        assert_eq!(apply_block(&g, gid, 0, &s, &b).unwrap(), s2);
+        // Taxas 4: metade queimada, metade ao proponente, mais a emissão.
+        assert_eq!(
+            s2.account(&validator().public_key().address()).balance,
+            1_002
+        );
+        assert_eq!(s2.total_supply(), supply + 1_000 - 2);
+        s2.check_supply().unwrap();
+        // Bloco vazio: só a emissão.
+        let id1 = b.id();
+        let (_, s3) = Block::build(&g, id1, 1, &s2, 2, vec![], &validator()).unwrap();
+        assert_eq!(s3.total_supply(), supply + 2_000 - 2);
+        s3.check_supply().unwrap();
+        // Genesis com parâmetros fora dos limites é recusado.
+        g.monetary.fee_burn_bps = 10_001;
+        assert!(g.validate().is_err());
     }
 
     #[test]

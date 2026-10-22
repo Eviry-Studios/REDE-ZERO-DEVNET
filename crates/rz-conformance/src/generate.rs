@@ -613,6 +613,7 @@ pub(crate) fn genesis() -> Genesis {
             checkpoint_height: 0,
             confirmations: 2,
         }],
+        monetary: rz_core::monetary::MonetaryParams::TESTNET,
     }
 }
 

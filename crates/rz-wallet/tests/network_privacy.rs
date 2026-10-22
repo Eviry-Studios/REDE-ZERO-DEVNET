@@ -39,6 +39,7 @@ fn genesis() -> Genesis {
         governance: GovernanceParams::default(),
         assets: vec![],
         bridges: vec![],
+        monetary: Default::default(),
     }
 }
 

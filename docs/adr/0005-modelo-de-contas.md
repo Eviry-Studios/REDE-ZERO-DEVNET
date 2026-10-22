@@ -14,8 +14,8 @@
 * **Modelo de contas**: o estado mapeia `endereço → (saldo, nonce)`.
 * Cada transação carrega o `nonce` esperado da conta remetente; ele é incrementado exatamente em 1 a cada transação aplicada. Isso impede replay (THR-ID-004) e double spend (THR-TX-001) de forma determinística.
 * **Unidade mínima**: `1 ZERO = 100 000 000` unidades (10⁸), representadas como `u64`. Toda aritmética monetária é verificada (THR-TX-003).
-* **Taxas**: explícitas em cada transação, com valor mínimo definido no Genesis; na DEVNET são creditadas ao produtor do bloco.
-* **Emissão**: somente o Genesis cria ZERO na DEVNET. Recompensa de bloco é zero até que a política monetária seja definida (`REQUIREMENTS.md §23`).
+* **Taxas**: explícitas em cada transação, com valor mínimo definido no Genesis; creditadas ao produtor do bloco, menos a parte queimada (`fee_burn_bps`, ADR-0025).
+* **Emissão**: além do Genesis, só a recompensa fixa por bloco cria ZERO (ADR-0025, `spec/STATE.md §5`).
 
 ## Alternativas consideradas
 

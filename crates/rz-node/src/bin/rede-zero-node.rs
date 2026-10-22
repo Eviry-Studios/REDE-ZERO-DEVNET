@@ -39,6 +39,8 @@ USO:
                           com 1000000 unidades para o faucet (só DEVNET; ADR-0014)
       --faucet ZERO       saldo inicial da chave faucet (padrão 1000000)
       --min-fee ZERO      taxa mínima (padrão 0.00001)
+      --block-reward ZERO emissão por bloco, ao proponente (padrão 0.1; ADR-0025)
+      --fee-burn-bps N    parte das taxas queimada, em pontos-base (padrão 5000)
       --base-port P       porta do primeiro node (padrão 7100)
 
   rede-zero-node run --genesis FILE --data DIR [opções]
@@ -168,6 +170,15 @@ fn init_devnet(args: &Args) -> Result<(), String> {
         parse_zero(args.get("faucet").unwrap_or("1000000")).ok_or("--faucet: valor inválido")?;
     let min_fee =
         parse_zero(args.get("min-fee").unwrap_or("0.00001")).ok_or("--min-fee: valor inválido")?;
+    let monetary = rz_core::monetary::MonetaryParams {
+        block_reward: parse_zero(args.get("block-reward").unwrap_or("0.1"))
+            .ok_or("--block-reward: valor inválido")?,
+        fee_burn_bps: args
+            .get("fee-burn-bps")
+            .unwrap_or("5000")
+            .parse()
+            .map_err(|_| "--fee-burn-bps: valor inválido")?,
+    };
     let base_port: u16 = args.num("base-port", 7100)?;
 
     if out.join("genesis.bin").exists() {
@@ -226,6 +237,7 @@ fn init_devnet(args: &Args) -> Result<(), String> {
         governance: rz_core::GovernanceParams::for_block_ms(block_ms),
         assets,
         bridges: vec![],
+        monetary,
     };
     genesis.validate().map_err(|e| e.to_string())?;
     let genesis_path = out.join("genesis.bin");
@@ -266,6 +278,11 @@ fn print_genesis(g: &Genesis) {
     println!("  desvinculação:   {} blocos", c.unbonding_blocks);
     println!("  punição:         {} bps", c.slash_bps);
     println!("  taxa mínima:     {} ZERO", format_zero(g.min_fee));
+    println!(
+        "  emissão:         {} ZERO por bloco; {} bps das taxas queimados",
+        format_zero(g.monetary.block_reward),
+        g.monetary.fee_burn_bps
+    );
     println!("  validadores:     {}", g.validators.len());
     for v in &g.validators {
         println!("    {} ({} ZERO)", v.key, format_zero(v.stake));

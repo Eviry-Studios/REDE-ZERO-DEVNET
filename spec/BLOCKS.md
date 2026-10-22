@@ -1,6 +1,6 @@
 # spec/BLOCKS.md — Blocos e Genesis
 
-**Versão:** 0.4.0 (DEVNET)
+**Versão:** 0.5.0 (DEVNET)
 **Relacionamento:** `SPECIFICATIONS.md §15–§18, §66–§67`, ADR-0012, THR-CON-001, THR-CON-005, THR-CON-006
 **Implementação de referência:** `crates/rz-core/src/block.rs`, `crates/rz-core/src/genesis.rs`
 
@@ -84,6 +84,8 @@ Genesis {
   governance       : GovernanceParams  // spec/GOVERNANCE.md
   assets           : list<GenesisAsset> // ≤ 64; somente DEVNET (spec/MARKET.md §1)
   bridges          : list<ChainConfig>  // ≤ 16; só DEVNET e TESTNET (spec/BRIDGE.md §2)
+  monetary         : { block_reward: u64, fee_burn_bps: u64 }
+                     // spec/STATE.md §5–§6; block_reward ≤ 100 ZERO, fee_burn_bps ≤ 10 000
 }
 
 GenesisAsset {

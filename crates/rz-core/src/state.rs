@@ -396,6 +396,7 @@ impl State {
                 defense: defense::DefenseParams::default(),
                 runtime: runtime::RuntimeParams::default(),
                 vote_reveal_blocks: 0,
+                monetary: genesis.monetary,
             },
             locks: BTreeMap::new(),
             next_lock_id: 0,
@@ -1294,12 +1295,28 @@ impl State {
     /// Credita as taxas coletadas no bloco ao produtor (ADR-0005).
     ///
     /// Taxas já foram debitadas dos remetentes, portanto a oferta total não muda.
+    /// Distribui as taxas do bloco e a emissão (ADR-0025): queima
+    /// `fee_burn_bps` das taxas e credita o resto, mais `block_reward`, ao
+    /// proponente.
     pub(crate) fn credit_fees(&mut self, to: Address, fees: u64) -> Result<(), StateError> {
-        if fees == 0 {
+        let m = self.params.monetary;
+        let (burned, kept) = m.split_fees(fees);
+        let credit = kept
+            .checked_add(m.block_reward)
+            .ok_or(StateError::Overflow)?;
+        self.total_supply = self
+            .total_supply
+            .checked_sub(burned)
+            .and_then(|s| s.checked_add(m.block_reward))
+            .ok_or(StateError::Overflow)?;
+        if credit == 0 {
             return Ok(());
         }
         let acc = self.accounts.entry(to).or_default();
-        acc.balance = acc.balance.checked_add(fees).ok_or(StateError::Overflow)?;
+        acc.balance = acc
+            .balance
+            .checked_add(credit)
+            .ok_or(StateError::Overflow)?;
         Ok(())
     }
 

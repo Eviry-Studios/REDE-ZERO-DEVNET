@@ -193,6 +193,7 @@ fn genesis() -> Genesis {
             }],
         }],
         bridges: vec![],
+        monetary: Default::default(),
     }
 }
 

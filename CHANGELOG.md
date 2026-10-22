@@ -61,9 +61,11 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
-### Proposto — Política monetária
+### Adicionado — Política monetária
 
-* ADR-0025 em estado **Proposta**: compara oferta fixa, teto com emissão decrescente e emissão constante por bloco; descarta as opções que contradizem os documentos e recomenda emissão constante ao proponente, sem alocação a fundadores. Nenhuma mudança de código até a decisão.
+* ADR-0025 **aceita**. Emissão constante por bloco, sem teto: `block_reward` vai ao proponente junto com as taxas. Metade das taxas é queimada (`fee_burn_bps`). O Genesis não tem alocação a fundadores.
+* Campo `monetary` no Genesis, parâmetros constitucionais `block_reward` (tag 38, até 100 ZERO) e `fee_burn_bps` (tag 39). `spec/STATE.md` v0.11.0, `spec/BLOCKS.md` v0.5.0, `spec/GOVERNANCE.md` v0.5.0, `spec/CONSENSUS.md` v0.3.0.
+* Valores da TESTNET: 0,1 ZERO por bloco, 5 000 bps queimados e Genesis de 100 000 000 ZERO; `rede-zero-node init` usa esses valores por padrão (`--block-reward`, `--fee-burn-bps`). Vetores de conformidade regenerados com emissão e queima.
 
 ### Adicionado — Taxa de retransmissão da ponte
 

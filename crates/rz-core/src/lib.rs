@@ -23,6 +23,7 @@ pub mod limits;
 pub mod market;
 #[cfg(test)]
 mod market_tests;
+pub mod monetary;
 pub mod private;
 pub mod release;
 pub mod reputation;

@@ -278,6 +278,7 @@ mod tests {
             governance: GovernanceParams::default(),
             assets: vec![],
             bridges: vec![],
+            monetary: Default::default(),
         }
     }
 

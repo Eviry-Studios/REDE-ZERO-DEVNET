@@ -50,6 +50,7 @@ fn genesis(n: u8) -> Genesis {
         governance: rz_core::GovernanceParams::default(),
         assets: vec![],
         bridges: vec![],
+        monetary: Default::default(),
     }
 }
 

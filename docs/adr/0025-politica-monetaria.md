@@ -1,10 +1,11 @@
 # ADR-0025 — Política monetária do ZERO
 
-**Estado:** Proposta (aguarda decisão)
+**Estado:** Aceita (opção C, decidida em 2026-10-22)
 **Escopo:** TESTNET → MAINNET
 **Data:** 2026-10-22
 **Relacionamento:** REQ-019..022, REQ-099, `REQUIREMENTS.md §23`, `ARCHITECTURE.md §15`, `SPECIFICATIONS.md §33–§38`, Manifesto §5, §12, §13, §15, THR-CON-001, AS-05, ADR-0005, ADR-0012, ADR-0014
-**Especificação afetada:** `spec/STATE.md §5–§7`, `spec/CONSENSUS.md §9`, `spec/GOVERNANCE.md` (novo parâmetro)
+**Especificação:** `spec/STATE.md §5–§7`, `spec/BLOCKS.md §5`, `spec/GOVERNANCE.md` (tags 38 e 39), `spec/CONSENSUS.md §9`
+**Implementação:** `crates/rz-core/src/monetary.rs`, `crates/rz-core/src/state.rs` (`credit_fees`), `crates/rz-core/src/genesis.rs`, `crates/rz-node` (`init --block-reward --fee-burn-bps`)
 
 ## Contexto
 
@@ -61,7 +62,7 @@ A recompensa por bloco cai pela metade a cada `H` blocos, e a oferta converge pa
   * A recompensa tende a zero, e depois sobram só as taxas, o mesmo problema de A, adiado.
   * Os primeiros validadores acumulam a maior parte da emissão.
 
-### C — Emissão constante por bloco, sem teto (recomendada)
+### C — Emissão constante por bloco, sem teto (adotada)
 
 O protocolo cria `block_reward` unidades a cada bloco finalizado.
 
@@ -71,16 +72,19 @@ O protocolo cria `block_reward` unidades a cada bloco finalizado.
   * A regra é a mais previsível das três, porque o valor por bloco é sempre o mesmo.
 * **Contra:** não há teto absoluto. A oferta cresce sem limite, mas cada vez mais devagar em termos relativos.
 
-## Decisão proposta
+## Decisão
 
 1. **Emissão:** C, com `block_reward` fixo por bloco.
-   * Novo parâmetro constitucional `block_reward` (tag 38). Na DEVNET o padrão é **0**, e a regra atual continua valendo.
+   * O valor vem do Genesis (`monetary.block_reward`) e muda só por proposta constitucional (tag 38), com teto de 100 ZERO. Um Genesis com 0 mantém a regra anterior.
    * O valor vale por altura, coerente com a ausência de relógio protocolar.
 2. **Destino da recompensa:** o **proponente** do bloco finalizado, no mesmo ponto em que recebe as taxas.
    * É o mesmo evento que já lhe dá `+1` ponto de contribuição (`spec/REPUTATION.md §2`). O evento é verificável pelo próprio bloco e pelo certificado.
    * A escolha do proponente é ponderada pelo vínculo, então a recompensa esperada é proporcional ao ZERO vinculado.
    * Um validador fora do ar não propõe e não recebe. Isso é uma punição branda por inatividade, que hoje não existe.
-3. **Taxas:** continuam indo para o produtor do bloco. Queimar parte delas fica como condição de revisão.
+3. **Taxas:** `fee_burn_bps` das taxas de cada bloco são queimadas, e o resto vai para o produtor (tag 39, constitucional). Valor adotado: **5 000** (metade).
+   * Com pouco uso, a emissão paga os validadores e mantém a rede segura enquanto as taxas ainda são pequenas.
+   * Com muito uso, a queima compensa a emissão: a oferta líquida se estabiliza ou cai, e o valor do ZERO fica ligado ao uso real.
+   * O proponente fica com metade, então continua incentivado a incluir transações. Encher o próprio bloco com transações próprias passa a custar metade das taxas.
 4. **Distribuição do Genesis:** um Genesis pequeno, e o resto da oferta nasce pela emissão, para quem valida.
    * O Genesis tem o vínculo dos validadores iniciais, mais o mínimo necessário para taxas.
    * **Sem alocação a fundadores ou à equipe.** Não é contradição literal, mas vai contra o Manifesto §13 (concentração), REQ-099 (continuidade sem fundador) e THR-CON-001.
@@ -91,7 +95,7 @@ O protocolo cria `block_reward` unidades a cada bloco finalizado.
    ```
 
    A emissão é uma regra explícita do protocolo, então AT-ZERO-003 continua valendo: nenhuma transação cria ZERO.
-6. **Ordem de grandeza sugerida, para a TESTNET:**
+6. **Valores adotados para a TESTNET** (`MonetaryParams::TESTNET`, padrão de `rede-zero-node init`):
    * `G = 100 000 000 ZERO` no Genesis;
    * `block_reward = 0,1 ZERO` (`10 000 000` unidades);
    * com `block_interval_ms = 2 000` e cerca de 10 milhões de blocos por ano, isso dá cerca de 1 % de `G` ao ano;
@@ -103,28 +107,20 @@ Fica **fora** desta decisão. Hoje, os únicos eventos verificáveis além da pr
 
 Pagá-las com emissão daria aos validadores o poder de cunhar ZERO para quem atestarem, o que fica perto demais do que `SPEC §38` proíbe. Isso deve ser revisto quando houver computação verificável por todos (ADR-0020, condições de revisão).
 
-## Decisões em aberto para quem decide
+## Registro da decisão
 
-1. Escolher A, B ou C.
-2. Definir o tamanho do Genesis e quem o recebe, e confirmar ou não a recomendação de não haver alocação a fundadores.
-3. Definir o valor de `block_reward`, ou de `H` na opção B.
-4. Decidir se parte das taxas é queimada.
+Decidido em 2026-10-22: opção C; Genesis sem alocação a fundadores, de 100 000 000 ZERO; `block_reward = 0,1 ZERO`; queima de 5 000 bps das taxas, escolhida para manter a economia viva com pouco e com muito uso.
 
-## Consequências (se C for aceita)
+## Consequências
 
-* **Implementação:**
-  * novo parâmetro com tag 38;
-  * crédito ao proponente em `block::execute`;
-  * ajuste de `check_supply`;
-  * vetores de conformidade regenerados.
-* **Documentação:** atualizar `spec/STATE.md §5`, `spec/CONSENSUS.md §9`, ADR-0005 e ADR-0012.
+* `total_supply` cresce `block_reward` por bloco e diminui pela queima. `check_supply` continua verificando a igualdade após cada bloco, e os vetores de conformidade cobrem a emissão e a queima.
 * **Riscos:**
   * Uma maioria qualificada de validadores poderia reduzir `block_interval_ms` localmente e acelerar a emissão no tempo de relógio. A emissão por altura continua previsível.
   * Mudar `block_reward` exige proposta constitucional.
 
 ## Condições de revisão
 
-* Queima de parte das taxas para compensar a emissão.
+* Ajuste de `fee_burn_bps` com dados de uso da TESTNET.
 * Recompensa à computação verificável (Manifesto §15).
 * Recompensa aos signatários do certificado em vez de só ao proponente. Isso exige levar o certificado do bloco anterior no cabeçalho.
 * Dados de participação e de taxas da TESTNET.

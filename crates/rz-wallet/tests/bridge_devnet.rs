@@ -98,6 +98,7 @@ fn genesis() -> Genesis {
             checkpoint_height: 0,
             confirmations: 2,
         }],
+        monetary: Default::default(),
     }
 }
 

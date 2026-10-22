@@ -70,7 +70,7 @@ Critérios de decisão (`ARCHITECTURE §12`):
 
 * O Genesis define validadores iniciais, com ZERO já bloqueado, e os parâmetros de consenso. Depois disso, a entrada e a saída de validadores são abertas.
 * O ZERO bloqueado e o conjunto de validadores são **públicos**, por natureza, como os bloqueios de governança.
-* Não há emissão nova: validadores recebem apenas taxas. A política monetária continua **A DEFINIR** (`REQUIREMENTS.md §23`).
+* O proponente de cada bloco recebe a emissão fixa e a parte não queimada das taxas (ADR-0025).
 
 ## Limitações honestas
 
@@ -81,4 +81,4 @@ Critérios de decisão (`ARCHITECTURE §12`):
 
 ## Condições de revisão
 
-Auditoria; simulação com latência e perda de mensagens reais; punição por inatividade; política monetária; avaliação de agregação de assinaturas para conjuntos maiores.
+Auditoria; simulação com latência e perda de mensagens reais; punição por inatividade; recompensa aos signatários do certificado (ADR-0025); avaliação de agregação de assinaturas para conjuntos maiores.

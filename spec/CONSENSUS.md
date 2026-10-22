@@ -1,6 +1,6 @@
 # spec/CONSENSUS.md — Consenso Zero-BFT
 
-**Versão:** 0.2.0
+**Versão:** 0.3.0
 **Escopo:** DEVNET; candidato à TESTNET pública após auditoria (`docs/AUDIT.md`)
 **Decisão:** ADR-0012 (substitui ADR-0006)
 **Relacionamento:** `SPECIFICATIONS.md §19–§22`, `§49`, REQ-005, REQ-015, THR-CON-001..007
@@ -246,8 +246,8 @@ CommittedBlock recebido
 * **anti-Sybil econômico**: a entrada no conjunto depende de ZERO vinculado; a distribuição inicial define o poder inicial (THR-CON-001).
 * **ataque de longo alcance**: um Node novo confia no Genesis e na cadeia de certificados; chaves antigas desvinculadas podem forjar histórico alternativo. Mitigação: pontos de verificação do operador (`--checkpoint ALTURA:ID`, subjetividade fraca). O Node recusa blocos que divergem deles e descarta, ao iniciar, blocos gravados divergentes. O protocolo não embute checkpoints, para não criar autoridade central (REQ-005); cada operador os obtém de fontes em que confia.
 * **censura pelo proponente**: um proponente pode omitir transações, mas só por uma rodada; a rotação ponderada limita o efeito.
-* sem recompensa de bloco além das taxas (`SPEC §40`, A DEFINIR).
-* sem punição por inatividade.
+* a recompensa do bloco (emissão e taxas, `spec/STATE.md §5–§6`) vai só ao proponente; recompensar todos os signatários do certificado exigiria levar o certificado anterior no cabeçalho (ADR-0025).
+* sem punição por inatividade; o validador fora do ar apenas deixa de propor e de receber a recompensa.
 * a máquina de consenso foi verificada por simulação, incluindo simulação adversarial aleatória com rede assíncrona e bizantinos (`crates/rz-chain/src/bft_tests.rs`), não por prova formal.
 
 ## 10. Testes de aceitação cobertos

@@ -291,7 +291,7 @@ Aceitas temporariamente e registradas em [`THREAT_MODEL.md §11`](docs/THREAT_MO
 * **Governança**: a câmara de contribuição pontua produção de blocos e contribuição defensiva atestada (ADR-0020), mas ainda favorece validadores. Os votos são públicos, salvo quando a governança liga o voto secreto (compromisso e revelação, `vote_reveal_blocks`). Esse modo esconde a escolha durante a votação, mas não impede quem queira provar o próprio voto a terceiros.
 * **Atualizações**: os builds são reproduzíveis em Linux x86_64 (`scripts/build-reproduzivel.sh`, compilador fixado, verificado na CI); outras plataformas ainda não foram verificadas ([ADR-0021](docs/adr/0021-atualizacoes-verificaveis.md)).
 * **Chaves**: arquivos novos da Wallet são cifrados (Argon2id + XChaCha20-Poly1305). As chaves geradas pelo script da DEVNET (validadores, faucet) e a chave de identidade do Node ficam em aberto (`0600`); converta com `zero-wallet key-encrypt`. A senha é lida do terminal sem eco, ou de `--passphrase-file` / `RZ_KEY_PASSPHRASE` em serviços.
-* Sem emissão após o Genesis; política monetária a definir.
+* Política monetária ([ADR-0025](docs/adr/0025-politica-monetaria.md)): emissão fixa por bloco ao proponente, sem teto, e metade das taxas queimada. O ZERO da DEVNET não tem valor econômico.
 
 ## Contribuição e segurança
 

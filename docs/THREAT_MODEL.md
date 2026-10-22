@@ -2,7 +2,7 @@
 
 # Rede Zero / Exonet
 
-**Versão:** 0.15.0
+**Versão:** 0.16.0
 **Status:** Modelo de ameaças — fase de definição (0.15.0: resistência a eclipse e corrupção local; 0.14.0: chaves cifradas, rotação e recuperação; 0.13.0: suíte de conformidade; 0.12.0: atualizações verificáveis; 0.11.0: reputação; 0.10.0: retirada do Agente Zero; 0.9.0: ponte sem custodiante; 0.8.0: Exonet Runtime; 0.7.0: Navegador Zero e conteúdo da Exonet; 0.6.0: Comunidades, nomes `zero://` e Defesa da Exonet; 0.5.0: Grande Mercado e Pool permanente; 0.4.0: consenso Zero-BFT com participação vinculada; 0.3.0: governança implementada; proteção do IP do usuário)
 **Natureza:** Documento normativo de segurança
 **Relacionamento:**
@@ -396,7 +396,7 @@ Classificação de severidade (inicial, sujeita a revisão):
 
 * no conjunto privado, onde valores são ocultos: equação de balanço de compromissos, provas de faixa, e **controle público da oferta privada**, que nunca pode ficar negativa. Uma falha criptográfica que crie moeda oculta não consegue retirar do conjunto privado mais do que entrou;
 
-* emissão exclusivamente por regras protocolares (`SPEC §34`);
+* emissão exclusivamente por regras protocolares (`SPEC §34`): `block_reward` fixo por bloco ao proponente, alterável só por proposta constitucional e limitado a 100 ZERO (ADR-0025, `spec/STATE.md §5`);
 * todo Node verifica a soma monetária a cada bloco (`SPEC §35`);
 * aritmética com verificação de overflow/underflow;
 * invariantes `INV-003`; testes `AT-MONEY-002`, `AT-ZERO-003`.

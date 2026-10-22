@@ -1,6 +1,6 @@
 # AUDIT.md — Preparação para auditoria independente
 
-**Versão:** 0.12.0
+**Versão:** 0.13.0
 **Estado:** pronto para auditoria da DEVNET; nenhuma auditoria externa foi realizada
 **Relacionamento:** `THREAT_MODEL.md §11` (aceitações temporárias), ADR-0009, ADR-0011, ADR-0012, ADR-0014..0016, ADR-0021..0024, `SECURITY.md`
 
@@ -42,7 +42,7 @@ A revisão interna (§7) **não substitui** a auditoria externa.
 
 ¹ Aproximado, incluindo testes internos aos arquivos.
 
-**Fora do escopo:** a política monetária (A DEFINIR). O Agente Zero foi retirado do núcleo (`REQUIREMENTS.md` v0.2.0) e não será implementado.
+**Política monetária** (ADR-0025): emissão fixa por bloco e queima de parte das taxas entram no escopo de INV-1. O Agente Zero foi retirado do núcleo (`REQUIREMENTS.md` v0.2.0) e não será implementado.
 
 ## 3. Arquitetura e fronteiras de confiança
 
@@ -75,7 +75,7 @@ Cada invariante lista onde é aplicada e os testes que a exercitam. Uma violaç�
 
 | # | Invariante | Onde | Testes |
 | --- | --- | --- | --- |
-| INV-1 | `Σ saldos + oferta privada + bloqueios + depósitos + vínculos + desvinculações = total_supply` após cada bloco; só a punição reduz `total_supply` | `State::check_supply`, `block::execute` | AT-MONEY-*, `governance_tests`, `extreme_signed_values_never_panic` |
+| INV-1 | `Σ saldos + oferta privada + bloqueios + depósitos + vínculos + desvinculações = total_supply` após cada bloco; `total_supply` só cresce por `block_reward` e só diminui pela queima de taxas, punição, depósito sem quórum e custos de publicação | `State::check_supply`, `block::execute` | AT-MONEY-*, `governance_tests`, `extreme_signed_values_never_panic` |
 | INV-2 | Oferta privada nunca negativa; nenhuma transação privada cria valor | `plan_private`, prova de excesso, Bulletproofs | `rz-core private::tests`, `shield_with_inflated_amount_rejected` |
 | INV-3 | Uma nota só é gasta uma vez (imagem de chave única, ligada ao anel) | CLSAG, `key_images` | `private_transfer_end_to_end` (AT-DS-001 privado) |
 | INV-4 | Toda codificação aceita é a única possível (sem maleabilidade) | `rz-codec`, `Decode` | `rz-p2p/tests/robustness.rs` (canonicidade sob mutação) |

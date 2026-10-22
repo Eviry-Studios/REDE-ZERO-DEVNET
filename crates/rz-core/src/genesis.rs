@@ -167,6 +167,8 @@ pub struct Genesis {
     pub assets: Vec<GenesisAsset>,
     /// Redes de origem conectadas por cliente leve (ADR-0019).
     pub bridges: Vec<crate::bridge::ChainConfig>,
+    /// Emissão por bloco e queima de taxas (ADR-0025).
+    pub monetary: crate::monetary::MonetaryParams,
 }
 
 impl Encode for Genesis {
@@ -181,7 +183,8 @@ impl Encode for Genesis {
             .list(&self.allocations)
             .put(&self.governance)
             .list(&self.assets)
-            .list(&self.bridges);
+            .list(&self.bridges)
+            .put(&self.monetary);
     }
 }
 
@@ -199,6 +202,7 @@ impl Decode for Genesis {
             governance: d.get()?,
             assets: d.list(MAX_ASSETS)?,
             bridges: d.list(crate::bridge::MAX_CHAINS)?,
+            monetary: d.get()?,
         })
     }
 }
@@ -284,6 +288,9 @@ impl Genesis {
             return Err(GenesisError::NetworkKindMismatch);
         }
         self.consensus
+            .validate()
+            .map_err(GenesisError::InvalidParameter)?;
+        self.monetary
             .validate()
             .map_err(GenesisError::InvalidParameter)?;
         if self.max_block_txs == 0 || self.max_block_txs as usize > crate::limits::MAX_BLOCK_TXS {
@@ -422,6 +429,7 @@ pub(crate) mod tests {
             },
             assets: vec![],
             bridges: vec![],
+            monetary: Default::default(),
         }
     }
 

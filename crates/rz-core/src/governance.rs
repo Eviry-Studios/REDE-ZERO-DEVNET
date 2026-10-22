@@ -123,6 +123,8 @@ pub struct ProtocolParams {
     /// Blocos de revelação depois da votação; 0 desliga o voto secreto por
     /// compromisso (`spec/GOVERNANCE.md §3.2`).
     pub vote_reveal_blocks: u64,
+    /// Emissão por bloco e queima de taxas (ADR-0025).
+    pub monetary: crate::monetary::MonetaryParams,
 }
 
 /// Limite do período de revelação.
@@ -168,6 +170,7 @@ impl ProtocolParams {
         if self.vote_reveal_blocks > MAX_REVEAL_BLOCKS {
             return Err("período de revelação longo demais");
         }
+        self.monetary.validate()?;
         self.governance.validate()
     }
 }
@@ -182,7 +185,8 @@ impl Encode for ProtocolParams {
             .put(&self.communities)
             .put(&self.defense)
             .put(&self.runtime)
-            .u64(self.vote_reveal_blocks);
+            .u64(self.vote_reveal_blocks)
+            .put(&self.monetary);
     }
 }
 
@@ -198,6 +202,7 @@ impl Decode for ProtocolParams {
             defense: d.get()?,
             runtime: d.get()?,
             vote_reveal_blocks: d.u64()?,
+            monetary: d.get()?,
         })
     }
 }
@@ -332,6 +337,10 @@ pub enum ParamChange {
     /// Período de revelação do voto secreto (`spec/GOVERNANCE.md §3.2`);
     /// constitucional.
     VoteRevealBlocks(u64),
+    /// Emissão por bloco (ADR-0025); constitucional.
+    BlockReward(u64),
+    /// Parte das taxas queimada, em pontos-base (ADR-0025); constitucional.
+    FeeBurnBps(u64),
 }
 
 impl ParamChange {
@@ -382,6 +391,8 @@ impl ParamChange {
             ParamChange::NamePeriod(_) => 35,
             ParamChange::AddBridgeChain(_) => 36,
             ParamChange::VoteRevealBlocks(_) => 37,
+            ParamChange::BlockReward(_) => 38,
+            ParamChange::FeeBurnBps(_) => 39,
         }
     }
 
@@ -425,6 +436,8 @@ impl ParamChange {
             ParamChange::NamePeriod(_) => "name_period_blocks",
             ParamChange::AddBridgeChain(_) => "bridge_add_chain",
             ParamChange::VoteRevealBlocks(_) => "vote_reveal_blocks",
+            ParamChange::BlockReward(_) => "block_reward",
+            ParamChange::FeeBurnBps(_) => "fee_burn_bps",
         }
     }
 
@@ -477,6 +490,8 @@ impl ParamChange {
             "defense_contribution_points" => ParamChange::DefenseContributionPoints(v),
             "name_period_blocks" => ParamChange::NamePeriod(v),
             "vote_reveal_blocks" => ParamChange::VoteRevealBlocks(v),
+            "block_reward" => ParamChange::BlockReward(v),
+            "fee_burn_bps" => ParamChange::FeeBurnBps(v),
             _ => return None,
         })
     }
@@ -531,7 +546,9 @@ impl ParamChange {
             | ParamChange::StorageQuota(v)
             | ParamChange::DefenseContributionPoints(v)
             | ParamChange::NamePeriod(v)
-            | ParamChange::VoteRevealBlocks(v) => v,
+            | ParamChange::VoteRevealBlocks(v)
+            | ParamChange::BlockReward(v)
+            | ParamChange::FeeBurnBps(v) => v,
         }
     }
 
@@ -576,6 +593,8 @@ impl ParamChange {
             ParamChange::DefenseContributionPoints(v) => p.defense.contribution_points = v,
             ParamChange::NamePeriod(v) => p.communities.name_period_blocks = v,
             ParamChange::VoteRevealBlocks(v) => p.vote_reveal_blocks = v,
+            ParamChange::BlockReward(v) => p.monetary.block_reward = v,
+            ParamChange::FeeBurnBps(v) => p.monetary.fee_burn_bps = v,
             // Mudam o registro de Comunidades, não os parâmetros: aplicadas
             // pelo estado na ativação.
             ParamChange::WithdrawCommunity(_)
@@ -645,6 +664,8 @@ impl Decode for ParamChange {
             35 => ParamChange::NamePeriod(d.u64()?),
             36 => ParamChange::AddBridgeChain(d.get()?),
             37 => ParamChange::VoteRevealBlocks(d.u64()?),
+            38 => ParamChange::BlockReward(d.u64()?),
+            39 => ParamChange::FeeBurnBps(d.u64()?),
             t => return Err(DecodeError::InvalidTag(t)),
         })
     }
@@ -1247,8 +1268,28 @@ mod tests {
             defense: crate::defense::DefenseParams::default(),
             runtime: crate::runtime::RuntimeParams::default(),
             vote_reveal_blocks: 0,
+            monetary: Default::default(),
         };
         assert!(check_proposal_shape(Category::Ordinary, &[ParamChange::MinFee(5)], &cur).is_ok());
+        // Política monetária: constitucional e dentro dos limites (ADR-0025).
+        assert!(check_proposal_shape(
+            Category::Constitutional,
+            &[
+                ParamChange::BlockReward(10_000_000),
+                ParamChange::FeeBurnBps(5_000)
+            ],
+            &cur
+        )
+        .is_ok());
+        assert!(
+            check_proposal_shape(Category::Ordinary, &[ParamChange::BlockReward(1)], &cur).is_err()
+        );
+        assert!(check_proposal_shape(
+            Category::Constitutional,
+            &[ParamChange::FeeBurnBps(10_001)],
+            &cur
+        )
+        .is_err());
         // Parâmetro constitucional com categoria ordinária: inválido.
         assert!(
             check_proposal_shape(Category::Ordinary, &[ParamChange::GovDeposit(5)], &cur).is_err()

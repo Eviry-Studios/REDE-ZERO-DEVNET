@@ -1,6 +1,6 @@
 # spec/GOVERNANCE.md — Governança
 
-**Versão:** 0.4.0 (DEVNET) — aprovada e implementada
+**Versão:** 0.5.0 (DEVNET) — aprovada e implementada
 **Relacionamento:** ADR-0008, REQ-040..045, `ARCHITECTURE.md §31–32`, `SPECIFICATIONS.md §43–47`, THR-GOV-001..006
 
 ---
@@ -76,13 +76,13 @@ ParamChange (tag u8): 0 min_fee u64 | 1 max_block_txs u32 | 2 gov_deposit | 3 an
                       | 32 defense_contribution_points
                       | 33 community_withdraw | 34 community_restore
                       | 35 name_period_blocks | 36 bridge_add_chain (fixed[32], id da configuração)
-                      | 37 vote_reveal_blocks
+                      | 37 vote_reveal_blocks | 38 block_reward | 39 fee_burn_bps
                                                                      (u64, exceto tag 1: u32; tags 33 e 34: fixed[32], id da Comunidade)
 
 Tags 0 e 1 são da categoria ordinária; as demais, constitucional. Os parâmetros
 resultantes são validados antes de a proposta ser aceita (tags 10..19:
 spec/CONSENSUS.md §2; tags 20..21: spec/MARKET.md §6; tags 22..23:
-spec/COMMUNITIES.md §8; tags 24..26: spec/DEFENSE.md §6; tags 27..31: spec/RUNTIME.md §6; tag 32: spec/REPUTATION.md §4; tags 33..34: spec/COMMUNITIES.md §6.1, que também exige o estado da Comunidade na submissão e na ativação; tag 35: spec/NAMING.md §4.1; tag 36: spec/BRIDGE.md §2.1; tag 37: §3.2, no máximo 10 000 000).
+spec/COMMUNITIES.md §8; tags 24..26: spec/DEFENSE.md §6; tags 27..31: spec/RUNTIME.md §6; tag 32: spec/REPUTATION.md §4; tags 33..34: spec/COMMUNITIES.md §6.1, que também exige o estado da Comunidade na submissão e na ativação; tag 35: spec/NAMING.md §4.1; tag 36: spec/BRIDGE.md §2.1; tag 37: §3.2, no máximo 10 000 000; tags 38..39: spec/STATE.md §5–§6, `block_reward ≤ 100 ZERO` e `fee_burn_bps ≤ 10 000`).
 
 Uma proposta da categoria Comunidade só é aceita se `content_hash` for o id
 de uma declaração de Comunidade pendente (validação técnica, N-7); na
