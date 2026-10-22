@@ -61,6 +61,10 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Proposto — Política monetária
+
+* ADR-0025 em estado **Proposta**: compara oferta fixa, teto com emissão decrescente e emissão constante por bloco; descarta as opções que contradizem os documentos e recomenda emissão constante ao proponente, sem alocação a fundadores. Nenhuma mudança de código até a decisão.
+
 ### Adicionado — Taxa de retransmissão da ponte
 
 * `spec/BRIDGE.md` v0.3.0 §4.1 (ADR-0019). Script de queima "RZ2" com taxa `u64` escolhida por quem queima; no depósito, o destinatário recebe `valor − taxa` e quem envia a prova recebe `taxa`. Taxa maior que a queima é recusada.
