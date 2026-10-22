@@ -219,6 +219,8 @@ enum BridgeEffect {
         chain: String,
         asset: AssetId,
         burn: Burn,
+        /// Quem trouxe a prova; recebe `burn.relay_fee`.
+        relayer: Address,
     },
     /// Para ZERO, o valor já foi debitado da conta.
     Lock(Htlc),
@@ -1962,6 +1964,7 @@ impl State {
                     chain: chain.clone(),
                     asset,
                     burn,
+                    relayer: sender,
                 });
                 effect.accounts.push((sender, sender_acc));
             }
@@ -3069,7 +3072,12 @@ impl State {
                     c.add_headers(recs, best);
                 }
             }
-            BridgeEffect::Deposit { chain, asset, burn } => {
+            BridgeEffect::Deposit {
+                chain,
+                asset,
+                burn,
+                relayer,
+            } => {
                 if let Some(c) = self.bridge.chains.get_mut(&chain) {
                     c.claimed.insert(burn.txid);
                 }
@@ -3082,7 +3090,12 @@ impl State {
                     .supply
                     .checked_add(burn.amount)
                     .ok_or(StateError::Overflow)?;
-                self.add_asset(burn.recipient, asset, burn.amount)?;
+                // A taxa de retransmissão, escolhida por quem queimou, vai
+                // para quem trouxe a prova; o resto, para o destinatário.
+                self.add_asset(burn.recipient, asset, burn.amount - burn.relay_fee)?;
+                if burn.relay_fee > 0 {
+                    self.add_asset(relayer, asset, burn.relay_fee)?;
+                }
             }
             BridgeEffect::Lock(h) => {
                 if !h.asset.is_zero() {

@@ -1038,7 +1038,7 @@ Ameaças aceitas **temporariamente** na DEVNET, com registro explícito:
 | THR-PRIV-001 | RingCT implementado **sem auditoria**; anel de 11 | Auditoria independente da implementação (ADR-0009) |
 | THR-PRIV-002 | Dandelion++, canal cifrado e Tor opcional **não auditados** | Auditoria do canal; avaliação de tráfego de cobertura (ADR-0011) |
 | THR-P2P-005 | Canal cifrado sem fixação obrigatória de identidade | Distribuição verificável de identidades de Nodes ou uso de serviços onion |
-| THR-POOL-002, THR-BRG-001..004 | Ponte (ADR-0019) **sem auditoria**, só em DEVNET e TESTNET; segurança limitada à prova de trabalho da origem; sem incentivo a retransmissores | Auditoria do cliente leve e das trocas atômicas; inclusão de redes pela governança |
+| THR-POOL-002, THR-BRG-001..004 | Ponte (ADR-0019) **sem auditoria**, só em DEVNET e TESTNET; segurança limitada à prova de trabalho da origem; retransmissão paga só pela taxa oferecida por quem queima | Auditoria do cliente leve e das trocas atômicas; inclusão de redes pela governança |
 | THR-MKT-001 | Ordens públicas antes da inclusão; omissão por um bloco possível | Avaliação de ordens cifradas até a inclusão |
 | THR-DEF-001..004 | Defesa (ADR-0016) **sem auditoria**; decisões dependem de > 2/3 dos validadores; isolamento só de conexões de saída (pares de entrada são anônimos); detecção de anomalias local | Auditoria; avaliação do isolamento de pares de entrada sem quebrar o anonimato de clientes |
 | THR-RT-001/002 | Exonet Runtime (ADR-0018) **sem auditoria** do interpretador na configuração usada nem da tabela de combustível | Auditoria do `wasmi` e da tabela de custos; avaliação de aluguel de armazenamento |

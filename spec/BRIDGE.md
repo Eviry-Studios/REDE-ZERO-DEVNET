@@ -1,6 +1,6 @@
 # spec/BRIDGE.md — Ponte para ativos externos
 
-**Versão:** 0.2.0 (DEVNET)
+**Versão:** 0.3.0 (DEVNET)
 **Decisão:** ADR-0019
 **Relacionamento:** `SPECIFICATIONS.md §38–§42`, `ARCHITECTURE.md §30`, REQ-036..039, AC-POOL-004/005, AT-POOL-004, THR-POOL-002, THR-BRG-001..004, ADR-0014
 **Implementação de referência:** `crates/rz-core/src/bridge.rs`, `crates/rz-core/src/state.rs`, `crates/rz-wallet`
@@ -106,6 +106,21 @@ O valor dessa saída é destruído na origem. A etiqueta impede que a mesma quei
 * o identificador ainda não foi usado.
 
 Efeito: o destinatário gravado na queima (não quem envia a prova) recebe `valor` unidades do ativo, a oferta do ativo aumenta o mesmo tanto e o identificador fica marcado como usado.
+
+### 4.1 Taxa de retransmissão
+
+Quem queima pode oferecer parte do valor a quem trouxer a prova (e, com ela, os cabeçalhos que a confirmam):
+
+```text
+script = OP_RETURN ‖ push(51) ‖ "RZ2" ‖ etiqueta (8) ‖ endereço Rede Zero (32) ‖ u64 taxa (little-endian)
+```
+
+* A taxa é escolhida por quem queima, na origem, e não pode ser alterada por quem retransmite.
+* `taxa ≤ valor`; caso contrário, o `BridgeDeposit` é recusado.
+* Efeito: o destinatário recebe `valor − taxa`, e o remetente do `BridgeDeposit` recebe `taxa`. A oferta aumenta `valor`, como no §4: nada é emitido além do que foi queimado.
+* Taxa zero equivale ao script "RZ1", que continua válido.
+
+É um preço de mercado entre quem queima e quem retransmite, sem emissão e sem depender de política monetária. `zero-wallet bridge-burn-script --relay-fee UNIDADES` gera o script.
 
 `path_from_merkleblock` extrai cabeçalho, caminho e posição da prova `merkleblock` devolvida por `gettxoutproof` nos nós da origem.
 

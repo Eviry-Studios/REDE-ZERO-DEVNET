@@ -49,5 +49,5 @@ O resultado era uma câmara de contribuição que só pontuava validadores (THR-
 ## Condições de revisão
 
 * Computação verificada, como tarefas com resultado checável por todos.
-* Incentivo verificável à retransmissão de cabeçalhos da ponte e à disponibilidade de conteúdo.
+* Incentivo verificável à disponibilidade de conteúdo. A retransmissão de cabeçalhos da ponte já tem incentivo monetário pela taxa de retransmissão (`spec/BRIDGE.md §4.1`).
 * Revisão do peso relativo após dados de TESTNET.

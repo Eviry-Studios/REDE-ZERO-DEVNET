@@ -36,6 +36,10 @@ pub const BRIDGE_ROOT: &str = "rede-zero/bridge-root/v1";
 pub const BURN_MAGIC: &[u8; 3] = b"RZ1";
 /// `RZ1 ‖ etiqueta (8) ‖ endereço (32)`.
 pub const BURN_PAYLOAD_LEN: usize = 3 + 8 + 32;
+/// Queima com taxa de retransmissão (`spec/BRIDGE.md §4.1`):
+/// `"RZ2" ‖ etiqueta ‖ destinatário ‖ u64(taxa, little-endian)`.
+pub const BURN_FEE_MAGIC: &[u8; 3] = b"RZ2";
+pub const BURN_FEE_PAYLOAD_LEN: usize = BURN_PAYLOAD_LEN + 8;
 
 pub const MAX_CHAINS: usize = 16;
 /// Contexto do identificador de uma configuração de rede proposta.
@@ -713,6 +717,21 @@ pub fn burn_script(network_id: &str, recipient: &Address) -> Vec<u8> {
     s
 }
 
+/// Script de queima que oferece `relay_fee` (em unidades da origem) a quem
+/// trouxer a prova para a Rede Zero (`spec/BRIDGE.md §4.1`). Com taxa zero,
+/// é o script sem taxa.
+pub fn burn_script_with_fee(network_id: &str, recipient: &Address, relay_fee: u64) -> Vec<u8> {
+    if relay_fee == 0 {
+        return burn_script(network_id, recipient);
+    }
+    let mut s = vec![0x6a, BURN_FEE_PAYLOAD_LEN as u8];
+    s.extend_from_slice(BURN_FEE_MAGIC);
+    s.extend_from_slice(&network_tag(network_id));
+    s.extend_from_slice(&recipient.0 .0);
+    s.extend_from_slice(&relay_fee.to_le_bytes());
+    s
+}
+
 /// Raiz de Merkle a partir da folha, do caminho e da posição (regras de
 /// Bitcoin: SHA-256 duplo dos pares concatenados).
 pub fn merkle_root(leaf: &Hash32, path: &[Hash32], index: u32) -> Option<Hash32> {
@@ -809,17 +828,29 @@ pub fn parse_outputs(tx: &[u8]) -> Result<Vec<TxOut>, &'static str> {
 
 /// Destinatário de uma saída de queima válida para esta rede.
 pub fn burn_recipient(script: &[u8], tag: &[u8; 8]) -> Option<Address> {
+    burn_target(script, tag).map(|(a, _)| a)
+}
+
+/// Destinatário e taxa de retransmissão de uma saída de queima.
+pub fn burn_target(script: &[u8], tag: &[u8; 8]) -> Option<(Address, u64)> {
     let data = match script {
-        [0x6a, n, rest @ ..] if *n as usize == BURN_PAYLOAD_LEN => rest,
-        [0x6a, 0x4c, n, rest @ ..] if *n as usize == BURN_PAYLOAD_LEN => rest,
+        [0x6a, n, rest @ ..] if *n as usize == rest.len() => rest,
+        [0x6a, 0x4c, n, rest @ ..] if *n as usize == rest.len() => rest,
         _ => return None,
     };
-    if data.len() != BURN_PAYLOAD_LEN || &data[..3] != BURN_MAGIC || &data[3..11] != tag {
+    let fee = match (data.len(), data.get(..3)) {
+        (BURN_PAYLOAD_LEN, Some(m)) if m == BURN_MAGIC => 0,
+        (BURN_FEE_PAYLOAD_LEN, Some(m)) if m == BURN_FEE_MAGIC => {
+            u64::from_le_bytes(data[BURN_PAYLOAD_LEN..].try_into().ok()?)
+        }
+        _ => return None,
+    };
+    if &data[3..11] != tag {
         return None;
     }
     let mut a = [0u8; 32];
-    a.copy_from_slice(&data[11..]);
-    Some(Address(Hash32(a)))
+    a.copy_from_slice(&data[11..43]);
+    Some((Address(Hash32(a)), fee))
 }
 
 /// Resultado de uma prova de queima aceita.
@@ -828,6 +859,8 @@ pub struct Burn {
     pub txid: Hash32,
     pub recipient: Address,
     pub amount: u64,
+    /// Parte de `amount` oferecida a quem traz a prova (`spec/BRIDGE.md §4.1`).
+    pub relay_fee: u64,
 }
 
 impl ChainState {
@@ -861,15 +894,19 @@ impl ChainState {
             return Err("prova de Merkle inválida");
         }
         let tag = network_tag(network_id);
-        let burns: Vec<(Address, u64)> = parse_outputs(tx)?
+        let burns: Vec<(Address, u64, u64)> = parse_outputs(tx)?
             .into_iter()
-            .filter_map(|o| burn_recipient(&o.script, &tag).map(|a| (a, o.value)))
+            .filter_map(|o| burn_target(&o.script, &tag).map(|(a, f)| (a, o.value, f)))
             .collect();
         match burns.as_slice() {
-            [(recipient, amount)] if *amount > 0 => Ok(Burn {
+            [(_, amount, fee)] if *amount > 0 && fee > amount => {
+                Err("taxa de retransmissão maior que a queima")
+            }
+            [(recipient, amount, fee)] if *amount > 0 => Ok(Burn {
                 txid,
                 recipient: *recipient,
                 amount: *amount,
+                relay_fee: *fee,
             }),
             [] => Err("nenhuma saída de queima para esta rede"),
             _ => Err("saída de queima ausente, nula ou repetida"),
@@ -1228,6 +1265,22 @@ pub(crate) mod tests {
         assert_eq!(burn_recipient(&outs[1].script, &tag), Some(a));
         assert_eq!(burn_recipient(&outs[1].script, &network_tag("outra")), None);
         assert_eq!(burn_recipient(&outs[0].script, &tag), None);
+        // Com taxa de retransmissão.
+        let with_fee = burn_script_with_fee("rede-x", &a, 777);
+        assert_eq!(with_fee.len(), 2 + BURN_FEE_PAYLOAD_LEN);
+        assert_eq!(burn_target(&with_fee, &tag), Some((a, 777)));
+        assert_eq!(burn_target(&with_fee, &network_tag("outra")), None);
+        assert_eq!(
+            burn_script_with_fee("rede-x", &a, 0),
+            burn_script("rede-x", &a)
+        );
+        let mut cut = with_fee.clone();
+        cut.pop();
+        assert_eq!(
+            burn_target(&cut, &tag),
+            None,
+            "comprimento declarado diferente"
+        );
         // Serialização com testemunhas recusada; lixo recusado.
         let mut segwit = tx.clone();
         segwit.insert(4, 0x00);

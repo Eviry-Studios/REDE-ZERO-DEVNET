@@ -612,3 +612,44 @@ fn chain_publication_refused_outside_test_networks() {
         ))
     );
 }
+
+// spec/BRIDGE.md §4.1 — taxa de retransmissão escolhida por quem queima:
+// vai para quem traz a prova, o resto para o destinatário; nada é emitido.
+#[test]
+fn relay_fee_split_between_relayer_and_recipient() {
+    let mut sim = Sim::new();
+    let net = sim.g.network_id.clone();
+    let script = crate::bridge::burn_script_with_fee(&net, &bob(), 1_500);
+    let make = |script: Vec<u8>, salt: u8| {
+        let other = origin_tx(&[(50, vec![0x51])], salt);
+        let burn = origin_tx(&[(1_000, vec![0x51]), (75_000, script)], salt + 1);
+        let a = Hash32(sha256d(&other));
+        let b = Hash32(sha256d(&burn));
+        (burn, pair(&a, &b), vec![a])
+    };
+    let (burn, root, path) = make(script, 10);
+    let hs = sim.extend(3, Some(root));
+    sim.submit(&hs).unwrap();
+    sim.apply(deposit(&hs[0], burn, path, 1));
+    let asset = sim.asset();
+    let relayer = rich().public_key().address();
+    assert_eq!(sim.state.market().balance(&bob(), &asset), 73_500);
+    assert_eq!(sim.state.market().balance(&relayer, &asset), 1_500);
+    assert_eq!(
+        sim.state.market().assets[&asset].supply,
+        75_000,
+        "a oferta é exatamente o que foi queimado"
+    );
+    // Taxa maior que a queima: recusada.
+    let (bad, root, path) = make(
+        crate::bridge::burn_script_with_fee(&net, &bob(), 75_001),
+        20,
+    );
+    let hs = sim.extend(3, Some(root));
+    sim.submit(&hs).unwrap();
+    let tx = sim.tx(&rich(), deposit(&hs[0], bad, path, 1));
+    assert_eq!(
+        sim.check(&tx),
+        Err(TxError::Bridge("taxa de retransmissão maior que a queima"))
+    );
+}

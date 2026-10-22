@@ -415,11 +415,21 @@ fn bridge_case(c: &Case) -> R<()> {
                 expect_ok(c)?,
             )
         }
-        "queima" => eq(
-            "script",
-            bridge::burn_script(c.get("rede")?, &Address(h32(c, "destinatario")?)),
-            c.bytes("script")?,
-        ),
+        "queima" => {
+            let fee = match c.opt("taxa") {
+                Some(_) => c.u64("taxa")?,
+                None => 0,
+            };
+            eq(
+                "script",
+                bridge::burn_script_with_fee(
+                    c.get("rede")?,
+                    &Address(h32(c, "destinatario")?),
+                    fee,
+                ),
+                c.bytes("script")?,
+            )
+        }
         "merkle" => {
             let path = c
                 .all("caminho")

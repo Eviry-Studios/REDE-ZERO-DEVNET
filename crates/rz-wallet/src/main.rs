@@ -139,7 +139,7 @@ Atualizações verificáveis (ADR-0021) — só a governança adota uma versão:
   vigente (--previous); o Node avisa quando a cadeia adota versão diferente da sua.
 Ponte para ativos externos (ADR-0019) — sem custodiante:
   zero-wallet bridge --genesis FILE --node ADDR --chain REDE
-  zero-wallet bridge-burn-script --genesis FILE --to HEX
+  zero-wallet bridge-burn-script --genesis FILE --to HEX [--relay-fee UNIDADES]
                       script OP_RETURN da queima (IRREVERSÍVEL na rede de origem)
   zero-wallet bridge-headers --genesis FILE --node ADDR --key FILE --chain REDE --file CABEÇALHOS
                       um cabeçalho de 80 bytes em hex por linha (ex.: getblockheader HASH false)
@@ -1874,8 +1874,18 @@ fn cmd_bridge(args: &Args) -> Result<(), String> {
 fn cmd_bridge_burn_script(args: &Args) -> Result<(), String> {
     let genesis = load_genesis(args)?;
     let to = Address::from_hex(args.req("to")?).ok_or("--to: endereço inválido")?;
-    let script = rz_core::bridge::burn_script(&genesis.network_id, &to);
+    // Taxa em unidades mínimas da origem (ex.: satoshis).
+    let fee: u64 = match args.get("relay-fee") {
+        Some(v) => v.parse().map_err(|_| "--relay-fee: número inválido")?,
+        None => 0,
+    };
+    let script = rz_core::bridge::burn_script_with_fee(&genesis.network_id, &to, fee);
     println!("{}", rz_crypto::hex::encode(&script));
+    if fee > 0 {
+        eprintln!(
+            "taxa de retransmissão: {fee} unidades da origem vão para quem trouxer a prova; o restante, para {to}"
+        );
+    }
     eprintln!(
         "aviso: o valor enviado a esta saída é DESTRUÍDO na rede de origem, sem resgate. \
          A Rede Zero cunha a representação para {to} na rede {}.",

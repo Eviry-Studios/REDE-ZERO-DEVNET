@@ -1582,6 +1582,17 @@ fn bridge_vectors() -> R<Vec<Case>> {
             .hex("destinatario", &addr.0 .0)
             .hex("script", &burn_script(VECTOR_NETWORK, &addr)),
     );
+    out.push(
+        Case::new("script-de-queima-com-taxa")
+            .set("operacao", "queima")
+            .set("rede", VECTOR_NETWORK)
+            .hex("destinatario", &addr.0 .0)
+            .set("taxa", 1_500)
+            .hex(
+                "script",
+                &bridge::burn_script_with_fee(VECTOR_NETWORK, &addr, 1_500),
+            ),
+    );
     let leaves: Vec<Hash32> = (0..3u8).map(|i| Hash32(sha256d(&[i]))).collect();
     let pair = |a: &Hash32, b: &Hash32| {
         let mut x = [0u8; 64];

@@ -284,7 +284,7 @@ Aceitas temporariamente e registradas em [`THREAT_MODEL.md §11`](docs/THREAT_MO
 * **Consenso Zero-BFT não auditado** ([ADR-0012](docs/adr/0012-consenso-zero-bft.md)): tolera menos de 1/3 do poder bizantino; com 1/3 ou mais offline a rede para (segurança antes de disponibilidade). Sem checkpoints contra ataque de longo alcance; o poder inicial vem do Genesis.
 * **Privacidade não auditada**: RingCT ([ADR-0009](docs/adr/0009-privacidade-transacional.md)) oferece anonimato probabilístico (anel de 11), não absoluto (`REQ-028`). Blindagens e retiradas são públicas.
 * **Canal cifrado e proteção de IP não auditados** ([ADR-0011](docs/adr/0011-protecao-do-ip.md)). Sem Tor e com `--direct`, o node escolhido vê seu IP.
-* **Ponte não auditada** ([ADR-0019](docs/adr/0019-ponte-sem-custodiante.md)): segura na medida da prova de trabalho da origem e das confirmações exigidas; mão única; sem incentivo a retransmissores de cabeçalhos.
+* **Ponte não auditada** ([ADR-0019](docs/adr/0019-ponte-sem-custodiante.md)): segura na medida da prova de trabalho da origem e das confirmações exigidas; mão única; a retransmissão é paga só pela taxa que quem queima oferecer.
 * **Exonet Runtime não auditado** ([ADR-0018](docs/adr/0018-exonet-runtime.md)): depende do interpretador `wasmi` na versão fixada; sem chamadas entre módulos nem aluguel de armazenamento.
 * **Navegador Zero não auditado** ([ADR-0017](docs/adr/0017-navegador-zero-e-conteudo.md)): o isolamento depende do navegador do sistema; links para a web comum saem da Exonet.
 * **Defesa não auditada** ([ADR-0016](docs/adr/0016-defesa-da-exonet.md)): depende de > 2/3 dos validadores; o isolamento só alcança conexões de saída, porque pares de entrada são anônimos; a detecção de anomalias é local.

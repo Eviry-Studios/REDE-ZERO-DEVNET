@@ -30,7 +30,7 @@ Qualquer ponte "de ida e volta" precisa que alguém guarde o ativo na origem par
    * Ninguém guarda nada, então não há a quem pedir resgate, nem quem possa fugir com os fundos.
 2. **Mão única, por escolha.** O ativo representado é permanente na Rede Zero, coerente com a permanência do Pool. Quem quer voltar à origem troca com outra pessoa.
 3. **Trocas atômicas (HTLC)** com SHA-256, pré-imagem de 32 bytes e prazo em altura. São compatíveis com os contratos equivalentes do Bitcoin e de redes afins. Duas pessoas trocam ZERO ou ativos por ativos de outra rede sem intermediário: ou as duas pernas acontecem, ou nenhuma.
-4. **Redes de origem só pelo Genesis**, com ponto de partida e número de confirmações explícitos. Nesta versão a ponte fica proibida na MAINNET até haver auditoria. A inclusão posterior pela governança fica A DEFINIR.
+4. **Redes de origem pelo Genesis ou pela governança** (`PublishBridgeChain` e mudança de parâmetro, `spec/BRIDGE.md §2.1`), com ponto de partida e número de confirmações explícitos. Nesta versão a ponte fica proibida na MAINNET até haver auditoria.
 5. **Sem relógio:** as regras de cabeçalho que dependem de hora local são omitidas. O custo da prova de trabalho substitui essa defesa.
 
 ## Alternativas consideradas
@@ -47,13 +47,11 @@ Qualquer ponte "de ida e volta" precisa que alguém guarde o ativo na origem par
 
 * Ativos de outras redes entram de forma verificável por qualquer Node, sem confiança em pessoas. A segurança é a da prova de trabalho da origem, com as confirmações exigidas.
 * Um atacante com maioria do poder de mineração da origem, ou capaz de produzir uma cadeia mais pesada que a real a partir do ponto de partida, poderia cunhar representações falsas. Mais confirmações reduzem esse risco.
-* Retransmissores precisam enviar cabeçalhos; não há incentivo nesta versão (A DEFINIR).
+* Retransmissores precisam enviar cabeçalhos. O incentivo é a taxa de retransmissão que quem queima grava no `OP_RETURN` e que vai para quem envia a prova (`spec/BRIDGE.md §4.1`); sem taxa, depende de quem tem interesse no depósito.
 * Fork da origem mais profundo que 4 032 blocos não é acompanhado.
 * Trocas atômicas exigem atenção das pessoas: o prazo do lado de quem recebe o segredo deve ser menor, com folga, que o do outro lado.
 
 ## Condições de revisão
 
 * Auditoria do cliente leve e das regras de HTLC antes de qualquer uso fora de DEVNET e TESTNET.
-* Inclusão de redes de origem e atualização de pontos de partida pela governança.
-* Incentivo a retransmissores de cabeçalhos.
 * Clientes leves de outras famílias de consenso.

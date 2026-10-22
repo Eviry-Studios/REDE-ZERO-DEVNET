@@ -65,6 +65,13 @@ rede = rede-zero-devnet-conformidade
 destinatario = b78adf1c3ab7315a062e68d9f59e0417fc0641d33eb457d81e43634564235325
 script = 6a2b525a31709ba71614bda12db78adf1c3ab7315a062e68d9f59e0417fc0641d33eb457d81e43634564235325
 
+[caso script-de-queima-com-taxa]
+operacao = queima
+rede = rede-zero-devnet-conformidade
+destinatario = b78adf1c3ab7315a062e68d9f59e0417fc0641d33eb457d81e43634564235325
+taxa = 1500
+script = 6a33525a32709ba71614bda12db78adf1c3ab7315a062e68d9f59e0417fc0641d33eb457d81e43634564235325dc05000000000000
+
 [caso merkle-0]
 operacao = merkle
 folha = 1406e05881e299367766d313e26c05564ec91bf721d31726bd6e46e60689539a
