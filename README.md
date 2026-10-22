@@ -237,15 +237,17 @@ examples/runtime/     módulo de exemplo do Exonet Runtime
 |---|---|---|
 | [Manifesto Exonet](docs/Manifesto_Exonet.pdf) | Por quê? | inicial |
 | [REQUIREMENTS.md](docs/REQUIREMENTS.md) | O que deve existir? | 0.2.0 |
-| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.11.0 |
+| [THREAT_MODEL.md](docs/THREAT_MODEL.md) | Contra o quê? | 0.16.0 |
 | [DEMOCRACIA_ORGANICA.md](docs/DEMOCRACIA_ORGANICA.md) | Como indivíduos e Comunidades participam? | 0.1.0 (conceitual) |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Como os componentes se organizam? | 0.1.0 |
 | [SPECIFICATIONS.md](docs/SPECIFICATIONS.md) | Quais são as regras técnicas? | 0.1.0 |
-| [spec/](spec/) | Regras exatas e testáveis por componente | DEVNET 0.1.0 |
-| [AUDIT.md](docs/AUDIT.md) | O que auditar, como reproduzir e o que a revisão interna encontrou? | 0.8.0 |
+| [spec/](spec/) | Regras exatas e testáveis por componente | por arquivo |
+| [AUDIT.md](docs/AUDIT.md) | O que auditar, como reproduzir e o que a revisão interna encontrou? | 0.13.0 |
 | [ACCEPTANCE_CRITERIA.md](docs/ACCEPTANCE_CRITERIA.md) | Quando uma implementação é conforme? | 0.1.0 |
 | [ACCEPTANCE_TESTS.md](docs/ACCEPTANCE_TESTS.md) | Como verificar? | 0.1.0 |
 | [docs/adr/](docs/adr/) | Por que cada escolha técnica? | — |
+| [TESTNET.md](docs/TESTNET.md) | Como a primeira rede pública é lançada? | 0.1.0 |
+| [OPERACAO.md](docs/OPERACAO.md) | Como operar um Node validador da TESTNET? | 0.1.0 |
 
 ## Estado da implementação
 

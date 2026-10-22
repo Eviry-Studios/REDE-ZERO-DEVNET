@@ -27,9 +27,9 @@ A TESTNET é a primeira rede pública da Rede Zero. O ZERO dela **não tem valor
    * Pode ficar atrás de um serviço onion; o pedido sai pela Wallet com `--proxy`.
    * 1 000 ZERO é o vínculo mínimo, então um pedido basta para virar validador.
 3. ✅ Node e Wallet mostram o ambiente correto, com o aviso de que o ZERO da TESTNET não tem valor.
-4. `testnet/` publica `genesis.bin`, o hash dele e a lista de Nodes iniciais.
-5. Guia do operador (`docs/OPERACAO.md`).
-6. Versão `v0.1.0-testnet` com binários reproduzíveis e manifesto de versão (ADR-0021).
+4. ✅ `testnet/` descreve o que será publicado na cerimônia: validadores, `genesis.bin` e o hash dele, Nodes iniciais e o faucet. Qualquer pessoa regenera o Genesis e compara.
+5. ✅ Guia do operador (`docs/OPERACAO.md`).
+6. Versão `v0.1.0-testnet` com binários reproduzíveis, marcada **no dia da cerimônia**, depois do merge em `main`. O manifesto de versão é publicado na cadeia logo após o lançamento (ADR-0021).
 
 ## Fase 1 — Cerimônia do Genesis
 
