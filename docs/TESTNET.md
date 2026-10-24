@@ -1,6 +1,6 @@
 # Plano de lançamento da TESTNET
 
-**Versão:** 0.1.0
+**Versão:** 0.2.0
 **Relacionamento:** `SPECIFICATIONS.md §66–§67`, ADR-0012, ADR-0019, ADR-0021, ADR-0023, ADR-0025, ADR-0026
 
 A TESTNET é a primeira rede pública da Rede Zero. O ZERO dela **não tem valor econômico**: a rede existe para testar o protocolo com pessoas e operadores reais antes da MAINNET.
@@ -10,11 +10,28 @@ A TESTNET é a primeira rede pública da Rede Zero. O ZERO dela **não tem valor
 | Item | Decisão |
 | --- | --- |
 | Identificador | `rede-zero-testnet-1`; um reinício usa `-2`, `-3`… (§5) |
-| Validadores iniciais | ao menos 10 operadores independentes; com 10, a rede tolera 3 falhas ou validadores mal-intencionados |
+| Validadores iniciais | **TESTNET inicial da coordenação**: 10 validadores em 4 aparelhos da pessoa que coordena (§1). Validadores independentes entram depois, pelo faucet (Fase 2) |
 | Política monetária | ADR-0025: `block_reward = 0,1 ZERO`, `fee_burn_bps = 5 000` |
 | Genesis | 100 000 000 ZERO: 10 000 vinculados por validador e o resto no faucet |
 | Faucet | operado pela pessoa que coordena o lançamento; **não vincula ZERO e não vota** (regra pública, conferível na cadeia) |
 | Ponte | uma rede de teste do Bitcoin (signet ou testnet4), adotada **depois do lançamento** por proposta constitucional (`PublishBridgeChain`), o que também exercita a governança |
+
+## 1. Configuração inicial
+
+A rede só finaliza blocos com **mais de 2/3** do poder de voto no ar (`spec/CONSENSUS.md`). O que importa é quanto poder cai junto quando um aparelho, ou a casa inteira, fica sem energia ou internet. Validadores de mesmo vínculo, divididos assim:
+
+| Aparelho | Validadores | Poder |
+| --- | --- | --- |
+| VPS (Contabo) | 7 | 70 % |
+| PC local | 1 | 10 % |
+| Celular 1 (Termux) | 1 | 10 % |
+| Celular 2 (Termux) | 1 | 10 % |
+
+* O PC e os celulares ficam na mesma casa, então contam como **um único ponto de falha** (30 %). Se a casa toda cair, a VPS sozinha mantém 70 % e a rede continua.
+* Se a VPS cair, a rede **para** até ela voltar. Nada se perde, e os blocos recomeçam sozinhos. Com uma única máquina sempre ligada, nenhuma divisão evita isso.
+* Os 7 validadores da VPS rodam como 7 processos, cada um com chave, porta e pasta próprias (`scripts/testnet-nos.sh`).
+
+**Transparência:** enquanto todo o poder de voto for da coordenação, a TESTNET é anunciada como **inicial, operada pela coordenação**. Ela testa o software, mas ainda não a descentralização.
 
 ## Fase 0 — Código e documentação
 
@@ -33,14 +50,14 @@ A TESTNET é a primeira rede pública da Rede Zero. O ZERO dela **não tem valor
 
 ## Fase 1 — Cerimônia do Genesis
 
-1. Cada operador gera a chave do validador cifrada (`zero-wallet new --key validador.key`) e envia a chave pública e o endereço público do seu Node.
+1. Em cada aparelho, `scripts/testnet-chaves.sh N DIR` gera as `N` chaves cifradas daquele aparelho e lista as chaves públicas: 7 na VPS e 1 em cada um dos outros. As chaves privadas nunca saem do aparelho.
 2. A coordenação monta o Genesis, publica `genesis.bin` e o hash, e abre um prazo de conferência.
 3. Cada operador recompila a versão pelo build reproduzível, confere o hash do binário e o do Genesis, e confirma publicamente.
 4. Todos iniciam o Node. Os blocos começam quando mais de 2/3 do poder de voto está no ar.
 
 ## Fase 2 — Operação pública
 
-* **Entrada aberta:** qualquer pessoa obtém ZERO no faucet e vincula para se tornar validadora.
+* **Entrada aberta:** qualquer pessoa obtém ZERO no faucet e vincula para se tornar validadora. À medida que validadores independentes entram, a coordenação desvincula parte dos seus, até nenhum operador ter 1/3 do poder.
 * **Testes com uso real:**
   * governança, incluindo o voto secreto e uma mudança de `block_reward`;
   * Comunidades e nomes;
@@ -63,6 +80,7 @@ A TESTNET é a primeira rede pública da Rede Zero. O ZERO dela **não tem valor
 * Três meses sem falha crítica de consenso ou de integridade monetária.
 * Ao menos uma atualização de versão feita pela governança na TESTNET.
 * Distribuição da MAINNET implementada e ensaiada.
+* **Nenhum operador, a coordenação incluída, e nenhuma máquina com 1/3 ou mais do poder de voto** durante pelo menos um mês, para mostrar que a rede funciona sem um ponto central (Manifesto §2, REQ-099).
 
 ## 5. Reinício
 
