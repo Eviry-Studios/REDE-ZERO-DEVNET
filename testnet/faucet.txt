@@ -1,0 +1,5 @@
+# Faucet de rede-zero-testnet-1. Não vincula ZERO e não vota (docs/TESTNET.md).
+# Pedido: zero-wallet faucet --genesis testnet/genesis.bin --faucet l2s555h73t6kmkyo2mhhpvpbf3zv4shdznthits5gichrxmwctyszpqd.onion:7200 --key minha.key --proxy 127.0.0.1:9050
+endereco: l2s555h73t6kmkyo2mhhpvpbf3zv4shdznthits5gichrxmwctyszpqd.onion:7200
+chave_publica: 51578c479cc25d4db6f702b88e631efa1b1b8cfd7c280b132af61f3b1038046a
+transparente: 0125131ce0d8b83685fa9c1b1fe087585bb6947283e5b176f28084f737663076

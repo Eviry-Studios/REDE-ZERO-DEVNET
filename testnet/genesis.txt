@@ -1,0 +1,22 @@
+  rede:            rede-zero-testnet-1 (Testnet)
+  genesis:         b4ec71570d4e1307e20d084c2ebf02edc18f8e081951134f5330d02442ece548
+  consenso:        Zero-BFT (finalidade imediata)
+  bloco:           2000 ms
+  época:           1000 blocos
+  vínculo mínimo:  1000.00000000 ZERO
+  desvinculação:   907200 blocos
+  punição:         500 bps
+  taxa mínima:     0.00001000 ZERO
+  emissão:         0.10000000 ZERO por bloco; 5000 bps das taxas queimados
+  validadores:     10
+    9d919d434cae99e8412cabbaa87ba29a2f3339d340e7e263d5d495a3ae3209f6 (10000.00000000 ZERO)
+    92acea63f8d35b2fed5aa3e27a24e71e698fa1e8d7e8a0fc3e319719a04fac70 (10000.00000000 ZERO)
+    4996c8dbdd32df9ab5c0f9b3ca3db25cd13e4559c8e4450afdea03687a65dd72 (10000.00000000 ZERO)
+    dffb77322cc73010abf71999854ff71cdec04eb28704d3083b949a7c950df891 (10000.00000000 ZERO)
+    e2a975dc07308ca4e27f01d6a3f21dfa689dc4021103c9bffeaaa07cab7530cc (10000.00000000 ZERO)
+    70294c479c6ce002c2eee42fb2fc5869335794c91590084e9ac6ae11193fceb5 (10000.00000000 ZERO)
+    1fb577b79ed41c84dfc866931feafafb689dbf194f1fc7f676bb31fee1577413 (10000.00000000 ZERO)
+    2c354b5abde306b7d9075e25984d443b3325a97bd515f83d3e7d3e6d2c325ea8 (10000.00000000 ZERO)
+    33beecc84cdbe680f5c2f6ae951c8398c7e2c8ac9858fedc72196a7b057a4256 (10000.00000000 ZERO)
+    7b60525ae7cbc7bae4e70a1de79ac8ca82289a387220e3662fc49c3eed737d3e (10000.00000000 ZERO)
+  alocação:        0125131ce0d8b83685fa9c1b1fe087585bb6947283e5b176f28084f737663076 → 99900000.00000000 ZERO
