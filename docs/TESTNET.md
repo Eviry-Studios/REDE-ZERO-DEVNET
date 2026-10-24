@@ -45,14 +45,14 @@ A rede só finaliza blocos com **mais de 2/3** do poder de voto no ar (`spec/CON
 3. ✅ Node e Wallet mostram o ambiente correto, com o aviso de que o ZERO da TESTNET não tem valor.
 4. ✅ `testnet/` descreve o que será publicado na cerimônia: validadores, `genesis.bin` e o hash dele, Nodes iniciais e o faucet. Qualquer pessoa regenera o Genesis e compara.
 5. ✅ Guia do operador (`docs/OPERACAO.md`).
-6. Versão `v0.1.0-testnet` com binários reproduzíveis, marcada **no dia da cerimônia**, depois do merge em `main`. O manifesto de versão é publicado na cadeia logo após o lançamento (ADR-0021).
+6. ✅ Versão `v0.1.0-testnet` com binários reproduzíveis, marcada **no dia da cerimônia**, depois do merge em `main`. O manifesto de versão é publicado na cadeia logo após o lançamento (ADR-0021); a publicação queima `gov_deposit` (100 ZERO), então espera o saldo do validador que publica.
 
 ## Fase 1 — Cerimônia do Genesis
 
 1. ✅ Em cada aparelho, `scripts/testnet-chaves.sh N DIR` gera as `N` chaves cifradas daquele aparelho e lista as chaves públicas: as 10 na VPS (§1). A chave do faucet é gerada à parte e não está entre as validadoras. As chaves privadas nunca saem do aparelho.
 2. ✅ A coordenação monta o Genesis, publica `genesis.bin` e o hash em `testnet/`, e abre um prazo de conferência.
-3. Cada operador recompila a versão pelo build reproduzível, confere o hash do binário e o do Genesis, e confirma publicamente.
-4. Todos iniciam o Node. Os blocos começam quando mais de 2/3 do poder de voto está no ar.
+3. ✅ Cada operador recompila a versão pelo build reproduzível, confere o hash do binário e o do Genesis, e confirma publicamente. Na TESTNET inicial, os hashes da VPS coincidiram com os do build reproduzível da CI, feito em outra máquina.
+4. ✅ Todos iniciam o Node. Os blocos começam quando mais de 2/3 do poder de voto está no ar. `rede-zero-testnet-1` produz blocos desde 24/10/2026, e o faucet atende por um serviço onion (`testnet/faucet.txt`).
 
 ## Fase 2 — Operação pública
 
