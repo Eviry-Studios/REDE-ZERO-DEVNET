@@ -61,6 +61,13 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — TESTNET inicial da coordenação
+
+* `docs/TESTNET.md` v0.2.0 §1: 10 validadores em 4 aparelhos (VPS 7, PC 1, dois celulares 1 cada). A VPS sozinha mantém mais de 2/3 do poder, então a queda da casa inteira não para a rede. A TESTNET é anunciada como operada pela coordenação até chegarem validadores independentes.
+* Novo critério para a MAINNET: nenhum operador nem máquina com 1/3 ou mais do poder de voto durante pelo menos um mês.
+* `scripts/testnet-chaves.sh` (N chaves cifradas por aparelho) e `scripts/testnet-nos.sh` (iniciar, parar e consultar vários Nodes por máquina, cada um com chave, porta e pasta próprias).
+* `docs/OPERACAO.md` v0.2.0: vários validadores na mesma máquina e celular com Termux, este ainda não testado.
+
 ### Adicionado — Guia do operador
 
 * `docs/OPERACAO.md`: instalação pelo build reproduzível, chave cifrada e guardiões, conferência do Genesis, operação direta ou só por Tor, serviço do sistema, acompanhamento e incidentes.

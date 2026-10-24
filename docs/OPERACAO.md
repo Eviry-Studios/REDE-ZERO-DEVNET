@@ -1,6 +1,6 @@
 # Guia do operador — TESTNET
 
-**Versão:** 0.1.0
+**Versão:** 0.2.0
 **Relacionamento:** `docs/TESTNET.md`, ADR-0011 (IP), ADR-0012 (consenso), ADR-0021 (versões), ADR-0023 (chaves), ADR-0024 (eclipse e corrupção)
 
 Este guia é para quem vai operar um Node validador da TESTNET. O ZERO da TESTNET **não tem valor econômico**.
@@ -103,6 +103,31 @@ rede-zero-node run --genesis genesis.bin --data ~/rede-zero/dados \
 
 **Pontos de verificação:** ao entrar depois do lançamento, use `--checkpoint ALTURA:ID` com um bloco recente. Obtenha o ID de mais de uma fonte em que confie.
 
+### Vários validadores na mesma máquina (§5.1)
+
+Cada validador precisa de **chave, porta e pasta de dados próprias**. Nunca use a mesma chave em dois Nodes: isso conta como voto duplo e é punido.
+
+```bash
+mkdir -p ~/rz && (umask 077; printf '%s\n' 'sua senha longa' > ~/rz/senha)
+scripts/testnet-chaves.sh 7 ~/rz          # gera validador-1..7.key e ~/rz/publicas.txt
+```
+
+Envie à coordenação **só** o `publicas.txt`. Depois de receber o `genesis.bin`:
+
+```bash
+# VPS com IP público: escuta em 0.0.0.0 e anuncia IP:porta
+ANUNCIAR=IP_DA_VPS scripts/testnet-nos.sh iniciar genesis.bin ~/rz 7100
+# Aparelho atrás de roteador (PC, celular): só disca para a VPS
+scripts/testnet-nos.sh iniciar genesis.bin ~/rz 7100 IP_DA_VPS:7100 IP_DA_VPS:7101
+
+scripts/testnet-nos.sh estado ~/rz        # última altura de cada Node
+scripts/testnet-nos.sh parar ~/rz
+```
+
+Na VPS, libere as portas usadas (no exemplo, 7100 a 7106) no firewall da máquina e no painel do provedor.
+
+O que conta para a rede é o poder de voto **por aparelho**, não o número de processos: nenhum aparelho, ou grupo de aparelhos que caem juntos, deve passar de 1/3 sem que o restante tenha mais de 2/3 (`docs/TESTNET.md §1`).
+
 ### Serviço do sistema
 
 `/etc/systemd/system/rede-zero.service`:
@@ -152,7 +177,31 @@ zero-wallet balance --genesis genesis.bin --node 127.0.0.1:7100 --key validador.
 | Atualização de versão | Só depois de adotada por proposta constitucional; confira o manifesto com `zero-wallet release-verify` e recompile pelo §2 |
 | Vulnerabilidade encontrada | Relate por `SECURITY.md`, sem publicar antes da correção |
 
-## 8. Faucet
+## 8. Celular com Termux
+
+Ainda **não testado** pelo projeto: o build reproduzível foi verificado só em Linux x86_64. Num celular Android ARM, os binários ficam diferentes, o que é aceitável na TESTNET.
+
+1. Instale o **Termux pelo F-Droid**; a versão da Play Store está desatualizada.
+2. Instale as ferramentas e compile com uma tarefa por vez, para não esgotar a memória:
+
+   ```bash
+   pkg update && pkg install git rust
+   git clone https://github.com/Eviry-Studios/REDE-ZERO-DEVNET.git rede-zero && cd rede-zero
+   cargo build --release --locked -j 1 -p rz-node -p rz-wallet
+   export PATH="$PWD/target/release:$PATH"
+   ```
+
+   O Termux usa o compilador do próprio pacote, e não o de `rust-toolchain.toml`. Se a compilação falhar por versão, relate o erro.
+3. Para o Android não encerrar o Node:
+   * rode `termux-wake-lock`, que deixa uma notificação fixa;
+   * em Configurações → Apps → Termux → Bateria, escolha **Sem restrições**;
+   * deixe o celular carregando, com Wi-Fi ou dados móveis estáveis.
+4. Gere a chave e rode o Node como no §5.1, sem `ANUNCIAR`, discando para a VPS.
+5. Opcional: o app **Termux:Boot** inicia o Node quando o celular liga.
+
+O celular não precisa receber conexões, porque disca para a VPS. Uma queda do celular só tira o poder dele da rede.
+
+## 9. Faucet
 
 ZERO de teste para qualquer pessoa:
 
