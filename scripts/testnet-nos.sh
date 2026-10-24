@@ -28,10 +28,13 @@ iniciar)
     peers=""
     for p in "$@"; do peers="$peers --peer $p"; done
     if [ -n "${ANUNCIAR:-}" ]; then bind=0.0.0.0; else bind=127.0.0.1; fi
+    [ -e "$dir/validador-1.key" ] || { echo "nenhuma chave em $dir" >&2; exit 1; }
     : > "$dir/pids"
+    # Pela numeração, não pelo glob: validador-10 viria antes de validador-2
+    # e trocaria porta e pasta de dados entre chaves.
     i=1
-    for k in "$dir"/validador-*.key; do
-        [ -e "$k" ] || { echo "nenhuma chave em $dir" >&2; exit 1; }
+    while [ -e "$dir/validador-$i.key" ]; do
+        k="$dir/validador-$i.key"
         port=$((base + i - 1))
         extra=""
         [ "$i" -gt 1 ] && extra="--peer 127.0.0.1:$base"

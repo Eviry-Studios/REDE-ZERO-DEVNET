@@ -61,6 +61,15 @@ Todas as alterações relevantes do projeto (`REQ-086`, `REQ-094`). O formato se
 * Operações `0x40–0x44`; parâmetros `name_fee` e `community_declaration_ttl_blocks`; consultas P2P `GET_COMMUNITY`/`COMMUNITY`, `RESOLVE`/`RESOLVED` (`P2P_VERSION = 5`); comandos da Wallet.
 * Testes AT-COM-001..004, incluindo reconhecimento por governança e replicação com Nodes reais.
 
+### Adicionado — TESTNET no ar
+
+* `rede-zero-testnet-1` no ar desde 24/10/2026 com a versão `v0.1.0-testnet`: 10 validadores e o faucet atrás de um serviço onion. Os hashes do build reproduzível da VPS coincidem com os da CI.
+* `docs/OPERACAO.md` v0.3.0 §5.1: Node não validador só local para a Wallet e o faucet, porque o limite de conexões por IP recusa a Wallet no validador da porta base.
+
+### Corrigido — Ordem das chaves em `scripts/testnet-nos.sh`
+
+* Os validadores seguem a numeração das chaves (`validador-1`, `validador-2`…). Antes, o glob punha `validador-10` antes de `validador-2` e trocava porta e pasta de dados entre chaves a partir de 10 chaves.
+
 ### Adicionado — Cerimônia do Genesis da TESTNET
 
 * `docs/TESTNET.md` v0.3.0 §1: os 10 validadores iniciais ficam numa única máquina (VPS). Ela é ponto único de falha: se cair, a rede para e volta sozinha, sem perder dados. O critério da Fase 3 não muda.

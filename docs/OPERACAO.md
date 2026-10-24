@@ -1,6 +1,6 @@
 # Guia do operador — TESTNET
 
-**Versão:** 0.2.0
+**Versão:** 0.3.0
 **Relacionamento:** `docs/TESTNET.md`, ADR-0011 (IP), ADR-0012 (consenso), ADR-0021 (versões), ADR-0023 (chaves), ADR-0024 (eclipse e corrupção)
 
 Este guia é para quem vai operar um Node validador da TESTNET. O ZERO da TESTNET **não tem valor econômico**.
@@ -125,6 +125,13 @@ scripts/testnet-nos.sh parar ~/rz
 ```
 
 Na VPS, libere as portas usadas (no exemplo, 7100 a 7106) no firewall da máquina e no painel do provedor.
+
+Os Nodes da mesma máquina chegam uns aos outros pelo mesmo IP. Com o limite padrão de 8 conexões de entrada por IP (`--max-inbound-per-ip`, ADR-0024), o validador da porta base fica cheio, e a Wallet local é recusada nele. Para a Wallet e o faucet, rode um Node **não validador** só local, sem anunciar endereço, e aponte `--node` para ele:
+
+```bash
+rede-zero-node run --genesis genesis.bin --data ~/rz/dados-local \
+    --listen 127.0.0.1:7110 --peer 127.0.0.1:7100 --peer 127.0.0.1:7101
+```
 
 O que conta para a rede é o poder de voto **por aparelho**, não o número de processos: nenhum aparelho, ou grupo de aparelhos que caem juntos, deve passar de 1/3 sem que o restante tenha mais de 2/3 (`docs/TESTNET.md §1`).
 
