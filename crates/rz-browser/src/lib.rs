@@ -211,6 +211,11 @@ fn security_headers(r: Response, csp: &str) -> Response {
 }
 
 /// Resultado da resolução de uma publicação.
+/// Nome sem registro (ou vencido) e Comunidade inexistente: o Navegador responde
+/// 404 com página própria — 502 fica para falha de rede/Node.
+const NAME_NOT_REGISTERED: &str = "nome não registrado";
+const COMMUNITY_NOT_FOUND: &str = "Comunidade não encontrada";
+
 pub(crate) enum Site {
     Content {
         id: Hash32,
@@ -293,7 +298,7 @@ impl Navegador {
                 kind: NameKind::Community,
             } => {
                 let (_, c) = self.with_client(|cl| rz_wallet::community(cl, name))?;
-                let c = c.ok_or("Comunidade não encontrada")?;
+                let c = c.ok_or(COMMUNITY_NOT_FOUND)?;
                 if c.status != CommunityStatus::Recognized {
                     return Err(
                         "Comunidade declarada, ainda não reconhecida pela governança".into(),
@@ -304,7 +309,7 @@ impl Navegador {
             }
             Origin::Named { name, kind } => {
                 let (target, _, _) = self.with_client(|cl| rz_wallet::resolve(cl, name, *kind))?;
-                let t = target.ok_or("nome não registrado")?;
+                let t = target.ok_or(NAME_NOT_REGISTERED)?;
                 Ok((t, t))
             }
         }
@@ -377,6 +382,17 @@ impl Navegador {
                 );
                 return security_headers(Response::html(409, body), UI_CSP);
             }
+            Err(e) if e == NAME_NOT_REGISTERED || e == COMMUNITY_NOT_FOUND => Response::html(
+                404,
+                format!(
+                    "<!doctype html><meta charset=\"utf-8\"><title>Nome não encontrado</title>\
+<body style=\"font-family:sans-serif;max-width:40rem;margin:2rem auto\"><h1>Nome não encontrado</h1>\
+<p><code>{}</code> não está registrado na Exonet (ou o registro venceu). Confira a grafia.</p>\
+<p><a href=\"{}/\">Navegador Zero</a></p></body>",
+                    esc(&o.address()),
+                    Origin::Ui.url(self.port)
+                ),
+            ),
             Err(e) => Response::html(
                 502,
                 format!(
