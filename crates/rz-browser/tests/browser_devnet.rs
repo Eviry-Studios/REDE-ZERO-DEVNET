@@ -220,6 +220,15 @@ fn browser_end_to_end() {
     assert_eq!(js.status, 200);
     assert!(js.headers.contains("content-type: text/javascript"));
     assert_eq!(http(port, "GET", &host, "/nada", None, "").status, 404);
+    // Nome que não existe: 404 com página própria (502 é só falha de rede).
+    let ghost = Origin::Named {
+        name: "naoexistenada".into(),
+        kind: NameKind::App,
+    }
+    .host(port);
+    let r = http(port, "GET", &ghost, "/", None, "");
+    assert_eq!(r.status, 404, "{}", r.body);
+    assert!(r.body.contains("Nome não encontrado"));
     // O Node 2 agora hospeda uma cópia (replicação, REQ-070).
     let mut c2 = connect(n2.listen_addr(), &g).unwrap();
     assert_eq!(
