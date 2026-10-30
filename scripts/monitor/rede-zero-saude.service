@@ -1,0 +1,11 @@
+[Unit]
+Description=Rede Zero TESTNET: monitor de saude (RZ2)
+After=rede-zero-no-local.service
+
+[Service]
+Type=oneshot
+User=rede-zero
+ExecStart=/home/rede-zero/monitor/rz-saude.sh
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/rede-zero/monitor /home/rede-zero/SESSOES.md
