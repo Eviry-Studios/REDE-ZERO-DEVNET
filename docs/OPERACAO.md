@@ -175,6 +175,8 @@ zero-wallet balance --genesis genesis.bin --node 127.0.0.1:7100 --key validador.
 
 ## 7. Incidentes
 
+Na máquina de coordenação da TESTNET (10 validadores): [docs/testnet/RUNBOOK.md](testnet/RUNBOOK.md).
+
 | Situação | O que fazer |
 | --- | --- |
 | O Node para de avançar | Confira os pares e a rede. O Node troca de par sozinho quando detecta estagnação |

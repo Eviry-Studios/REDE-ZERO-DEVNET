@@ -1,0 +1,10 @@
+[Unit]
+Description=Rede Zero TESTNET: monitor de saude a cada 15 min
+
+[Timer]
+OnBootSec=5min
+OnCalendar=*:0/15
+Persistent=true
+
+[Install]
+WantedBy=timers.target
